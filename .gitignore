@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Environment
+.env
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+cassettes/
+*.yaml
+tests/smoke/cli/reports/
+tests/smoke/sdk/reports/
+tests/smoke/smoke_creds.toml
+
+# Claude / MCP
+.claude/
+.playwright-mcp/
+
+# Sphinx
+docs/_build/
+docs/api/
+
+# Generated reference snapshots
+docs/swagger/

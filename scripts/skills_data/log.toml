@@ -1,0 +1,30 @@
+name = "apm-log"
+description = "Query Synology ActiveProtect Manager (APM) backup server logs: activity (protection/system/data-access) logs, drive information logs, connection logs, and advanced system logs, filterable by severity, time range, and keyword. Use for any synology-apm CLI task about troubleshooting, auditing, or reviewing server-side log entries."
+title = "synology-apm log — Backup Server Logs"
+
+intro = """
+All log commands operate on a single backup server, resolved by `NAME` (search mode)
+or `--id <server-id>` (direct mode; get IDs from `synology-apm infra server list --verbose`).
+
+See [apm-shared](../apm-shared/SKILL.md) for global options, output formats, and
+confirmation rules.
+"""
+
+commands = [
+  "log activity list",
+  "log drive list",
+  "log connection list",
+  "log system list",
+]
+
+tips = """
+- Filter by `--level` (repeatable: info/warning/error), `--since`/`--until`, and
+  `--search` (keyword).
+- `log activity list` additionally supports `--type` (protection/system/data_access).
+- `log drive list` additionally supports `--location`.
+"""
+
+see_also = """
+- [apm-shared](../apm-shared/SKILL.md) — global options, output formats, confirmation rules
+- [apm-infra](../apm-infra/SKILL.md) — find backup server names/IDs
+"""

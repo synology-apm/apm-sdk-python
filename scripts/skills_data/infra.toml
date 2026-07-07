@@ -1,0 +1,36 @@
+name = "apm-infra"
+description = "Inspect Synology ActiveProtect Manager (APM) infrastructure: site info and storage statistics, backup servers in the cluster, connected remote storage devices, and registered hypervisor inventory. Use for any synology-apm CLI task about backup server status/namespaces, storage capacity, or hypervisor (vSphere/ESXi) connections."
+title = "synology-apm infra — Site, Servers, Storage, Hypervisors"
+
+intro = """
+Read-only commands for APM infrastructure. `synology-apm infra server list --verbose` is the
+primary source for backup server **namespaces**, used as `--namespace` in many other
+commands.
+
+See [apm-shared](../apm-shared/SKILL.md) for global options, output formats, and
+confirmation rules.
+"""
+
+commands = [
+  "infra info",
+  "infra server list",
+  "infra server get",
+  "infra server change-plan",
+  "infra storage list",
+  "infra storage get",
+  "infra hypervisor list",
+  "infra hypervisor get",
+]
+
+tips = """
+- `infra server list`'s `role` field: `LEADER` = Primary Management Server,
+  `REPLICA` = Secondary Management Server; other values are regular backup servers.
+- Use `--verbose`/`-v` on `server list` for Description/Server ID/Namespace, on
+  `storage list` for Remote Storage ID, and on `hypervisor list` for Hypervisor ID.
+"""
+
+see_also = """
+- [apm-shared](../apm-shared/SKILL.md) — global options, output formats, confirmation rules
+- [apm-log](../apm-log/SKILL.md) — per-server log queries (uses server IDs from here)
+- [apm-machine](../apm-machine/SKILL.md) — `--namespace`/`--hypervisor` filters use IDs from here
+"""

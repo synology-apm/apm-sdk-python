@@ -1,0 +1,91 @@
+name = "apm-shared"
+description = "Reference for the synology-apm CLI (Synology ActiveProtect Manager / APM): connection and authentication setup (--host/--username/--password/--profile, env vars, synology-apm config), output formats (table/json/yaml/csv), pagination, exit codes, and an index of the apm-machine/apm-m365/apm-plan/apm-activity/apm-infra/apm-log skills. Load this first for any synology-apm CLI task."
+title = "synology-apm CLI — Shared Reference"
+
+intro = """
+`synology-apm` is a command-line tool for Synology ActiveProtect Manager (APM). It is organized
+into command groups, each covered by its own skill:
+
+- **apm-machine** — Machine workloads (PC/PS/VM/FS): list, get, backup, cancel, retire, versions
+- **apm-m365** — Microsoft 365 workloads (Exchange/OneDrive/Chat/SharePoint/Teams/Group) and SaaS tenants
+- **apm-plan** — Protection, Retirement, and Tiering plans
+- **apm-activity** — Backup/restore activity history and cancellation
+- **apm-infra** — Site info, backup servers, remote storage, hypervisor inventory
+- **apm-log** — Backup server logs (activity, drive, connection, system)
+
+This skill covers what is common to all of them: connecting to APM, output formats,
+exit codes, and the `synology-apm config` commands used to store connection settings.
+"""
+
+common_flags_intro = """
+Most `list` commands share these flags; they are omitted from each command's
+individual flag table in the apm-machine/apm-m365/apm-plan/apm-activity/apm-infra/
+apm-log skills to avoid repetition. `--quiet` instead applies to action commands
+(`backup`, `*cancel*`, `retire`, `lock`/`unlock`, etc.).
+"""
+
+common_flags_notes = """
+### `--page-all` and `--output`
+
+`--page-all` repeatedly fetches pages starting at `--offset`, using `--limit` as
+the page size, until the API reports no more results. How the combined output is
+rendered depends on `--output`:
+
+| `--output` | Result |
+|------------|--------|
+| `table` (default) | Fetches every page first, then renders **one** merged table with a footer — same format as a single page without `--page-all` |
+| `json` | NDJSON: each record is printed as its own line of compact JSON, streamed page by page |
+| `csv` | The first page prints the header row plus data rows; later pages print data rows only (same column order) |
+| `yaml` | Each page is prefixed with `---`, forming a YAML multi-document stream |
+
+`synology-apm infra storage list` and `synology-apm infra hypervisor list` do not accept
+`--limit` / `--offset` / `--page-all` — the API returns all results in a single call.
+"""
+
+security_rules = """
+- **Never** print, log, or otherwise expose credential values: `--password`,
+  `APM_PASSWORD`, or the contents of `~/.config/synology-apm/config.toml` (which may
+  contain a saved password if `synology-apm config set --save-password plaintext` was
+  used; `--save-password keyring` stores the password in the OS credential store
+  instead, not in the config file).
+- **Always** confirm with the user before running a command that supports
+  `--yes`/`-y` (e.g. `*cancel*`, `retire`, `*apply*`, `export download`,
+  `config clear`) — never pass `--yes`/`-y` preemptively, only after the user
+  has explicitly agreed. See each command's confirmation note for details.
+- `--no-verify-ssl` (env `APM_NO_VERIFY_SSL`) disables TLS certificate
+  verification. Only use it for a known self-signed/lab APM instance, not as a
+  default for arbitrary hosts.
+- Treat `~/.config/synology-apm/config.toml` as sensitive: do not print its contents,
+  commit it, or paste it into chat or issue trackers.
+"""
+
+commands = [
+  "config set",
+  "config show",
+  "config clear",
+]
+
+tips = """
+- For non-interactive use, pass `--no-input`: this disables all interactive prompts
+  and makes the CLI exit with an error instead of blocking on stdin.
+- Prefer `--output json` (or `yaml`) over the default `table` when you need to parse
+  results; pipe JSON to `jq` for extraction.
+- `--quiet`/`-q` suppresses normal output on action commands (backup/cancel/retire/
+  lock/unlock) — useful when scripting and only the exit code matters.
+- Check the process exit code to detect failures; see "Exit codes" above.
+- Connection settings can come from CLI flags, environment variables, or a saved
+  profile (`synology-apm config set` / `--profile`) — see "Connection, Output & Exit Codes" above.
+- Each SKILL.md is generated for the `synology-apm CLI version` shown in its header. If a
+  documented flag or sub-command is rejected as unrecognized, or output doesn't
+  match the examples, run `synology-apm <command> --help` to check the flags available in
+  your installed version before retrying.
+"""
+
+see_also = """
+- [apm-machine](../apm-machine/SKILL.md) — Machine workload operations
+- [apm-m365](../apm-m365/SKILL.md) — M365 workload and SaaS tenant operations
+- [apm-plan](../apm-plan/SKILL.md) — Protection / Retirement / Tiering plans
+- [apm-activity](../apm-activity/SKILL.md) — Backup / restore activity history
+- [apm-infra](../apm-infra/SKILL.md) — Site info, backup servers, storage, hypervisors
+- [apm-log](../apm-log/SKILL.md) — Backup server logs
+"""

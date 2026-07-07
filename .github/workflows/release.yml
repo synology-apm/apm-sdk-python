@@ -1,0 +1,126 @@
+# Builds and publishes synology-apm-sdk + synology-apm-cli to PyPI, and attaches pre-built CLI
+# binaries (macOS/Windows) to the GitHub Release for the pushed tag.
+#
+# Prerequisite (one-time, manual, not automatable from this repo):
+#   Register a PyPI Trusted Publisher for both the "synology-apm-sdk" and "synology-apm-cli"
+#   projects on pypi.org, pointing at this repo/workflow and the
+#   "pypi-synology-apm-sdk" / "pypi-synology-apm-cli" environments below.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build synology-apm-sdk
+        run: uv build --package synology-apm-sdk -o dist/synology-apm-sdk
+
+      - name: Build synology-apm-cli
+        run: uv build --package synology-apm-cli -o dist/synology-apm-cli
+
+      - name: Upload synology-apm-sdk dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-synology-apm-sdk
+          path: dist/synology-apm-sdk/
+
+      - name: Upload synology-apm-cli dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-synology-apm-cli
+          path: dist/synology-apm-cli/
+
+  publish-sdk:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-synology-apm-sdk
+      url: https://pypi.org/p/synology-apm-sdk
+    permissions:
+      id-token: write
+    steps:
+      - name: Download synology-apm-sdk dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-synology-apm-sdk
+          path: dist/synology-apm-sdk
+
+      - name: Publish synology-apm-sdk to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/synology-apm-sdk
+
+  publish-cli:
+    needs: [build, publish-sdk]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-synology-apm-cli
+      url: https://pypi.org/p/synology-apm-cli
+    permissions:
+      id-token: write
+    steps:
+      - name: Download synology-apm-cli dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-synology-apm-cli
+          path: dist/synology-apm-cli
+
+      - name: Publish synology-apm-cli to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/synology-apm-cli
+
+  build-binaries:
+    needs: build
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download synology-apm-sdk dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-synology-apm-sdk
+          path: dist/synology-apm-sdk
+
+      - name: Download synology-apm-cli dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-synology-apm-cli
+          path: dist/synology-apm-cli
+
+      - name: Build CLI binary (macOS)
+        if: runner.os == 'macOS'
+        run: bash scripts/build-cli-macos.sh dist/synology-apm-cli/synology_apm_cli-*-py3-none-any.whl
+
+      - name: Build CLI binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem dist/synology-apm-cli/synology_apm_cli-*-py3-none-any.whl | Select-Object -First 1
+          scripts/build-cli-windows.ps1 $wheel.FullName
+
+      - name: Upload binary to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/binaries/**/*.zip
+          make_latest: true
+          generate_release_notes: false

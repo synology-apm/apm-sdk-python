@@ -1,0 +1,44 @@
+name = "apm-plan"
+description = "Manage Synology ActiveProtect Manager (APM) backup plans: list and inspect Protection plans (Machine + M365), Retirement (Archive) plans, and Tiering plans. Use for any synology-apm CLI task involving backup schedules, retention/archive policies, or storage tiering policies."
+title = "synology-apm plan — Protection / Retirement / Tiering Plans"
+
+intro = """
+APM has three plan types:
+
+- **Protection plans** define backup schedules and retention; assigned to active
+  Machine or M365 workloads via `synology-apm machine change-plan` /
+  `synology-apm m365 <type> change-plan`.
+- **Retirement (Archive) plans** define what happens to data after a workload is
+  retired; assigned at retire time (`synology-apm machine retire --plan ...` /
+  `synology-apm m365 <type> retire --plan ...`) or re-assigned later via the same
+  `change-plan` commands.
+- **Tiering plans** define storage tiering policies (read-only via this CLI — list
+  and get only).
+
+See [apm-shared](../apm-shared/SKILL.md) for global options, output formats, and
+confirmation rules.
+"""
+
+commands = [
+  "plan protection list",
+  "plan protection get",
+  "plan retirement list",
+  "plan retirement get",
+  "plan tiering list",
+  "plan tiering get",
+]
+
+tips = """
+- To assign or change the plan on a workload, use `synology-apm machine change-plan`
+  / `synology-apm m365 <type> change-plan` — the `--plan` value is resolved against
+  Protection plans for an active workload, or Retirement plans for an already-retired
+  one (`synology-apm machine retire` / `synology-apm m365 <type> retire` first).
+- Use `--verbose`/`-v` on `protection list` to see the Description column, and on
+  `retirement list`/`tiering list` to see the Plan ID needed for `--id`/`--plan`.
+"""
+
+see_also = """
+- [apm-shared](../apm-shared/SKILL.md) — global options, output formats, confirmation rules
+- [apm-machine](../apm-machine/SKILL.md) — change plans on Machine workloads
+- [apm-m365](../apm-m365/SKILL.md) — change plans on M365 workloads
+"""
