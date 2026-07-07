@@ -22,14 +22,18 @@ import typer
 from click.testing import Result
 from typer.testing import CliRunner
 
-# Must be set before importing any synology_apm.cli module. output.py creates a
-# module-level Console() whose _color_system is fixed at construction time based
-# on sys.stdout.isatty(). In a real terminal isatty()=True → _color_system=TRUECOLOR
-# → Style.render() emits ANSI codes (bold, dim, …) even through CliRunner's
-# StringIO. TTY_COMPATIBLE=0 makes Rich's is_terminal() return False
-# unconditionally (takes priority over isatty and FORCE_COLOR), so
-# _color_system=None and all output is plain text.
-os.environ.setdefault("TTY_COMPATIBLE", "0")
+# Must be set before importing any synology_apm.cli module so that every Rich
+# Console — including the module-level Console in output.py and the temporary
+# consoles Typer creates for help-text rendering — is initialized with
+# color_system=None and produces no ANSI output.
+#
+# TERM=dumb is the only flag that suppresses ALL ANSI codes (colors AND
+# bold/dim formatting). NO_COLOR=1 alone still allows bold/dim, which causes
+# Typer to render option flags like --id as split sequences
+# (\x1b[2m-\x1b[0m\x1b[1;2m-id\x1b[0m), breaking simple substring assertions.
+# We override unconditionally (not setdefault) so CI environments that set
+# FORCE_COLOR don't escape this guard.
+os.environ["TERM"] = "dumb"
 
 from synology_apm.cli.main import app  # noqa: E402
 

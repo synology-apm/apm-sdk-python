@@ -40,6 +40,7 @@ jobs:
       - name: Unit tests (with coverage)
         env:
           NO_COLOR: "1"
+          TERM: "dumb"
         run: uv run pytest tests/unit/ --cov=synology_apm.sdk --cov=synology_apm.cli -q
 
       # Cassettes are gitignored and absent on CI, so every integration test skips;
