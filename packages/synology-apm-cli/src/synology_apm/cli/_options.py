@@ -21,9 +21,9 @@ LIST_OUTPUT_OPTION = typer.Option(ListOutputFormat.TABLE, "--output", "-o", help
 OUTPUT_OPTION = typer.Option(OutputFormat.TABLE, "--output", "-o", help="Output format")
 SINCE_OPTION = typer.Option(
     None, "--since",
-    help="Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00)",
+    help="Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00)",
 )
 UNTIL_OPTION = typer.Option(
     None, "--until",
-    help="End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59)",
+    help="End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59)",
 )

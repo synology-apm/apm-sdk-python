@@ -36,11 +36,12 @@ class APMClient:
         verify_ssl: Whether to verify the SSL certificate. Defaults to True.
             Set to False for self-signed certificates in test environments.
         timeout: Per-request timeout in seconds. Defaults to 300.
+        debug: When True, print every request and response to stderr. Defaults to False.
 
     Examples:
         >>> async with APMClient("apm.corp.com", "admin", "pass") as apm:
-        ...     workloads = await apm.machine.workloads.list()
-        ...     print(f"{len(workloads)} machine workloads found")
+        ...     workloads, total = await apm.machine.workloads.list()
+        ...     print(f"{total} machine workloads found")
     """
 
     def __init__(

@@ -43,21 +43,22 @@ async with APMClient("apm.corp.com", "admin", "password", verify_ssl=False) as a
 ```python
 async with APMClient(host, username, password, verify_ssl=True, timeout=300.0) as apm:
     apm.machine          # MachineCollection  → .workloads / .plans
-    apm.m365             # M365Collection     → .workloads / .plans / .exchange_export / .group_export
-    apm.saas             # SaasCollection     → .list()
+    apm.m365             # M365Collection     → .workloads / .plans / .auto_backup_rules / .exchange_export / .group_export
+    apm.saas             # SaasCollection           — SaaS (M365) tenants
     apm.activities       # ActivityCollection → .backup / .restore
-    apm.backup_servers   # BackupServerCollection
-    apm.remote_storages  # RemoteStorageCollection → .list() / .get() / .add() / .update() / .delete()
-    apm.hypervisors      # HypervisorCollection   → .list() / .get() / .get_by_name()
-    apm.logs             # LogCollection          → .list_activity() / .list_drive() / .list_connection() / .list_system()
-    apm.retirement_plans # RetirementPlanCollection → .list() / .get() / .create() / .update() / .delete()
-    apm.tiering_plans    # TieringPlanCollection    → .list() / .get() / .create() / .update() / .delete()
-    apm.plans            # ProtectionPlanCollection → cross-category read + create / delete
-    await apm.get_site_info()                # site UUID, management server, storage stats, workload usage
-    await apm.plans.list()                   # cross-category list: machine + M365 in one call
-    await apm.plans.get_by_name("Daily Backup")  # name search: exact match, case-insensitive
-    await apm.plans.get(plan_id)                 # direct UUID lookup, category-agnostic
+    apm.backup_servers   # BackupServerCollection   — cluster servers, tiering-plan assignment
+    apm.remote_storages  # RemoteStorageCollection  — external vaults (S3-compatible / APV / DSM)
+    apm.hypervisors      # HypervisorCollection     — hypervisor inventory servers
+    apm.logs             # LogCollection            — activity / drive / connection / system logs
+    apm.plans            # ProtectionPlanCollection — cross-category read + create / delete
+    apm.retirement_plans # RetirementPlanCollection — retention plans for retired workloads
+    apm.tiering_plans    # TieringPlanCollection    — tier old versions to remote storage
+    await apm.get_site_info()  # site UUID, management server, storage stats, workload usage
 ```
+
+Each collection's methods are shown in its section below; full signatures and every model
+field are documented in the docstrings and the
+[Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).
 
 Manual lifecycle (if context manager is not suitable):
 
@@ -185,6 +186,17 @@ versions, _ = await apm.machine.workloads.list_versions(wl)
 v = versions[0]
 await apm.machine.workloads.lock_version(v)    # prevent retention-policy deletion
 await apm.machine.workloads.unlock_version(v)  # restore normal retention behaviour
+```
+
+### Backup verification video (PS/VM)
+
+```python
+from synology_apm.sdk import VerifyStatus
+
+# Only PS/VM workloads produce verification videos, and only for verified versions
+if v.verify_status == VerifyStatus.SUCCESS:
+    url = await apm.machine.workloads.get_verification_video_url(wl, v)  # time-limited URL
+    await apm.download_file(url, "verification.mp4")
 ```
 
 ---
@@ -359,6 +371,7 @@ from synology_apm.sdk import M365WorkloadType
 # tenant_id comes from apm.saas.list()
 tenants, _ = await apm.saas.list()
 TENANT = tenants[0].tenant_id
+tenant = await apm.saas.get_m365_tenant(TENANT)   # single-tenant detail lookup
 
 # List M365 workloads of a given service sub-type for a tenant
 mailboxes, total = await apm.m365.workloads.list(TENANT, workload_type=M365WorkloadType.EXCHANGE)
@@ -402,6 +415,43 @@ plan = await apm.m365.plans.update(plan.plan_id, M365PlanCreateRequest(
     retention=ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_VERSIONS, versions=60),
 ))
 await apm.m365.plans.delete(plan)
+```
+
+---
+
+## M365 Auto-Backup Rules
+
+Automatically protect new M365 items. Accessed via `apm.m365.auto_backup_rules`.
+Two independently-managed sections: **User Services** rules (per-plan CRUD; Exchange /
+OneDrive / Chat members of selected Azure AD groups) and **Collaboration Services**
+settings (one per-tenant object; Microsoft 365 Groups, SharePoint Sites, Personal Sites,
+Teams — all items of an enabled type are included).
+
+```python
+# Full auto-backup configuration for a tenant
+result = await apm.m365.auto_backup_rules.list(TENANT)
+for rule in result.rules:
+    print(rule.plan_id, rule.exchange_group_ids)
+print(f"SharePoint auto-backup enabled: {result.sharepoint.enabled}")
+
+# Create a User Services rule: auto-protect Exchange members of an Azure AD group
+server = await apm.backup_servers.get_by_name("apm-server-01")
+plan = await apm.m365.plans.get_by_name("M365 Daily Backup")
+await apm.m365.auto_backup_rules.create(
+    TENANT, server.namespace, plan.plan_id,
+    exchange_group_ids=["123e4567-e89b-12d3-a456-426614174010"],
+)
+
+# Update / delete an existing rule (obtained via list(); omitted fields keep current values)
+await apm.m365.auto_backup_rules.update(rule, onedrive_group_ids=["123e4567-e89b-12d3-a456-426614174011"])
+await apm.m365.auto_backup_rules.delete(rule)
+
+# Replace Collaboration Services settings (types omitted or None are disabled)
+await apm.m365.auto_backup_rules.update_collab_settings(
+    TENANT,
+    sharepoint=result.sharepoint,  # pass current settings to preserve a type
+    teams=result.teams,
+)
 ```
 
 ---
@@ -490,6 +540,10 @@ await apm.activities.backup.cancel(act)
 restore_acts, _ = await apm.activities.restore.list(limit=50)
 restore_act = await apm.activities.restore.get(activity_id)
 await apm.activities.restore.cancel(restore_act)  # pass the RestoreActivity object
+
+# Latest activity for a workload by display name (full details, including log entries)
+act = await apm.activities.backup.get_latest_by_workload_name("vm-web-01")
+act = await apm.activities.restore.get_latest_by_workload_name("vm-web-01")
 ```
 
 ---
@@ -518,6 +572,10 @@ if server.storage_total_bytes is not None:
 else:
     print("Storage: - (data unavailable)")
 print(f"Data reduction: {server.backup_data_reduction_ratio:.1f}% saved")
+
+# Apply or remove a tiering plan (DP-type servers only; pass None to remove)
+tp = await apm.tiering_plans.get_by_name("30-Day Tiering")
+await apm.backup_servers.change_tiering_plan(server, tp)
 ```
 
 ---
@@ -674,7 +732,7 @@ All SDK exceptions inherit from `APMError` and carry three common attributes:
 | `.error_code` | Synology/APM numeric error code (`int \| None`) |
 | `.response_body` | Full JSON body from APM, for debugging (`Any \| None`) |
 
-Resource-oriented exceptions (`ResourceNotFoundError`, `InvalidOperationError`, `PlanNameConflictError`, `PlanInUseError`, `DuplicateWorkloadError`, and the `RemoteStorage*` conflict/in-use errors) additionally carry `.resource_type` and `.resource_id` identifying the resource involved. Operation-specific exceptions raised by each method — and their extra attributes, such as `PlanInUseError.has_workloads` or `RemoteStorageUnmanagedCatalogError.catalog_count` — are documented in the method's docstring and the Sphinx API reference.
+Resource-oriented exceptions (`ResourceNotFoundError`, `InvalidOperationError`, `PlanNameConflictError`, `PlanInUseError`, `DuplicateWorkloadError`, and the `RemoteStorage*` conflict/in-use errors) additionally carry `.resource_type` and `.resource_id` identifying the resource involved. Operation-specific exceptions raised by each method — and their extra attributes, such as `PlanInUseError.has_workloads` or `RemoteStorageUnmanagedCatalogError.catalog_count` — are documented in the method's docstring and the [Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).
 
 `str(exc)` automatically appends the full `response_body` as formatted JSON when present, making it easy to forward to the API provider.
 
@@ -717,8 +775,9 @@ The main model classes returned by the collections above:
 | `Hypervisor` | A registered hypervisor inventory server |
 | `APMActivityLog` / `DriveLog` / `ConnectionLog` / `SystemLog` | Server-scoped log entries |
 | `M365ExportActivity` | An Exchange/Group mailbox PST export task |
+| `M365AutoBackupRule` / `M365AutoBackupRuleListResult` | Auto-backup rules and per-tenant collaboration-service settings |
 | `SiteInfo` | Site-wide overview: management servers, storage stats, workload usage |
 
-Every field of every model — names, types, and when each is `None` — is documented in the class docstrings and the Sphinx API reference (see the repository README for how to build it).
+Every field of every model — names, types, and when each is `None` — is documented in the class docstrings and the [Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).
 
 All model objects are **frozen dataclasses** (immutable after creation).

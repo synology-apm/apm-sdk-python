@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from synology_apm.sdk import (
     APMClient,
     APMError,
+    BackupServer,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
@@ -143,6 +144,14 @@ def safe_path(s: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "_", s).strip() or "unknown"
 
 
+def _remove_quietly(path: str) -> None:
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
 # ── Workload-type labels ────────────────────────────────────────────────────
 
 M365_TYPE_LABELS: dict[M365WorkloadType, str] = {
@@ -213,6 +222,14 @@ async def list_m365_tenants(apm: APMClient, *, page: int = 500) -> list[SaasTena
         lambda limit, offset: apm.saas.list(limit=limit, offset=offset), page=page
     )
     return [t for t in tenants if t.category == WorkloadCategory.M365]
+
+
+async def collect_backup_servers(apm: APMClient, *, page: int = 500) -> list[BackupServer]:
+    """All backup servers in the cluster."""
+    servers, _ = await paginate(
+        lambda limit, offset: apm.backup_servers.list(limit=limit, offset=offset), page=page
+    )
+    return servers
 
 
 async def collect_machine_workloads(

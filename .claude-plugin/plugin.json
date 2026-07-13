@@ -1,0 +1,11 @@
+{
+  "name": "synology-apm",
+  "displayName": "Synology APM CLI Skills",
+  "description": "Skills that teach Claude to operate Synology ActiveProtect Manager (APM) via the synology-apm CLI.",
+  "author": {
+    "name": "Synology APM SDK maintainers"
+  },
+  "repository": "https://github.com/synology-apm/apm-sdk-python",
+  "license": "Apache-2.0",
+  "keywords": ["synology", "apm", "backup", "cli", "skills"]
+}

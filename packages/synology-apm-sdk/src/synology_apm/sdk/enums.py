@@ -340,8 +340,8 @@ class DbActionOnError(Enum):
     CONTINUE: Continue the backup even if a database error occurs.
     STOP:     Abort the backup on the first database error.
     """
-    CONTINUE = "continue"  # API: IGNORE_FAILURES
-    STOP     = "stop"      # API: REQUIRE_SUCCESS
+    CONTINUE = "continue"
+    STOP     = "stop"
 
 
 class MssqlLogSetting(Enum):
@@ -350,8 +350,8 @@ class MssqlLogSetting(Enum):
     DO_NOT_TRUNCATE: Leave transaction logs intact after backup.
     TRUNCATE:        Truncate transaction logs after backup.
     """
-    DO_NOT_TRUNCATE = "do_not_truncate"  # API: DELETE_LOGS_BY_DB_RULE
-    TRUNCATE        = "truncate"          # API: TRUNCATE_LOGS
+    DO_NOT_TRUNCATE = "do_not_truncate"
+    TRUNCATE        = "truncate"
 
 
 class OracleLogSetting(Enum):
@@ -360,8 +360,8 @@ class OracleLogSetting(Enum):
     DO_NOT_DELETE: Leave archived logs intact after backup.
     DELETE:        Delete archived logs after backup.
     """
-    DO_NOT_DELETE = "do_not_delete"  # API: NOT_DELETE_LOGS
-    DELETE        = "delete"          # API: DELETE_LOGS
+    DO_NOT_DELETE = "do_not_delete"
+    DELETE        = "delete"
 
 
 class MachineOsType(Enum):
@@ -372,10 +372,10 @@ class MachineOsType(Enum):
     LINUX:   Linux physical server.
     NONE:    Not applicable (VM and FS tasks always use NONE).
     """
-    WINDOWS = "windows"  # API: "WINDOWS"
-    MAC     = "mac"      # API: "MAC"
-    LINUX   = "linux"    # API: "LINUX"
-    NONE    = "none"     # API: "NONE"
+    WINDOWS = "windows"
+    MAC     = "mac"
+    LINUX   = "linux"
+    NONE    = "none"
 
 
 class MachineTaskScope(Enum):
@@ -385,9 +385,9 @@ class MachineTaskScope(Enum):
     SYSTEM_VOLUME:  Operating system volume only.
     CUSTOM_VOLUME:  User-specified volumes or mount points.
     """
-    ENTIRE_MACHINE = "entire_machine"  # API: BACKUP_SOURCE_BAREMETAL
-    SYSTEM_VOLUME  = "system_volume"   # API: BACKUP_SOURCE_SYSVOL
-    CUSTOM_VOLUME  = "custom_volume"   # API: BACKUP_SOURCE_CUSVOL
+    ENTIRE_MACHINE = "entire_machine"
+    SYSTEM_VOLUME  = "system_volume"
+    CUSTOM_VOLUME  = "custom_volume"
 
 
 class HypervisorType(Enum):

@@ -31,13 +31,11 @@ real credentials — they are read from a separate TOML file, not from `.env`.
 **Setup:**
 
 ```bash
-# Generate a template and fill in your real credentials:
-uv run python -m tests.smoke.sdk --output-creds-template > tests/smoke/smoke_creds.toml
+cp tests/smoke/smoke_creds.toml.example tests/smoke/smoke_creds.toml
 # Edit tests/smoke/smoke_creds.toml — replace placeholder values with real credentials.
 ```
 
-`tests/smoke/smoke_creds.toml` is gitignored. Run `--output-creds-template` again to see the full
-format at any time.
+`tests/smoke/smoke_creds.toml` is gitignored.
 
 **Supported `type` values for `[[remote_storage]]` blocks:**
 
@@ -72,12 +70,6 @@ Optional per-entry steps:
 
 - `relink_encryption_key` set: `add[name/no_key]` (expects
   `RemoteStorageEncryptionMismatchError`) and `check[name/encryption_key]`.
-
-**Passing a custom path:**
-
-```bash
-uv run python -m tests.smoke.sdk --creds ~/my-lab-creds.toml
-```
 
 ## Machine
 

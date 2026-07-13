@@ -177,8 +177,8 @@ class M365WorkloadCollection(_VersionMixin):
     Accessed via APMClient.m365.workloads; should not be instantiated directly.
 
     get() fetches a single Workload by workload_id + namespace; get_by_name() looks up a
-    Workload by name, UPN, email, or URL via keyword search and exact match. Neither
-    performs a full list-all scan.
+    Workload by display name, UPN, or group email via keyword search and exact match.
+    Neither performs a full list-all scan.
     """
 
     def __init__(self, session: WebAPISession) -> None:
@@ -254,7 +254,7 @@ class M365WorkloadCollection(_VersionMixin):
         tenant_id: str,
         workload_type: M365WorkloadType,
     ) -> M365Workload:
-        """Fetch an M365 Workload by ID (lookup via nsUidPair).
+        """Fetch an M365 Workload by workload ID and backup server namespace.
 
         Args:
             workload_id:   Workload ID.
@@ -291,10 +291,11 @@ class M365WorkloadCollection(_VersionMixin):
         workload_type: M365WorkloadType,
         is_retired: bool = False,
     ) -> M365Workload:
-        """Fetch an M365 Workload by name, UPN, email, or URL (keyword search + exact match).
+        """Fetch an M365 Workload by name, UPN, or group email (keyword search + exact match).
 
         Args:
-            name:          Display name, UPN, email, or URL (exact match, case-insensitive).
+            name:          Display name, UPN, or group email (exact match, case-insensitive);
+                           a workload ID is also accepted.
             tenant_id:     Azure AD tenant ID; required to scope the search.
             workload_type: Service sub-type (EXCHANGE / ONEDRIVE / etc.).
             is_retired:    True=retired only, False=protected workloads only (default).

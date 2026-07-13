@@ -26,6 +26,7 @@ from synology_apm.sdk import (
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
     M365PlanCreateRequest,
+    M365WorkloadType,
     ProtectionPlan,
     ProtectionRetentionPolicy,
     ProtectionSchedule,
@@ -128,15 +129,46 @@ async def run(ctx: SmokeContext) -> None:
                 continue
             _p = _plan
             deleted = False
+            removed_workloads = 0
+            last_exc: Exception | None = None
             for attempt in range(_M365_PLAN_DELETE_RETRIES + 1):
                 try:
                     await apm.m365.plans.delete(_p)
                     deleted = True
                     break
-                except Exception:
+                except Exception as exc:
+                    last_exc = exc
+                    removed_workloads += await _delete_plan_workloads(apm, tenant_id, _p)
                     if attempt < _M365_PLAN_DELETE_RETRIES:
                         await asyncio.sleep(_M365_PLAN_DELETE_RETRY_WAIT)
-            ctx.check(DOMAIN, step_name, deleted)
+            notes: list[str] = []
+            if removed_workloads:
+                notes.append(f"removed {removed_workloads} auto-protected workload(s) blocking plan deletion")
+            if not deleted and last_exc is not None:
+                notes.append(f"last error: {last_exc!r}")
+            ctx.check(DOMAIN, step_name, deleted, note="; ".join(notes))
+
+
+async def _delete_plan_workloads(apm: APMClient, tenant_id: str, plan: ProtectionPlan) -> int:
+    """Best-effort: delete M365 workloads still attached to `plan`, returning the count removed.
+
+    While a test rule or collab setting points at a plan, APM's auto-backup engine may
+    auto-protect real tenant resources under it. Deleting the rule / disabling the setting
+    does not unprotect those workloads, and the plan cannot be deleted while they remain.
+    """
+    removed = 0
+    for workload_type in M365WorkloadType:
+        try:
+            workloads, _total = await apm.m365.workloads.list(tenant_id, workload_type, plan=[plan])
+        except Exception:
+            continue
+        for workload in workloads:
+            try:
+                await apm.m365.workloads.delete(workload)
+                removed += 1
+            except Exception:
+                pass
+    return removed
 
 
 async def _run_user_rule_roundtrip(

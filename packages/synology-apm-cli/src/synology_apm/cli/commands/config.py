@@ -17,7 +17,7 @@ from synology_apm.cli.config import (
     load_config,
     save_config,
 )
-from synology_apm.cli.errors import EXIT_ERROR, err_console, handle_keyring_error
+from synology_apm.cli.errors import EXIT_ERROR, abortable, err_console, handle_keyring_error
 from synology_apm.cli.output import console
 
 
@@ -226,7 +226,8 @@ def config_clear(
 
     if all_profiles:
         if not yes:
-            typer.confirm("Confirm clear all settings?", abort=True)
+            with abortable():
+                typer.confirm("Confirm clear all settings?", abort=True)
         for name, p in cfg.profiles.items():
             _clear_keyring_password(name, p)
         cfg.profiles.clear()
@@ -236,7 +237,8 @@ def config_clear(
 
     target = profile or DEFAULT_PROFILE
     if not yes:
-        typer.confirm(f"Confirm clear profile '{target}'?", abort=True)
+        with abortable():
+            typer.confirm(f"Confirm clear profile '{target}'?", abort=True)
 
     existing = cfg.get_profile(target)
     if cfg.remove_profile(target):

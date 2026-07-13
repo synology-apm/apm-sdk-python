@@ -9,10 +9,12 @@ Authentication flow (connect):
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import ssl
 import sys
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -106,6 +108,7 @@ class WebAPISession:
         self._verify_ssl = verify_ssl
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._debug = debug
+        self._debug_seq = itertools.count(1)
         self._session: aiohttp.ClientSession | None = None
         self._connected: bool = False
 
@@ -254,8 +257,10 @@ class WebAPISession:
         if not self._session or not self._connected:
             raise AuthenticationError("Session is not connected. Call connect() first.")
 
+        req_id = next(self._debug_seq)
+        start = time.monotonic()
         if self._debug:
-            _debug_print_request("GET", url)
+            _debug_print_request(req_id, "GET", url)
 
         try:
             async with self._session.get(
@@ -264,7 +269,10 @@ class WebAPISession:
                 timeout=aiohttp.ClientTimeout(total=None),  # no timeout: file size is unpredictable
             ) as resp:
                 if self._debug:
-                    _debug_print_response(resp.status, None)
+                    _debug_print_response(
+                        req_id, resp.status, None,
+                        method="GET", url=url, duration=time.monotonic() - start,
+                    )
                 if resp.status >= 400:
                     raise APIError(
                         f"Download failed: HTTP {resp.status}",
@@ -315,8 +323,10 @@ class WebAPISession:
             "enable_syno_token": "yes",
         }
 
+        req_id = next(self._debug_seq)
+        start = time.monotonic()
         if self._debug:
-            _debug_print_request("GET", url, params=params)
+            _debug_print_request(req_id, "GET", url, params=params)
 
         async with self._session.get(
             url,
@@ -332,7 +342,10 @@ class WebAPISession:
                 ) from exc
 
         if self._debug:
-            _debug_print_response(resp.status, data)
+            _debug_print_response(
+                req_id, resp.status, data,
+                method="GET", url=url, duration=time.monotonic() - start,
+            )
 
         if not data.get("success"):
             error = data.get("error", {})
@@ -380,9 +393,11 @@ class WebAPISession:
 
         url = f"{self._base_url}{path}"
 
+        req_id = next(self._debug_seq)
+        start = time.monotonic()
         if self._debug:
             _debug_print_request(
-                method, url,
+                req_id, method, url,
                 params=kwargs.get("params"), body=kwargs.get("json"), headers=kwargs.get("headers"),
             )
 
@@ -393,7 +408,10 @@ class WebAPISession:
                 body = await _safe_json(resp)
 
                 if self._debug:
-                    _debug_print_response(resp.status, body)
+                    _debug_print_response(
+                        req_id, resp.status, body,
+                        method=method, url=url, duration=time.monotonic() - start,
+                    )
 
                 if resp.status == 401:
                     if _reauth:
@@ -588,6 +606,7 @@ _DEBUG_MAX_BODY = 4096  # response bodies longer than this are truncated
 
 
 def _debug_print_request(
+    req_id: int,
     method: str,
     url: str,
     *,
@@ -595,23 +614,41 @@ def _debug_print_request(
     body: Any = None,
     headers: dict[str, Any] | None = None,
 ) -> None:
-    """Print HTTP request details to stderr."""
-    print(f"\n\033[1;36m→ {method} {url}\033[0m", file=sys.stderr)
+    """Print HTTP request details to stderr as a single atomic block.
+
+    req_id is a per-session sequence number repeated on the matching response
+    block so concurrent requests can be paired in the interleaved output.
+    """
+    lines = [f"\n\033[1;36m→ [#{req_id}] {method} {url}\033[0m"]
     if headers:
-        print(f"  \033[36mheaders:\033[0m {json.dumps(headers, ensure_ascii=False)}", file=sys.stderr)
+        lines.append(f"  \033[36mheaders:\033[0m {json.dumps(headers, ensure_ascii=False)}")
     if params:
-        print(f"  \033[36mparams:\033[0m {json.dumps(params, ensure_ascii=False, indent=2)}", file=sys.stderr)
+        lines.append(f"  \033[36mparams:\033[0m {json.dumps(params, ensure_ascii=False, indent=2)}")
     if body is not None:
         body_str = json.dumps(body, ensure_ascii=False, indent=2)
-        print(f"  \033[36mbody:\033[0m {body_str}", file=sys.stderr)
+        lines.append(f"  \033[36mbody:\033[0m {body_str}")
+    sys.stderr.write("\n".join(lines) + "\n")
 
 
-def _debug_print_response(status: int, data: Any) -> None:
-    """Print HTTP response details to stderr."""
+def _debug_print_response(
+    req_id: int,
+    status: int,
+    data: Any,
+    *,
+    method: str,
+    url: str,
+    duration: float,
+) -> None:
+    """Print HTTP response details to stderr as a single atomic block.
+
+    Repeats req_id, method, and url so the line is self-contained when
+    concurrent request/response blocks interleave; duration is seconds.
+    """
     color = "\033[1;32m" if status < 400 else "\033[1;31m"
-    print(f"  {color}← {status}\033[0m", file=sys.stderr)
+    lines = [f"  {color}← [#{req_id}] {status}\033[0m \033[2m{method} {url} ({duration:.2f}s)\033[0m"]
     if data is not None:
         body_str = json.dumps(data, ensure_ascii=False, indent=2)
         if len(body_str) > _DEBUG_MAX_BODY:
             body_str = body_str[:_DEBUG_MAX_BODY] + f"\n  ... (truncated, {len(body_str)} chars total)"
-        print(f"  \033[36mresponse:\033[0m {body_str}", file=sys.stderr)
+        lines.append(f"  \033[36mresponse:\033[0m {body_str}")
+    sys.stderr.write("\n".join(lines) + "\n")

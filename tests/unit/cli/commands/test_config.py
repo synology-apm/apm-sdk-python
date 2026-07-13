@@ -542,11 +542,12 @@ def test_config_clear_with_yes_flag_removes_profile() -> None:
 
 
 def test_config_clear_requires_confirmation_and_aborts_on_no() -> None:
-    """config clear without --yes prompts for confirmation; answering n aborts without saving."""
+    """config clear without --yes prompts for confirmation; answering n cancels with exit 4."""
     cfg = AppConfig(profiles={DEFAULT_PROFILE: ProfileConfig(host="apm.corp.com", username="admin")})
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save:
-        runner.invoke(app, ["config", "clear"], input="n\n")
+        result = runner.invoke(app, ["config", "clear"], input="n\n")
+    assert result.exit_code == 4
     assert mock_save.call_count == 0
 
 
@@ -919,13 +920,13 @@ def test_config_set_prompt_hint_for_saved_plaintext_password() -> None:
 
 
 def test_config_clear_all_confirmation_declined_aborts() -> None:
-    """clear --all without --yes prompts; answering n aborts without saving."""
+    """clear --all without --yes prompts; answering n cancels with exit 4 without saving."""
     cfg = AppConfig()
     cfg.set_profile(DEFAULT_PROFILE, ProfileConfig(host="apm.corp.com", username="admin"))
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save:
         result = runner.invoke(app, ["config", "clear", "--all"], input="n\n")
-    assert result.exit_code != 0
+    assert result.exit_code == 4
     mock_save.assert_not_called()
 
 

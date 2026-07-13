@@ -79,6 +79,16 @@ def _reason(wl: MachineWorkload | M365Workload, never_backed_up_only: bool) -> s
     return "overdue"
 
 
+def _is_stale(
+    wl: MachineWorkload | M365Workload,
+    cutoff: datetime,
+    never_backed_up_only: bool,
+) -> bool:
+    if wl.last_backup_at is None:
+        return True
+    return not never_backed_up_only and (wl.status in _NEEDS_RETRY or wl.last_backup_at < cutoff)
+
+
 async def _poll_one(
     apm: APMClient,
     wl: MachineWorkload | M365Workload,
@@ -160,15 +170,7 @@ async def run(
     async with make_client() as apm:
         workloads, total = await collect_workloads(apm, category, m365_services, is_retired=False)
 
-        if never_backed_up_only:
-            stale = [wl for wl in workloads if wl.last_backup_at is None]
-        else:
-            stale = [
-                wl for wl in workloads
-                if wl.last_backup_at is None
-                or wl.last_backup_at < cutoff
-                or wl.status in _NEEDS_RETRY
-            ]
+        stale = [wl for wl in workloads if _is_stale(wl, cutoff, never_backed_up_only)]
 
         if not stale:
             print(f"No workloads {criterion} (queried {total} total).", file=sys.stderr)

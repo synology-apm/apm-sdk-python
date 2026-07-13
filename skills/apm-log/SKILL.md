@@ -43,8 +43,8 @@ Usage: synology-apm log activity list [OPTIONS] [NAME]
 | `--id <SERVER_ID>` | Backup Server ID (direct mode; from synology-apm infra server list --verbose) |
 | `--level <info/warning/error, ...>` | Severity filter, repeatable: information / warning / error |
 | `--type <protection/system/data_access>` | Log type filter: protection / system / data_access |
-| `--since <SINCE>` | Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
-| `--until <UNTIL>` | End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
+| `--since <SINCE>` | Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
+| `--until <UNTIL>` | End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
 | `--search <SEARCH>` | Keyword search |
 
 ### `synology-apm log drive list`
@@ -72,8 +72,8 @@ Usage: synology-apm log drive list [OPTIONS] [NAME]
 | `[NAME]` | Server name keyword (search mode) |
 | `--id <SERVER_ID>` | Backup Server ID (direct mode; from synology-apm infra server list --verbose) |
 | `--level <info/warning/error, ...>` | Severity filter, repeatable: information / warning / error |
-| `--since <SINCE>` | Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
-| `--until <UNTIL>` | End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
+| `--since <SINCE>` | Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
+| `--until <UNTIL>` | End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
 | `--search <SEARCH>` | Keyword search |
 | `--location <LOCATION>` | Drive location filter |
 
@@ -102,8 +102,8 @@ Usage: synology-apm log connection list [OPTIONS] [NAME]
 | `[NAME]` | Server name keyword (search mode) |
 | `--id <SERVER_ID>` | Backup Server ID (direct mode; from synology-apm infra server list --verbose) |
 | `--level <info/warning/error, ...>` | Severity filter, repeatable: information / warning / error |
-| `--since <SINCE>` | Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
-| `--until <UNTIL>` | End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
+| `--since <SINCE>` | Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
+| `--until <UNTIL>` | End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
 | `--search <SEARCH>` | Keyword search |
 
 ### `synology-apm log system list`
@@ -131,8 +131,8 @@ Usage: synology-apm log system list [OPTIONS] [NAME]
 | `[NAME]` | Server name keyword (search mode) |
 | `--id <SERVER_ID>` | Backup Server ID (direct mode; from synology-apm infra server list --verbose) |
 | `--level <info/warning/error, ...>` | Severity filter, repeatable: information / warning / error |
-| `--since <SINCE>` | Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
-| `--until <UNTIL>` | End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
+| `--since <SINCE>` | Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
+| `--until <UNTIL>` | End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
 | `--search <SEARCH>` | Keyword search |
 
 ## Tips

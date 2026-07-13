@@ -6,6 +6,8 @@ requests; no real APM connection required.
 """
 from __future__ import annotations
 
+import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -276,6 +278,12 @@ async def test_safe_json_returns_empty_dict_on_non_json_body() -> None:
 
 # ── debug mode ────────────────────────────────────────────────────────────────
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_DEBUG_REQ_RE = re.compile(r"^→ \[#(\d+)\] (GET|POST|PUT|DELETE|PATCH) (\S+)$", re.MULTILINE)
+_DEBUG_RESP_RE = re.compile(
+    r"^  ← \[#(\d+)\] (\d+) (GET|POST|PUT|DELETE|PATCH) (\S+) \(\d+\.\d\ds\)$", re.MULTILINE
+)
+
 
 async def test_debug_mode_logs_login_request_and_response(capsys: pytest.CaptureFixture[str]) -> None:
     """With debug=True, _do_login() calls _debug_print_request and _debug_print_response."""
@@ -337,6 +345,51 @@ async def test_debug_mode_post_request_with_headers_logs_headers(capsys: pytest.
         await disconnect_session(m, session)
     captured = capsys.readouterr()
     assert "x-syno-tunnel-route" in captured.err
+
+
+async def test_debug_request_and_response_lines_carry_matching_id(capsys: pytest.CaptureFixture[str]) -> None:
+    """Debug request and response lines share a [#N] id, and the response repeats method/URL/duration."""
+    session = make_session(debug=True)
+    with aioresponses() as m:
+        await connect_session(m, session)
+        m.get(f"{BASE_URL}/api/v1/workload/device_workload", payload={"workloads": [], "total": 0})
+        await session.get("/api/v1/workload/device_workload")
+        await disconnect_session(m, session)
+    err = _ANSI_RE.sub("", capsys.readouterr().err)
+
+    url = f"{BASE_URL}/api/v1/workload/device_workload"
+    req = next(m_ for m_ in _DEBUG_REQ_RE.finditer(err) if m_.group(3) == url)
+    resp = next(m_ for m_ in _DEBUG_RESP_RE.finditer(err) if m_.group(4) == url)
+    assert resp.group(1) == req.group(1)
+    assert resp.group(2) == "200"
+    assert resp.group(3) == "GET"
+
+
+async def test_debug_concurrent_requests_pair_by_id(capsys: pytest.CaptureFixture[str]) -> None:
+    """Concurrent requests get distinct ids and each response line pairs with its own request."""
+    session = make_session(debug=True)
+
+    async def delay_response(url: Any, **kwargs: Any) -> None:
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    slow_url = f"{BASE_URL}/api/v1/slow"
+    fast_url = f"{BASE_URL}/api/v1/fast"
+    with aioresponses() as m:
+        await connect_session(m, session)
+        m.get(slow_url, payload={"which": "slow"}, callback=delay_response)
+        m.get(fast_url, payload={"which": "fast"})
+        await asyncio.gather(session.get("/api/v1/slow"), session.get("/api/v1/fast"))
+        await disconnect_session(m, session)
+    err = _ANSI_RE.sub("", capsys.readouterr().err)
+
+    req_ids = {m_.group(3): m_.group(1) for m_ in _DEBUG_REQ_RE.finditer(err)}
+    resp_ids = {m_.group(4): m_.group(1) for m_ in _DEBUG_RESP_RE.finditer(err)}
+    assert req_ids[slow_url] != req_ids[fast_url]
+    assert resp_ids[slow_url] == req_ids[slow_url]
+    assert resp_ids[fast_url] == req_ids[fast_url]
+    # The slow endpoint was requested first but answered last — the output really interleaved.
+    assert err.index(f"← [#{req_ids[fast_url]}]") < err.index(f"← [#{req_ids[slow_url]}]")
 
 
 async def test_debug_mode_large_response_body_is_truncated(capsys: pytest.CaptureFixture[str]) -> None:

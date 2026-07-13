@@ -519,6 +519,17 @@ def activity_log_to_dict(e: APMActivityLog) -> dict[str, Any]:
     }
 
 
+def activity_log_to_csv_row(e: APMActivityLog) -> dict[str, Any]:
+    """Serialize an APMActivityLog entry to a CSV-safe flat dict (table columns, raw values)."""
+    return {
+        "level":       e.level.value,
+        "type":        e.log_type.value if e.log_type else "",
+        "timestamp":   fmt_datetime_iso(e.timestamp) or "",
+        "username":    e.username,
+        "description": e.description,
+    }
+
+
 def drive_log_to_dict(e: DriveLog) -> dict[str, Any]:
     """Serialize a DriveLog entry to a JSON-safe dict."""
     return {
@@ -532,6 +543,19 @@ def drive_log_to_dict(e: DriveLog) -> dict[str, Any]:
     }
 
 
+def drive_log_to_csv_row(e: DriveLog) -> dict[str, Any]:
+    """Serialize a DriveLog entry to a CSV-safe flat dict (table columns, raw values)."""
+    return {
+        "level":       e.level.value,
+        "timestamp":   fmt_datetime_iso(e.timestamp) or "",
+        "model":       e.model,
+        "serial":      e.serial,
+        "server_name": e.server_name,
+        "location":    e.location,
+        "description": e.description,
+    }
+
+
 def connection_log_to_dict(e: ConnectionLog) -> dict[str, Any]:
     """Serialize a ConnectionLog entry to a JSON-safe dict."""
     return {
@@ -542,11 +566,31 @@ def connection_log_to_dict(e: ConnectionLog) -> dict[str, Any]:
     }
 
 
+def connection_log_to_csv_row(e: ConnectionLog) -> dict[str, Any]:
+    """Serialize a ConnectionLog entry to a CSV-safe flat dict (table columns, raw values)."""
+    return {
+        "level":       e.level.value,
+        "timestamp":   fmt_datetime_iso(e.timestamp) or "",
+        "username":    e.username,
+        "description": e.description,
+    }
+
+
 def system_log_to_dict(e: SystemLog) -> dict[str, Any]:
     """Serialize a SystemLog entry to a JSON-safe dict."""
     return {
         "level":       e.level.value,
         "timestamp":   fmt_datetime_iso(e.timestamp),
+        "username":    e.username,
+        "description": e.description,
+    }
+
+
+def system_log_to_csv_row(e: SystemLog) -> dict[str, Any]:
+    """Serialize a SystemLog entry to a CSV-safe flat dict (table columns, raw values)."""
+    return {
+        "level":       e.level.value,
+        "timestamp":   fmt_datetime_iso(e.timestamp) or "",
         "username":    e.username,
         "description": e.description,
     }

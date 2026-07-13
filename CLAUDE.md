@@ -21,22 +21,33 @@ This project develops a Python SDK and CLI tool for **Synology ActiveProtect Man
 | `packages/synology-apm-cli/src/synology_apm/cli/README.md` | **CLI command spec**: command structure, output format, color/status rules, SDK call mapping. Full CLI → SDK mapping table lives at the end of the file. | implementation reference for CLI |
 | `APM_PRODUCT_OVERVIEW.md` | APM product domain knowledge — backup/recovery model, workload categories, key concepts (not the SDK itself — see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` for design rationale and interface) | background reference |
 
+New details belong in the closest document, not here: implementation rationale goes in
+source docstrings/comments, SDK behavior contracts in the SDK design-contract README, CLI
+specs in the CLI README. This file holds only cross-cutting rules, workflow, and pointers —
+keep it from growing into a second copy of those documents.
+
 ---
 
 ## APM Test Environment
 
-> **Warning:** Test machine credentials (IP, username, password) **must never be written into any commit**. Read them from `.env` (already in `.gitignore`):
+> **Warning:** APM connection credentials (host, username, password) **must never be written into any commit**. Read them from `.env` (already in `.gitignore`):
+
+`.env.example` is the canonical template — copy it to `.env` and fill in real values:
 
 ```bash
-# .env (format)
-APM_HOST=apm.corp.com        # hostname or IP; supports host:port; SDK prepends https:// automatically
-                              # also accepts full URL format https://192.0.2.1 (conftest strips the scheme automatically)
+# .env (format — see .env.example for the full commented template)
+APM_HOST=apm.corp.com        # hostname or IP, no scheme; supports host:port; SDK prepends https:// automatically
 APM_USERNAME=<username>
 APM_PASSWORD=<password>
 APM_NO_VERIFY_SSL=true       # set to true for self-signed certificate environments
+# APM_PROFILE=default        # optional CLI config profile
 ```
 
-> SSL: The test machine uses a self-signed certificate. Set `APM_NO_VERIFY_SSL=true` (or CLI `--no-verify-ssl`) when connecting.
+> **Note:** The SDK/CLI contract is a scheme-less `host[:port]` value. As a test-only
+> convenience, the integration-test conftest strips an `https://` prefix from `APM_HOST`
+> if one is present.
+
+> SSL: If your APM uses a self-signed certificate, set `APM_NO_VERIFY_SSL=true` (or CLI `--no-verify-ssl`) when connecting.
 
 ---
 
@@ -82,7 +93,7 @@ Reuse these values consistently so examples form a coherent, recognizable "sampl
 | Appliance model | `DP320` | |
 | Reference NAS model | `DS720+` | |
 | Serial number | `SN001` (pattern: `SN` + digits) | |
-| APM software version | `APM 1.2-71845` | |
+| APM software version | `APM 1.2-71845` | build number must stay fictional — never copy a version string from a live system |
 | Protection / retirement plan name | `Daily Backup` / `Compliance Retention` | |
 | Admin username | `admin` | |
 | Resource UUIDs (workload/plan/namespace/tenant/version IDs) | `123e4567-e89b-12d3-a456-4266141740NN` (increment `NN` per distinct resource in an example) | based on the RFC 4122 example UUID; truncated form `123e4567-...` is fine |
@@ -145,11 +156,13 @@ Both READMEs are part of the design contract — read them before implementing, 
 
 ```
 synology-apm-sdk-python/
+├── README.md                ← repository README (project intro + installation)
 ├── pyproject.toml           ← workspace root; shared pytest/mypy/ruff config
 ├── uv.lock                   ← committed lockfile
 ├── Makefile                  ← make test / docs / build / smoke-test shortcuts (see Common Commands)
 ├── LICENSE
 ├── .env.example              ← template for the .env file described above
+├── .claude-plugin/           ← plugin marketplace manifests (marketplace.json, plugin.json) for /plugin install
 ├── .github/workflows/        ← CI, docs, and release pipelines
 ├── APM_PRODUCT_OVERVIEW.md  ← product domain knowledge; see Key Documents table above
 ├── packages/
@@ -383,10 +396,6 @@ automatically via `.github/workflows/release.yml`.
 External contributors do not need to manage version numbers — include your changes in a PR
 and the maintainers will handle versioning and publishing.
 
-> **Note:** Publishing requires a one-time PyPI Trusted Publisher registration for both the
-> `synology-apm-sdk` and `synology-apm-cli` projects — see the prerequisite comment at the
-> top of `.github/workflows/release.yml`.
-
 ---
 
 ## Common Commands
@@ -423,6 +432,43 @@ make smoke-test                        # runs both CLI and SDK smoke tests
 make build                             # wheel + sdist (runs make test first)
 make whl                               # wheel + sdist without running tests
 ```
+
+---
+
+## Common Tasks
+
+End-to-end recipes for the most frequent changes. Each step points at the detailed rules
+(Testing Standards, Post-change Checklist, the two design-contract READMEs) — follow those
+for the specifics; the recipe only fixes the order.
+
+### Add an SDK collection method
+
+1. Implement it in the relevant `sdk/collections/` module (see the SDK README "Design Conventions").
+2. If it introduces a new public symbol (enum, model, collection), export it via `sdk/__init__.py` + `__all__`.
+3. Add a unit test in `tests/unit/sdk/collections/` following Testing Standards (request contract + response parsing).
+4. Add an integration test and record its cassette (`make record-integration-cassettes`).
+5. Update the SDK README only for non-obvious behavior (Collection Behavior Rules) or a new collection/access path.
+6. Consider a matching call in `tests/smoke/sdk/phases/_<domain>.py`.
+7. Run `make test` and `make docs`.
+
+### Add a CLI command
+
+1. Implement it in `cli/commands/<module>` — SDK calls only, never raw HTTP (see the CLI README "Development Conventions").
+2. Add a command-level unit test in `tests/unit/cli/commands/` (SDK wiring, exit codes, output dispatch).
+3. Update the CLI README: command spec + CLI → SDK mapping table.
+4. Add the command path to `scripts/skills_data/<group>.toml`, then run `uv run python scripts/generate_skills.py`.
+5. Update `packages/synology-apm-cli/README.md` example blocks if user-facing usage changed.
+6. Consider a matching invocation in `tests/smoke/cli/phases/_<domain>.py`.
+7. Run `make test`.
+
+### Add an enum or model field
+
+1. Add/extend the mapping dict next to the collection's `_parse_*` parser — it is the source of truth.
+2. Add/extend the model dataclass with an Attributes docstring entry; export new types via `__all__`.
+3. If the value is displayed, add the enum → display-string mapping in the CLI layer (never in the SDK).
+4. Update every test that uses the changed dataclass as a fixture.
+5. Update the SDK README (Enum Definitions and API String Mapping) only if the mapping semantics are non-obvious.
+6. Run `make test` and `make docs`.
 
 ---
 

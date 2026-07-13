@@ -153,7 +153,7 @@ new `ctx.data[...] = ...` assignment, add a row to this table.
 
 | Key | Type | Set by (`ctx.call` step) | Read by |
 |---|---|---|---|
-| `smoke_creds` | `SmokeCreds` | `__main__.py` (from `--creds` / `tests/smoke/smoke_creds.toml`, before any phase runs) | infra (hypervisor / remote-storage CRUD round trips) |
+| `smoke_creds` | `SmokeCreds` | `__main__.py` (from `tests/smoke/smoke_creds.toml`, before any phase runs) | infra (remote-storage CRUD round trips) |
 | `site_info` | `SiteInfo` | infra: `infra.site_info.get` | infra (same-phase checks) |
 | `servers` | `list[BackupServer]` | infra: `infra.servers.list[all]` | infra (same-phase checks); m365_rule (backup server namespace; falls back to its own list call) |
 | `dp_servers` | `list[BackupServer]` (filtered `server_type == BackupServerType.DP`) | infra (derived, no extra call) | log — whole phase skipped if empty |
@@ -280,11 +280,10 @@ consistent ordering) and creates its own test M365 plans rather than consuming f
 `--m365-scopes` (default: all of `M365_SCOPES`) limits which scopes `phases/_m365.py` loops
 over — useful for iterating on one scope.
 
-`--creds FILE` (default: `tests/smoke/smoke_creds.toml`) loads the TOML credential file for
-CRUD round trips that need real endpoint credentials (hypervisor and remote-storage
-registration in the infra phase); it is exposed to phases as `ctx.data["smoke_creds"]`, and
-steps needing an unconfigured credential are skipped. `--output-creds-template` prints a
-`smoke_creds.toml` template to stdout and exits.
+`tests/smoke/smoke_creds.toml` is loaded automatically if it exists; when absent, all CRUD
+steps needing endpoint credentials (remote-storage registration in the infra phase) are
+skipped. Copy `tests/smoke/smoke_creds.toml.example` to get started. The loaded value is
+exposed to phases as `ctx.data["smoke_creds"]`.
 
 ---
 

@@ -18,6 +18,7 @@ venv/
 # Test artifacts
 .pytest_cache/
 .coverage
+htmlcov/
 cassettes/
 *.yaml
 tests/smoke/cli/reports/

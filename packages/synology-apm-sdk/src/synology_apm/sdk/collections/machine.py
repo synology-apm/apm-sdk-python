@@ -164,7 +164,7 @@ class MachineWorkloadCollection(_VersionMixin):
         return workloads, raw.get("total", 0)
 
     async def get(self, workload_id: str, namespace: str) -> MachineWorkload:
-        """Fetch a device Workload by ID (single lookup; 1 API call).
+        """Fetch a device Workload by ID (direct lookup, no list scan).
 
         Args:
             workload_id: Workload ID.

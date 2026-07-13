@@ -1,5 +1,10 @@
 # Synology ActiveProtect Manager (APM) — Python SDK & CLI
 
+[![CI](https://github.com/synology-apm/apm-sdk-python/actions/workflows/ci.yml/badge.svg)](https://github.com/synology-apm/apm-sdk-python/actions/workflows/ci.yml)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://synology-apm.github.io/apm-sdk-python/)
+[![PyPI - synology-apm-sdk](https://img.shields.io/pypi/v/synology-apm-sdk?label=synology-apm-sdk)](https://pypi.org/project/synology-apm-sdk/)
+[![PyPI - synology-apm-cli](https://img.shields.io/pypi/v/synology-apm-cli?label=synology-apm-cli)](https://pypi.org/project/synology-apm-cli/)
+
 Python SDK and command-line tool for [Synology ActiveProtect Manager (APM)](https://www.synology.com/products/ActiveProtectAppliance).
 
 - **synology-apm-sdk** (`synology_apm.sdk`) — async-native, fully typed Python interface to the APM REST API.
@@ -19,7 +24,7 @@ This repo is a [uv](https://docs.astral.sh/uv/) workspace that publishes **two**
 | `packages/synology-apm-cli/` | The `synology-apm-cli` PyPI package (`synology_apm.cli` import; depends on `synology-apm-sdk`) |
 | `skills/` | Claude Code skills that teach AI agents to use the `synology-apm` CLI |
 | `examples/` | Example automation scripts built on `synology_apm.sdk` |
-| `docs/` | Sphinx API reference — config is checked in, generated output is not (see [API Reference](#api-reference)) |
+| `docs/` | Sphinx API reference source — published to [GitHub Pages](https://synology-apm.github.io/apm-sdk-python/) (see [API Reference](#api-reference)) |
 
 ---
 
@@ -29,13 +34,18 @@ This repo is a [uv](https://docs.astral.sh/uv/) workspace that publishes **two**
 |----------|-------------|
 | [`APM_PRODUCT_OVERVIEW.md`](APM_PRODUCT_OVERVIEW.md) | APM product/domain knowledge: workload categories, protection plans, backup copy, and other core concepts |
 | [`packages/synology-apm-sdk/README.md`](packages/synology-apm-sdk/README.md) | SDK developer guide — quick start and usage examples for every module |
+| [API Reference](https://synology-apm.github.io/apm-sdk-python/) | Full SDK API reference — every public class, method, and type signature (Sphinx, hosted on GitHub Pages) |
 | [`packages/synology-apm-cli/README.md`](packages/synology-apm-cli/README.md) | CLI command reference — authentication, output formats, full command list |
 | [`examples/README.md`](examples/README.md) | Example automation scripts (inventory, reports, bulk import/export, …) |
 | [`CLAUDE.md`](CLAUDE.md) | Development guide — testing standards, conventions, and common commands |
 
 ### API Reference
 
-The full SDK API reference (every public class, method, and type signature) is generated from source with Sphinx and is not checked into the repository. Build it locally:
+The full SDK API reference (every public class, method, and type signature) is generated from source with Sphinx and published at:
+
+**https://synology-apm.github.io/apm-sdk-python/**
+
+To build it locally instead (e.g. to preview docstring changes):
 
 ```bash
 uv sync --group docs   # first time only
@@ -91,7 +101,16 @@ All three options install the `synology_apm.sdk` package and, when `synology-apm
 
 ### Claude Code skills
 
-`skills/apm-*` teach Claude Code how to use the `synology-apm` CLI. Copy or symlink them into your skills directory:
+`skills/apm-*` teach Claude Code how to use the `synology-apm` CLI. The skills describe CLI usage only — install `synology-apm-cli` first.
+
+Install via the plugin marketplace (Claude Code; in Claude Desktop use the **+** → **Plugins** menu):
+
+```
+/plugin marketplace add synology-apm/apm-sdk-python
+/plugin install synology-apm@synology-apm
+```
+
+Or copy the skills manually into your skills directory:
 
 ```bash
 mkdir -p ~/.claude/skills

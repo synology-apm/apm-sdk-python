@@ -1,6 +1,7 @@
 """synology-apm machine — device Workload management commands.
 
-get / backup / cancel / retire / change-plan / version list / version get support two modes:
+get / backup / cancel / retire / change-plan / version list / version get / version lock /
+version unlock support two modes:
   Search mode: <name>  (name keyword search)
   Direct mode: --id <id> --namespace <ns>
 """

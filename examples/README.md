@@ -2,47 +2,40 @@
 
 This directory contains example scripts demonstrating common APM automation patterns
 built on the APM Python SDK (`synology_apm.sdk`). Each example is a self-contained,
-runnable command-line tool — run any script with `--help` to see its full set of options.
+runnable command-line tool.
 
 ## Prerequisites
 
-These scripts run on top of the APM Python SDK (`synology_apm.sdk`). Install the SDK first — see
-the [repository README](../README.md#installation) for the available install methods
-(editable install from source, or installing a built wheel).
+Install the SDK first — see the [repository README](../README.md#installation) for the
+available install methods (editable install from source, or installing a built wheel).
 
-The scripts additionally use `python-dotenv` to load credentials from a `.env` file:
+The scripts read APM credentials from a `.env` file via `python-dotenv`. Some scripts
+need two more packages: `pyyaml` (YAML config import/export) and `openpyxl` (XLSX
+output). All three are dev dependencies already installed by `uv sync`; otherwise:
 
 ```bash
-pip install python-dotenv   # already included by `uv sync` (dev dependency group)
+pip install python-dotenv pyyaml openpyxl
 ```
 
-**Create a `.env` file** with your APM credentials. `load_dotenv()` searches the current
-directory and its parents automatically, so a single `.env` at the repository root covers
-every script:
-
-```ini
-APM_HOST=apm.corp.com         # hostname or IP (supports host:port; no https:// prefix)
-APM_USERNAME=admin
-APM_PASSWORD=yourpassword
-APM_NO_VERIFY_SSL=true        # set to true for self-signed certificate environments
-```
+**Create a `.env` file** with your APM credentials — copy `.env.example` at the repository
+root and fill in the values (`APM_HOST` / `APM_USERNAME` / `APM_PASSWORD` /
+`APM_NO_VERIFY_SSL`). `load_dotenv()` searches the current directory and its parents
+automatically, so a single `.env` at the repository root covers every script.
 
 ## Running an Example
 
-Run a script with `python`, passing its path, and add `--help` to see its full option list:
+Run a script with `python`, passing its path; `--help` shows its full option list:
 
 ```bash
 python examples/workload_inventory.py --help
 python examples/workload_inventory.py --category machine
 ```
 
-The tables below show only the script name (e.g. `workload_inventory.py`) for readability —
-run it as `python examples/<name>.py [options]`.
+The tables below show only the script name for readability.
 
-All scripts follow the same stdout/stderr convention: progress messages, status lines, prompts,
-and dry-run notices go to `stderr`; machine-readable output (`-o csv` or `-o json`, where
-supported) goes to `stdout`. This lets you redirect output to a file while still seeing
-progress in the terminal, e.g. `python examples/<name>.py -o csv > out.csv`.
+All scripts print progress to `stderr` and machine-readable output (`-o csv` / `-o json`,
+where supported) to `stdout`, so you can redirect data to a file while still seeing progress:
+`python examples/<name>.py -o csv > out.csv`.
 
 ## Examples by Category
 
@@ -54,7 +47,7 @@ progress in the terminal, e.g. `python examples/<name>.py -o csv > out.csv`.
 | [backup_activity_report.py](backup_activity_report.py) | Print a categorized daily backup result summary (succeeded / failed / in-progress / no activity) for Machine and/or M365 workloads |
 | [restore_activity_report.py](restore_activity_report.py) | Print a categorized daily restore result summary (succeeded / failed / in-progress) across Machine and M365 workloads |
 | [storage_usage_report.py](storage_usage_report.py) | Print a three-section storage usage report: workload usage, backup server usage, and remote storage usage |
-| [billing_report.py](billing_report.py) | Print a billing report of workload count and storage usage grouped by Protection Plan and Retirement Plan, broken down by workload type; supports a YAML pricing config with named pricing plans and optional per-plan assignments (use `--dump-pricing-template` to generate a starting template); supports `-o xlsx --output-file FILE` to write a multi-sheet workbook |
+| [billing_report.py](billing_report.py) | Print a billing report across three independent dimensions — groups, backup servers, and APM plans — with rates from a YAML pricing config (generate a starter with `--dump-config-template`); supports `--details` per-workload-type breakdowns and multi-sheet XLSX output |
 
 ### Backup Operations
 

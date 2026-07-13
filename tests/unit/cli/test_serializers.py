@@ -8,10 +8,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, time
 
 from synology_apm.cli._serializers import (
+    activity_log_to_csv_row,
     activity_log_to_dict,
     activity_to_dict,
     backup_activity_to_csv_row,
+    connection_log_to_csv_row,
     connection_log_to_dict,
+    drive_log_to_csv_row,
     drive_log_to_dict,
     hypervisor_to_csv_row,
     hypervisor_to_dict,
@@ -29,6 +32,7 @@ from synology_apm.cli._serializers import (
     server_to_csv_row,
     server_to_dict,
     site_info_to_dict,
+    system_log_to_csv_row,
     system_log_to_dict,
     tenant_to_dict,
     tiering_plan_to_csv_row,
@@ -685,6 +689,38 @@ def test_log_entry_serializers_fields() -> None:
     ds = system_log_to_dict(system)
     assert set(ds.keys()) == {"level", "timestamp", "username", "description"}
     assert ds["username"] == "SYSTEM"
+
+
+def test_log_entry_csv_rows_align_with_table_columns() -> None:
+    """The log *_to_csv_row field sets follow each command's table column order, with '' for missing values."""
+    ts = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    activity = APMActivityLog(
+        level=LogLevel.WARNING, log_type=None,
+        timestamp=ts, username="admin", description="Backup task started.",
+    )
+    ra = activity_log_to_csv_row(activity)
+    assert list(ra.keys()) == ["level", "type", "timestamp", "username", "description"]
+    assert ra["level"] == "warning"
+    assert ra["type"] == ""
+
+    drive = DriveLog(
+        level=LogLevel.ERROR, timestamp=ts, description="Drive failure detected.",
+        server_name="apm-server-01", model="ST8000", location="Slot 1", serial="SN001",
+    )
+    rd = drive_log_to_csv_row(drive)
+    assert list(rd.keys()) == ["level", "timestamp", "model", "serial", "server_name", "location", "description"]
+    assert rd["serial"] == "SN001"
+
+    conn = ConnectionLog(level=LogLevel.INFO, timestamp=ts, username="admin", description="Signed in.")
+    rc = connection_log_to_csv_row(conn)
+    assert list(rc.keys()) == ["level", "timestamp", "username", "description"]
+    assert rc["description"] == "Signed in."
+
+    system = SystemLog(level=LogLevel.INFO, timestamp=ts, username="SYSTEM", description="Update installed.")
+    rs = system_log_to_csv_row(system)
+    assert list(rs.keys()) == ["level", "timestamp", "username", "description"]
+    assert rs["username"] == "SYSTEM"
 
 
 def test_protection_plan_to_dict_serializes_backup_copy_policy() -> None:

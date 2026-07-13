@@ -229,10 +229,9 @@ The order reflects `ctx.data` dependencies: `infra` populates `dp_servers` befor
 `--m365-scopes` (default: all of `M365_SCOPES`) limits which scopes `phases/_saas_m365.py`
 loops over — useful for iterating on one scope.
 
-`--creds FILE` and `--output-creds-template` come from the shared argument parser
-(`tests/smoke/_driver.py`): `--output-creds-template` prints a `smoke_creds.toml` template
-and exits; the credential file itself is consumed by the **SDK** smoke tool's CRUD round
-trips (see `tests/smoke/sdk/README.md`), not by the CLI phases.
+The credential file (`tests/smoke/smoke_creds.toml`) is consumed only by the **SDK** smoke
+tool's CRUD round trips (see `tests/smoke/sdk/README.md`) — the CLI phases are all
+read-only and do not need it.
 
 ---
 
@@ -255,7 +254,8 @@ Each run creates `reports/<UTC timestamp>/`:
   ```json
   {"step": "machine.list[all][json]", "command": ["uv","run","synology-apm",...],
    "output_format": "json", "seq": 1, "method": "GET", "url": "...",
-   "headers": {...}, "params": {...}, "body": null, "status": 200, "response": {...}}
+   "headers": {...}, "params": {...}, "body": null, "status": 200,
+   "duration": 0.42, "response": {...}}
   ```
   A truncated response body (the CLI's `--debug` output truncates large bodies) is stored as
   a raw string with `"truncated": true` instead of a parsed `"response"`.

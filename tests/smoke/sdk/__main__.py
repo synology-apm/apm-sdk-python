@@ -13,7 +13,7 @@ from pathlib import Path
 
 from synology_apm.sdk import APMClient
 
-from .._creds import TEMPLATE, SmokeCreds, load_smoke_creds
+from .._creds import load_smoke_creds
 from .._driver import build_argparser
 from ._client_env import load_sdk_env
 from ._context import M365_SCOPES, SmokeContext
@@ -46,7 +46,7 @@ async def _run(args: argparse.Namespace) -> int:
     env = load_sdk_env()
     report_dir = make_report_dir(Path(__file__).resolve().parent / "reports")
     m365_scopes = tuple(s.strip() for s in args.m365_scopes.split(",") if s.strip())
-    creds: SmokeCreds = load_smoke_creds(args.creds)
+    creds = load_smoke_creds()
 
     started_at = datetime.now(UTC)
     async with APMClient(env.host, env.username, env.password, verify_ssl=env.verify_ssl) as apm:
@@ -76,9 +76,6 @@ async def _run(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    if args.output_creds_template:
-        print(TEMPLATE, end="")
-        return 0
     return asyncio.run(_run(args))
 
 

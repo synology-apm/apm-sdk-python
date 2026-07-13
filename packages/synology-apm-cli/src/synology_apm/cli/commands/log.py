@@ -24,9 +24,13 @@ from synology_apm.cli._options import (
     UNTIL_OPTION,
 )
 from synology_apm.cli._serializers import (
+    activity_log_to_csv_row,
     activity_log_to_dict,
+    connection_log_to_csv_row,
     connection_log_to_dict,
+    drive_log_to_csv_row,
     drive_log_to_dict,
+    system_log_to_csv_row,
     system_log_to_dict,
 )
 from synology_apm.cli._validate import parse_time_range, validate_name_or_id_args
@@ -119,6 +123,7 @@ async def _run_log_list(
         Awaitable[tuple[Sequence[Any], int]],
     ],
     to_dict: Callable[[Any], dict[str, Any]],
+    to_csv_row: Callable[[Any], dict[str, Any]],
     columns: list[_ColumnSpec],
     row_fn: Callable[[Any], list[str]],
 ) -> None:
@@ -135,7 +140,7 @@ async def _run_log_list(
         result = await dispatch_paginated_list(
             lambda off, lim: list_fn(apm, server, since_dt, until_dt, off, lim),
             limit=limit, offset=offset, page_all=page_all, output=output,
-            to_dict=to_dict,
+            to_dict=to_dict, to_csv_row=to_csv_row,
         )
 
     if result is None:
@@ -209,6 +214,7 @@ async def activity_list(
             since=s, until=u, keyword=search, limit=lim, offset=off,
         ),
         to_dict=activity_log_to_dict,
+        to_csv_row=activity_log_to_csv_row,
         columns=[
             ("Level", {"width": 11, "no_wrap": True}),
             ("Type",  {"width": 17, "no_wrap": True}),
@@ -276,6 +282,7 @@ async def drive_list(
             keyword=search, location=location, limit=lim, offset=off,
         ),
         to_dict=drive_log_to_dict,
+        to_csv_row=drive_log_to_csv_row,
         columns=[
             ("Level",         {"width": 11, "no_wrap": True}),
             ("Time",          {"width": 19, "no_wrap": True}),
@@ -333,6 +340,7 @@ async def connection_list(
             keyword=search, limit=lim, offset=off,
         ),
         to_dict=connection_log_to_dict,
+        to_csv_row=connection_log_to_csv_row,
         columns=_USER_EVENT_COLUMNS,
         row_fn=_user_event_row,
     )
@@ -382,6 +390,7 @@ async def system_list(
             keyword=search, limit=lim, offset=off,
         ),
         to_dict=system_log_to_dict,
+        to_csv_row=system_log_to_csv_row,
         columns=_USER_EVENT_COLUMNS,
         row_fn=_user_event_row,
     )

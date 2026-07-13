@@ -99,6 +99,22 @@ def test_m365_exchange_export_cancel_calls_exchange_export_collection() -> None:
     assert call_arg.activity_id == "act-uuid-001"
     mock_apm.m365.group_export.cancel.assert_not_called()
 
+def test_m365_exchange_export_cancel_quiet_mode() -> None:
+    """apm m365 exchange export cancel --quiet should cancel and produce no success output."""
+    mock_apm = make_mock_apm_with_export(group=False)
+    mock_apm.m365.exchange_export.cancel.return_value = None
+
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "cancel",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--tenant-id", TENANT_ID,
+        "--id", "act-uuid-001", "--quiet",
+    ])
+
+    assert result.exit_code == 0, result.output
+    mock_apm.m365.exchange_export.cancel.assert_called_once()
+    assert result.output.strip() == ""
+
 def test_m365_group_export_list_calls_group_export_collection() -> None:
     """apm m365 group export list should call group_export.list(), not exchange_export."""
     mock_apm = make_mock_apm_with_export(group=True)

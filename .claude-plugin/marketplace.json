@@ -1,0 +1,14 @@
+{
+  "name": "synology-apm",
+  "description": "Claude Code skills for Synology ActiveProtect Manager (APM), built on the synology-apm CLI.",
+  "owner": {
+    "name": "Synology APM SDK maintainers"
+  },
+  "plugins": [
+    {
+      "name": "synology-apm",
+      "source": "./",
+      "description": "Skills that teach Claude to operate Synology ActiveProtect Manager (APM) via the synology-apm CLI: workloads, backup/restore, protection plans, M365, infrastructure, activities, and logs."
+    }
+  ]
+}

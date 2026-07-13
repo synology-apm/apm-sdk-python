@@ -2,6 +2,14 @@
 
 Command-line interface for [Synology ActiveProtect Manager (APM)](https://www.synology.com/products/ActiveProtectAppliance).
 
+## Installation
+
+Requires Python 3.11 or later.
+
+```bash
+pip install synology-apm-cli
+```
+
 ## Authentication
 
 Every command needs a host (hostname or IP, e.g. `apm.corp.com` or `apm.corp.com:10443`), username, and password. `https://` is always used — do not include the scheme. There are three ways to supply connection settings, applied in this priority order (highest first):
@@ -23,7 +31,7 @@ synology-apm config set --host apm.corp.com --username admin --save-password pla
 synology-apm config set --host apm.corp.com --username admin --save-password keyring
 ```
 
-> ⚠ `--save-password plaintext` saves the password in **plain text** in `~/.config/synology-apm/config.toml`. Only use it on a trusted machine; prefer `--save-password keyring` or the `APM_PASSWORD` environment variable on shared/server machines.
+> **Warning:** `--save-password plaintext` saves the password in **plain text** in `~/.config/synology-apm/config.toml`. Only use it on a trusted machine; prefer `--save-password keyring` or the `APM_PASSWORD` environment variable on shared/server machines.
 
 Multiple profiles are supported:
 
@@ -125,11 +133,8 @@ Manages device backup workloads: PC, Physical Server, VM, and File Server.
 # List all machine workloads (no --type = all types)
 synology-apm machine list
 
-# Filter by type (--type is repeatable)
+# Filter by type (values: pc / ps / vm / fs; --type is repeatable)
 synology-apm machine list --type vm                    # Virtual Machines only
-synology-apm machine list --type pc                    # PCs only
-synology-apm machine list --type ps                    # Physical Servers only
-synology-apm machine list --type fs                    # File Servers only
 synology-apm machine list --type vm --type fs          # VMs and File Servers
 
 # Additional filters (default shows protected workloads only)
@@ -219,7 +224,7 @@ synology-apm machine change-plan --id <workload-id> --namespace <namespace> --pl
 
 #### `synology-apm machine version list`
 
-Lists backup versions. Table columns: Created, Status, Locked, Verification (PS/VM only), Changed Size, Locs, Version ID.
+Lists backup versions. Table columns: #, Created, Status, Locked, Verification (PS/VM only), Changed Size, Copy Status, Locations, Version ID.
 Footer shows pagination info (e.g. `Showing 1 of 42`). Use `--verbose` to show Workload ID + Namespace in the header.
 Default search mode finds protected workloads; use `--retired` for retired workloads.
 
@@ -227,7 +232,7 @@ Default search mode finds protected workloads; use `--retired` for retired workl
 # Search mode
 synology-apm machine version list "CORP-PC-001"
 synology-apm machine version list "CORP-PC-001" --limit 25 --offset 25   # page 2
-synology-apm machine version list "CORP-PC-001" --since 7d       # 1h | 24h | 7d | ISO 8601
+synology-apm machine version list "CORP-PC-001" --since 7d       # 30m | 1h | 24h | 7d | ISO 8601
 synology-apm machine version list "CORP-PC-001" --since 2026-04-01T00:00:00
 synology-apm machine version list "CORP-PC-001" --until 2026-04-20T23:59:59
 synology-apm machine version list "old-laptop" --retired
@@ -298,12 +303,7 @@ TENANT="123e4567-e89b-12d3-a456-426614174005"
 # List M365 workloads by service type
 # In table mode, tenant name and domain are displayed above the workload table.
 synology-apm m365 exchange   list                       # auto-resolve tenant
-synology-apm m365 exchange   list -t $TENANT            # Mailbox (Exchange)
-synology-apm m365 onedrive   list -t $TENANT            # OneDrive
-synology-apm m365 chat       list -t $TENANT            # Teams Chat
-synology-apm m365 group      list -t $TENANT            # Group Exchange
-synology-apm m365 sharepoint list -t $TENANT            # SharePoint Sites
-synology-apm m365 teams      list -t $TENANT            # Teams Channels
+synology-apm m365 exchange   list -t $TENANT            # scopes: exchange / onedrive / chat / group / sharepoint / teams
 synology-apm m365 exchange   list --retired             # only retired workloads (default: protected)
 synology-apm m365 exchange   list --search "alice"      # name/email keyword search
 synology-apm m365 exchange   list --verbose             # add Workload ID / Namespace columns
@@ -329,7 +329,7 @@ synology-apm m365 exchange retire "alice@contoso.com" --plan <retirement-plan-id
 synology-apm m365 exchange change-plan "alice@contoso.com" --plan "Daily Backup"
 synology-apm m365 exchange change-plan "bob@contoso.com" --retired --plan "Compliance Retention"
 
-# List backup versions (Table columns: Created, Status, Locked, Changed Size, Locs, Version ID)
+# List backup versions (Table columns: #, Created, Status, Locked, Changed Size, Copy Status, Locations, Version ID)
 synology-apm m365 exchange version list "alice@contoso.com"
 synology-apm m365 exchange version list "alice@contoso.com" --limit 25 --offset 25   # page 2
 synology-apm m365 exchange version list --id <workload-uid> --namespace <ns> --since 7d  # direct mode
@@ -442,7 +442,7 @@ synology-apm activity backup list --status failed --status partial          # mu
 synology-apm activity backup list --machine-type vm                        # Machine sub-type filter
 synology-apm activity backup list --machine-type pc --machine-type vm      # multiple sub-types (OR)
 synology-apm activity backup list --m365-type exchange --m365-type teams   # M365 service type filter
-synology-apm activity backup list --since 24h           # 1h | 24h | 7d | ISO 8601
+synology-apm activity backup list --since 24h           # 30m | 1h | 24h | 7d | ISO 8601
 synology-apm activity backup list --until 7d           # relative time also supported for --until
 synology-apm activity backup list --until 2026-04-20T23:59:59
 
@@ -506,9 +506,8 @@ Infrastructure information: Management Server details and backup server manageme
 
 ```bash
 # Show Management Server info, storage statistics, and workload usage summary
+# (like all get/info commands, supports -o json / -o yaml)
 synology-apm infra info
-synology-apm infra info -o json
-synology-apm infra info -o yaml
 
 # List all backup servers in the cluster
 synology-apm infra server list
@@ -520,13 +519,8 @@ synology-apm infra server list --type dp --type nas     # multiple values allowe
 synology-apm infra server list --verbose                # add Description, Server ID, Namespace columns
 
 # Inspect a single backup server — two modes:
-# Search mode (keyword search)
-synology-apm infra server get "apm-server-01"
-synology-apm infra server get "apm-server-01" -o json
-
-# Direct mode (exact lookup by Server ID)
-synology-apm infra server get --id <server-id>
-synology-apm infra server get --id <server-id> -o json
+synology-apm infra server get "apm-server-01"       # Search mode (keyword search)
+synology-apm infra server get --id <server-id>      # Direct mode (exact lookup by Server ID)
 
 # List all remote storages (External Vaults)
 # Usage column: "442.8 KB (341.8 GB left)" / "442.8 KB" / "-"
@@ -534,26 +528,16 @@ synology-apm infra storage list
 synology-apm infra storage list --verbose               # add Remote Storage ID column
 
 # Inspect a single remote storage — two modes:
-# Search mode (display name or endpoint)
-synology-apm infra storage get "DSM-Storage"
-synology-apm infra storage get "DSM-Storage" -o json
-
-# Direct mode (exact lookup by Remote Storage UUID)
-synology-apm infra storage get --id <storage-id>
-synology-apm infra storage get --id <storage-id> -o json
+synology-apm infra storage get "DSM-Storage"        # Search mode (display name or endpoint)
+synology-apm infra storage get --id <storage-id>    # Direct mode (exact lookup by Remote Storage UUID)
 
 # List all hypervisor inventory servers
 synology-apm infra hypervisor list
 synology-apm infra hypervisor list --verbose               # add Hypervisor ID column
 
 # Inspect a single hypervisor — two modes:
-# Search mode (hostname or address)
-synology-apm infra hypervisor get "esxi1.example.com"
-synology-apm infra hypervisor get "192.0.2.40" -o json
-
-# Direct mode (exact lookup by Hypervisor UUID)
-synology-apm infra hypervisor get --id <hypervisor-id>
-synology-apm infra hypervisor get --id <hypervisor-id> -o json
+synology-apm infra hypervisor get "esxi1.example.com"    # Search mode (hostname or address)
+synology-apm infra hypervisor get --id <hypervisor-id>   # Direct mode (exact lookup by Hypervisor UUID)
 ```
 
 ---

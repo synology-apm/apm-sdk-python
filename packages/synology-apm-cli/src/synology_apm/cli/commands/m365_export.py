@@ -175,7 +175,7 @@ async def _wait_until_downloadable(
         if raw.strip().lower() in ("y", "yes"):
             if last_activity is not None:
                 await col.cancel(last_activity)
-            console.print("[green]✓[/green] Export task cancelled.")
+            console.print("[green]✓[/green] Export task canceled.")
         else:
             act_id_str = (
                 f"\n  Activity ID: {last_activity.activity_id}" if last_activity else ""
@@ -419,6 +419,7 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
         namespace: str | None = typer.Option(None, "--namespace", "-n", help="Backup server namespace (direct mode)"),
         tenant_id: str | None = _TENANT_ID_OPTION,
         retired: bool = _RETIRED_OPTION,
+        quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
     ) -> None:
         ref = validate_resolve_args(ctx, name, workload_id, namespace, id_flag="--workload-id")
         activity_id = require_or_help(ctx, activity_id)
@@ -432,7 +433,8 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
                 raise typer.Exit(EXIT_ERROR)
             await col.cancel(activity)
 
-        console.print(f"[green]✓[/green] Export task {activity_id} canceled.")
+        if not quiet:
+            console.print(f"[green]✓[/green] Export task {activity_id} canceled.")
 
     # ── export download ───────────────────────────────────────────────────
 
@@ -457,7 +459,7 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
         activity_id: str | None = typer.Option(None, "--id", help="Activity ID (from export list)"),
         filename: str | None = typer.Option(
             None, "--filename", "-f",
-            help="Output file path (e.g. mailbox.pst); auto-generated from workload name and ID if omitted",
+            help="Output file path (e.g. mailbox.pst); auto-generated from the workload name if omitted",
         ),
         version_id: str | None = typer.Option(
             None, "--version-id", help="Version ID for auto-start (omit for latest version)"

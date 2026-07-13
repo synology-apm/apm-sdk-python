@@ -68,7 +68,7 @@ When adding or modifying commands, follow the conventions of existing commands (
 - **Shared option constants**: the recurring pagination (`--limit`/`--offset`/`--page-all`), output (`--output`), and time-filter (`--since`/`--until`) options are declared once in `synology_apm.cli._options` and referenced as parameter defaults (e.g. `limit: int = LIMIT_OPTION`); `--since`/`--until` values are parsed with `parse_time_range(since, until)` from `synology_apm.cli._validate`. Only declare an option inline when its default or help text genuinely differs.
 - **Destructive operations** (`retire`, overwrite-style `change-plan`): require interactive confirmation unless `--yes` is given; the summary message is always printed.
 - **Serialization**: before output, resource objects are converted to dicts via public functions in `_serializers.py` (e.g. `workload_to_dict`, `server_to_dict`, `protection_plan_to_dict`); command modules import and call these. This rule has no exemptions: command modules must not define their own `*_to_dict` / `*_to_csv_row` helpers (auditable via `grep -r "def .*_to_dict" commands/` — expected empty). Do not call `print_json()` or `dataclasses.asdict()` directly on an SDK model.
-- **Enum display text**: all enum → display-string mapping tables live in `_display.py` (e.g. `_SERVER_STATUS_DISPLAY`, `_FILE_SERVER_TYPE_DISPLAY`, `_RESTORE_TYPE_DISPLAY`); command modules import and use them — they do not define their own. Each table is accessed through a public `fmt_*` wrapper (e.g. `fmt_server_status`, `fmt_export_status`) that owns the fallback for unmapped values, and the wrapper is what commands call and unit tests exercise. SDK enums contain only semantic values, so adding or adjusting display text requires changes in `_display.py` only. For `machine list` / `machine get`, FS workloads show the protocol sub-label when `fs_config` is available (`File Server / SMB`, `File Server / Synology NAS`, `File Server / Nutanix`, `File Server / NetApp`, `File Server / Unknown`); `File Server` alone is shown when `fs_config is None`. For `plan protection get` task table: `_WORKLOAD_TYPE_DISPLAY` (`MachineWorkloadType` → `"PC/Mac"` / `"Physical Server"` / `"File Server"` / `"Virtual Machine"`), `_OS_TYPE_DISPLAY` (`MachineOsType` → `"Windows"` / `"Mac"` / `"Linux"` / `"-"`), `_SCOPE_DISPLAY` (`MachineTaskScope` → `"Entire Machine"` / `"System Volume"` / `"Custom Volume"`). Display maps must always contain final display strings — no intermediate empty-string sentinels requiring call-site post-processing.
+- **Enum display text**: all enum → display-string mapping tables live in `_display.py` (e.g. `_SERVER_STATUS_DISPLAY`, `_FILE_SERVER_TYPE_DISPLAY`, `_RESTORE_TYPE_DISPLAY`); command modules import and use them — they do not define their own. Each table is accessed through a public `fmt_*` wrapper (e.g. `fmt_server_status`, `fmt_export_status`) that owns the fallback for unmapped values, and the wrapper is what commands call and unit tests exercise. SDK enums contain only semantic values, so adding or adjusting display text requires changes in `_display.py` only (the concrete display strings — e.g. the FS protocol sub-labels and the `plan protection get` task-table labels — are defined there and in the per-command specs below). Display maps must always contain final display strings — no intermediate empty-string sentinels requiring call-site post-processing.
 - **Datetime precision**: table/text output shows local time at second precision (`YYYY-MM-DD HH:MM:SS` via `fmt_datetime()`); JSON/CSV output uses local-timezone ISO 8601 (via `fmt_datetime_iso()` / `to_local_iso()`). **Exception**: schedule time-of-day fields (`schedule.start_time`, `daily_check_time`) are always `HH:MM` (no seconds, no timezone) in every output format, since APM schedules only support minute granularity.
 - **External non-SDK dependencies** (e.g. the OS keyring): wrap calls with a narrow `try/except` and a dedicated CLI-defined exception type (e.g. `KeyringUnavailableError`), not `apm_error_handler()` — that helper converts `APMError` to structured messages and also converts `ValueError` to a plain `EXIT_ERROR` message; it re-raises everything else.
 - **Shared backup/cancel/retire/change-plan action bodies**: `machine` and `m365` implement the same four destructive/state-changing commands (`backup`, `cancel`, `retire`, `change-plan`) with identical resolve → confirm → invoke → print-success flow. The domain-agnostic body of each lives once in `commands/_actions.py` (`_do_backup` / `_do_cancel` / `_do_retire` / `_do_change_plan`); each command module passes in closures for workload resolution and a `label_fn` callable (`_machine_type_label` for `machine`, `lambda wl: None` for `m365`, since M365 workloads have no type label in this output) to absorb the only real per-domain differences.
@@ -386,6 +386,15 @@ The combined behavior of `--page-all` and `--output`:
 
 `synology-apm infra storage list` and `synology-apm infra hypervisor list` do not support `--limit` / `--offset` (the API returns all data in one call), so `--page-all` is not provided.
 
+### Search / Direct mode
+
+Resource-addressed commands accept two mutually exclusive addressing modes; combining them is an argument error, and omitting both prints the command help:
+
+- **Search mode** — positional `<NAME>`: keyword search, then case-insensitive exact match. Machine workloads match on name; M365 workloads match on display name / UPN / group email and are scoped by `-t/--tenant-id` (auto-resolves to the first M365 tenant when omitted, reported on stderr as `(Using tenant: <id>)`). Plan / server / storage / hypervisor commands match on name (or endpoint/address where noted per command).
+- **Direct mode** — `--id <ID>`: direct ID lookup. Workload commands additionally require `--namespace <NS>`; `version` and `export` subcommands use `--workload-id` instead, because `--id` there addresses the version/activity.
+
+Per-command specs below show the two usage lines and note any deviations (optional `--id`, `--retired`, plan options).
+
 ### Get detail block
 
 Canonical example (`synology-apm machine get`, table mode). Workload get commands (`machine get` / `m365 <scope> get`) share this two-block layout; plan / infra get commands use a similar `Header: <name>` + `─` rule + `Label: value` section layout whose fields are listed per command.
@@ -415,6 +424,18 @@ Workload: CORP-PC-001
 > - The Workload Information block always starts with ID / Namespace / Type; the rows after Type vary by workload type (see each get command).
 > - The Backup Status block ends with Plan / Plan ID / Last Backup / Protected Size / Backup Server / Copy Dest; a `Copy Size` row is inserted before Backup Server only when the workload has backup copy data (non-zero).
 > - Retired workload: the Backup Status block does not show the Status line.
+
+### Copy status detail lines
+
+Wherever a backup-copy / tiering status is rendered in a detail view (`plan protection get` Copy Status, `plan tiering get` and `infra server get` Tiering Status — all via `fmt_copy_status` / `fmt_copy_reason`), the status line appears only when the status is set and not NOT_ENABLED, and is followed by up to two indented detail lines:
+
+```
+<formatted status>
+<N version(s) pending, X remaining>   ← WAITING/SCHEDULED/IN_PROGRESS/RETRY/FAILED, when pending_version_count > 0;
+                                         the ", X remaining" suffix is omitted when remaining_bytes is unavailable
+<N workload(s) skipped.>              ← SKIPPED: skipped workload count (plan protection get only)
+<error detail message>                ← RETRY/FAILED/SKIPPED: reason string (fmt_copy_reason)
+```
 
 ### Action confirmation flow
 
@@ -571,7 +592,7 @@ Subcommands that support search mode (`get` / `version list` / `version get` / `
 
 #### `synology-apm machine get`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm machine get <NAME> [--retired]                     # Search mode (keyword search, then exact name match)
@@ -590,7 +611,7 @@ Table output follows the canonical [get detail block](#get-detail-block). Type r
 
 #### `synology-apm machine backup`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm machine backup <NAME>                                  # Search mode
@@ -610,7 +631,7 @@ synology-apm machine backup --id WORKLOAD_ID --namespace NAMESPACE  # Direct mod
 
 #### `synology-apm machine cancel`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm machine cancel <NAME> [--yes] [--quiet]                                  # Search mode
@@ -623,7 +644,7 @@ Follows the short cancel-confirmation variant of the canonical [action confirmat
 
 #### `synology-apm machine retire`
 
-The two modes are mutually exclusive. `--plan` is required and accepts a Retirement Plan name or UUID; if the value does not match the UUID format, name search is performed automatically. The Plan ID/name can be obtained from `synology-apm plan retirement list --verbose`.
+[Search / Direct mode](#search--direct-mode). `--plan` is required and accepts a Retirement Plan name or UUID; if the value does not match the UUID format, name search is performed automatically. The Plan ID/name can be obtained from `synology-apm plan retirement list --verbose`.
 
 ```bash
 synology-apm machine retire <NAME> --plan PLAN_NAME_OR_ID [--yes] [--quiet]                                  # Search mode
@@ -638,7 +659,7 @@ Output follows the canonical [irreversible-warning flow](#irreversible-warning-f
 
 #### `synology-apm machine change-plan`
 
-The two modes are mutually exclusive. `--plan` is required and accepts a Plan name or UUID; if the value does not match the UUID format, name search is performed automatically. The plan type `--plan` is resolved against is auto-detected from the workload's current state: a Protection Plan for an active Workload, a Retirement Plan for an already-retired one (add `--retired` in search mode to look up a retired Workload by name). The Plan ID can be obtained from `synology-apm plan protection list --verbose` / `synology-apm plan retirement list --verbose`.
+[Search / Direct mode](#search--direct-mode). `--plan` is required and accepts a Plan name or UUID; if the value does not match the UUID format, name search is performed automatically. The plan type `--plan` is resolved against is auto-detected from the workload's current state: a Protection Plan for an active Workload, a Retirement Plan for an already-retired one (add `--retired` in search mode to look up a retired Workload by name). The Plan ID can be obtained from `synology-apm plan protection list --verbose` / `synology-apm plan retirement list --verbose`.
 
 ```bash
 synology-apm machine change-plan <NAME> --plan PLAN_NAME_OR_ID [--retired] [--yes] [--quiet]                       # Search mode
@@ -651,7 +672,7 @@ Output follows the canonical [action confirmation flow](#action-confirmation-flo
 
 #### `synology-apm machine version list`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm machine version list <NAME> [--retired]                       # Search mode
@@ -673,7 +694,7 @@ Column order: `#` / Created / Status / Locked / **Verification (PS/VM only)** / 
 
 #### `synology-apm machine version get`
 
-The two modes are mutually exclusive; `--id` (Version ID) is optional, and the latest version is fetched automatically if omitted (the auto-selected version is reported on stderr as `(Using version: <id>, created at <time>)`):
+[Search / Direct mode](#search--direct-mode); `--id` (Version ID) is optional, and the latest version is fetched automatically if omitted (the auto-selected version is reported on stderr as `(Using version: <id>, created at <time>)`):
 
 ```bash
 synology-apm machine version get <NAME> [--id VERSION_ID] [--retired]                                # Search mode
@@ -803,7 +824,7 @@ JSON / YAML / CSV output is a plain workload list (no tenant header), convenient
 
 #### `synology-apm m365 <SCOPE> get`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm m365 exchange get <NAME> [-t <TID>] [--retired]     # Search mode (keyword search + exact match)
@@ -951,7 +972,7 @@ Manages Protection Plans (backup protection plans). Both `get` / `get_by_name` a
 
 #### `synology-apm plan protection get`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm plan protection get NAME       # Search mode (name search, exact match page by page, across categories)
@@ -970,11 +991,7 @@ Immutable:    Yes / No
 
 Successful:   <n> workloads
 Unsuccessful: <n> workloads
-Copy Status:  <formatted status>      ← only when backup_copy_status is set and not NOT_ENABLED
-              <N version(s) pending, X remaining>  ← WAITING/SCHEDULED/IN_PROGRESS/RETRY/FAILED, when pending_version_count > 0;
-                                                      the ", X remaining" suffix is omitted when remaining_bytes is unavailable
-              <N workload(s) skipped.>            ← SKIPPED: skipped workload count
-              <error detail message>              ← RETRY/FAILED/SKIPPED: reason string (fmt_copy_reason)
+Copy Status:  <formatted status + detail lines>   ← see "Copy status detail lines" above
 
 Backup Copy Policy
   Destination: <name> or <name (vault)> or `-` (when the destination lookup fails)
@@ -1051,7 +1068,7 @@ Used as the source for the `--plan` parameter of `synology-apm machine retire` /
 
 #### `synology-apm plan retirement get`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm plan retirement get NAME           # Search mode (name search, exact match page by page)
@@ -1095,10 +1112,7 @@ Tiering Plan: <name>
 ID:               <plan_id>
 Description:      <description or `-`>
 
-Tiering Status:   <formatted status>              ← shown before config fields; only when tiering_status is set and not NOT_ENABLED
-                  <N version(s) pending, X remaining>  ← WAITING/SCHEDULED/IN_PROGRESS/RETRY/FAILED, when pending_version_count > 0;
-                                                          the ", X remaining" suffix is omitted when remaining_bytes is unavailable
-                  <error detail message>              ← RETRY/FAILED/SKIPPED: reason string (fmt_copy_reason)
+Tiering Status:   <formatted status + detail lines>   ← shown before config fields; see "Copy status detail lines"
 
 Tier After:       <N> days
 Destination:      <name> or <name (vault)> or `-`
@@ -1273,7 +1287,7 @@ Filters: `--search`, `--status` (repeatable), `--type` (repeatable).
 
 #### `synology-apm infra server get`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm infra server get "apm-server-01"       # Search mode (name keyword search)
@@ -1294,10 +1308,7 @@ System Version: <version or "Updating..." or `-`>
 Description:    <description or `-`>
 Status:         <status icon + label>
 
-Tiering Status: <formatted status>                  ← only when tiering_status is set and not NOT_ENABLED
-                <N version(s) pending, X remaining>  ← WAITING/SCHEDULED/IN_PROGRESS/RETRY/FAILED, when pending_version_count > 0;
-                                                        the ", X remaining" suffix is omitted when remaining_bytes is unavailable
-                <error detail message>               ← RETRY/FAILED/SKIPPED: reason string (fmt_copy_reason)
+Tiering Status: <formatted status + detail lines>   ← see "Copy status detail lines"
 
 Storage Usage:
   Total:  <total bytes>
@@ -1386,7 +1397,7 @@ Lists all configured remote storage devices (External Vault). The API does not s
 
 #### `synology-apm infra storage get`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm infra storage get "DSM-Storage"      # Search mode (display name or endpoint)
@@ -1449,7 +1460,7 @@ Lists all registered Hypervisor Inventory servers. The API does not support pagi
 
 #### `synology-apm infra hypervisor get`
 
-The two modes are mutually exclusive:
+[Search / Direct mode](#search--direct-mode):
 
 ```bash
 synology-apm infra hypervisor get "esxi1.example.com"    # Search mode (hostname or address)
@@ -1467,6 +1478,8 @@ Queries the system logs of a specified backup server. All `synology-apm log * li
 > **Warning:** only DP (ActiveProtect) backup servers are supported. If a NAS server is specified, the command shows an error and ends with exit code 1.
 
 **How to obtain the Server ID:** `synology-apm infra server list --verbose` (verbose mode must be enabled to show the ID column)
+
+**Shared filters:** all four `log * list` commands support `--level` (repeatable severity filter: information / warning / error), `--since` / `--until`, `--search`, and the standard pagination options. `log activity list` additionally supports `--type`, and `log drive list` supports `--location` (shown in their usage lines below).
 
 ---
 
@@ -1652,15 +1665,17 @@ When authentication is not configured:
 
 ## CLI → SDK Mapping Table
 
+Rows marked *plan resolution* resolve `--plan` (UUID → `.get()`, otherwise `.get_by_name()`) against `ProtectionPlanCollection` / `RetirementPlanCollection` as described in the [Development Conventions](#development-conventions) "Plan resolution" bullet — based on `--retired` for list filters, always a Retirement Plan for `retire`, and the workload's current state for `change-plan`. In the export rows, `<Export>` denotes `ExchangeExportCollection` (`exchange`) or `GroupExportCollection` (`group`).
+
 | Command | Corresponding SDK |
 |------|---------|
 | `synology-apm config set/show/clear` | — |
-| `synology-apm machine list --type [pc\|ps\|vm\|fs] --plan` | `ProtectionPlanCollection.get_by_name()` / `.get()` or `RetirementPlanCollection.get_by_name()` / `.get()` (plan resolution, based on `--retired`) → `MachineWorkloadCollection.list()` |
+| `synology-apm machine list --type [pc\|ps\|vm\|fs] --plan` | *plan resolution* → `MachineWorkloadCollection.list()` |
 | `synology-apm machine get` | `MachineWorkloadCollection.get_by_name()` (search) / `MachineWorkloadCollection.get()` (direct) |
 | `synology-apm machine backup` | `MachineWorkloadCollection.backup_now()` |
 | `synology-apm machine cancel` | `MachineWorkloadCollection.cancel_backup()` |
-| `synology-apm machine retire --plan` | `RetirementPlanCollection.get_by_name()` / `.get()` (plan resolution) → `MachineWorkloadCollection.retire()` |
-| `synology-apm machine change-plan --plan` | `ProtectionPlanCollection.get_by_name()` / `.get()` or `RetirementPlanCollection.get_by_name()` / `.get()` (plan resolution, based on workload state) → `MachineWorkloadCollection.change_plan()` |
+| `synology-apm machine retire --plan` | *plan resolution* → `MachineWorkloadCollection.retire()` |
+| `synology-apm machine change-plan --plan` | *plan resolution* → `MachineWorkloadCollection.change_plan()` |
 | `synology-apm machine version list` | `MachineWorkloadCollection.list_versions()` |
 | `synology-apm machine version get [--id]` | `MachineWorkloadCollection.get_version()` or `get_latest_version()` + `BackupActivityCollection.get_by_version()` |
 | `synology-apm machine version lock --id` | `MachineWorkloadCollection.get_version()` → `lock_version(version)` |
@@ -1676,22 +1691,15 @@ When authentication is not configured:
 | `synology-apm infra hypervisor get` | `HypervisorCollection.get()` (direct) / `HypervisorCollection.get_by_name()` (search) |
 | `synology-apm infra info` | `APMClient.get_site_info()` |
 | `synology-apm saas list` | `SaasCollection.list()` |
-| `synology-apm m365 <scope> list [-t] --plan` | `ProtectionPlanCollection.get_by_name()` / `.get()` or `RetirementPlanCollection.get_by_name()` / `.get()` (plan resolution, based on `--retired`) → `M365WorkloadCollection.list()` + `SaasCollection.get_m365_tenant()` |
+| `synology-apm m365 <scope> list [-t] --plan` | *plan resolution* → `M365WorkloadCollection.list()` + `SaasCollection.get_m365_tenant()` |
 | `synology-apm m365 <scope> get/backup/cancel` | `M365WorkloadCollection` |
-| `synology-apm m365 <scope> retire --plan` | `RetirementPlanCollection.get_by_name()` / `.get()` (plan resolution) → `M365WorkloadCollection.retire()` |
-| `synology-apm m365 <scope> change-plan --plan` | `ProtectionPlanCollection.get_by_name()` / `.get()` or `RetirementPlanCollection.get_by_name()` / `.get()` (plan resolution, based on workload state) → `M365WorkloadCollection.change_plan()` |
-| `synology-apm m365 <scope> version list` | `M365WorkloadCollection.list_versions()` |
-| `synology-apm m365 <scope> version get [--id]` | `M365WorkloadCollection.get_version()` or `get_latest_version()` + `BackupActivityCollection.get_by_version()` |
-| `synology-apm m365 <scope> version lock --id` | `M365WorkloadCollection.get_version()` → `lock_version(version)` |
-| `synology-apm m365 <scope> version unlock --id` | `M365WorkloadCollection.get_version()` → `unlock_version(version)` |
-| `synology-apm m365 exchange export list` | `ExchangeExportCollection.list(wl)` |
-| `synology-apm m365 exchange export cancel --id` | `ExchangeExportCollection.list(wl)` → `cancel(activity)` |
-| `synology-apm m365 exchange export download` (auto-start) | `ExchangeExportCollection.start()` → `ready_to_download=True`: `get_download_url_by_ready_result()`; `ready_to_download=False`: poll `get_activity_by_result()` until downloadable → `get_download_url_by_ready_result(start_result)`; then `APMClient.download_file()` |
-| `synology-apm m365 exchange export download --id` | `ExchangeExportCollection.list(wl)` → `get_download_url_by_activity()` + `APMClient.download_file()` |
-| `synology-apm m365 group export list` | `GroupExportCollection.list(wl)` |
-| `synology-apm m365 group export cancel --id` | `GroupExportCollection.list(wl)` → `cancel(activity)` |
-| `synology-apm m365 group export download` (auto-start) | `GroupExportCollection.start()` → `ready_to_download=True`: `get_download_url_by_ready_result()`; `ready_to_download=False`: poll `get_activity_by_result()` until downloadable → `get_download_url_by_ready_result(start_result)`; then `APMClient.download_file()` |
-| `synology-apm m365 group export download --id` | `GroupExportCollection.list(wl)` → `get_download_url_by_activity()` + `APMClient.download_file()` |
+| `synology-apm m365 <scope> retire --plan` | *plan resolution* → `M365WorkloadCollection.retire()` |
+| `synology-apm m365 <scope> change-plan --plan` | *plan resolution* → `M365WorkloadCollection.change_plan()` |
+| `synology-apm m365 <scope> version list/get/lock/unlock` | same as the `machine version` rows above, on `M365WorkloadCollection` |
+| `synology-apm m365 (exchange\|group) export list` | `<Export>.list(wl)` |
+| `synology-apm m365 (exchange\|group) export cancel --id` | `<Export>.list(wl)` → `cancel(activity)` |
+| `synology-apm m365 (exchange\|group) export download` (auto-start) | `<Export>.start()` → `ready_to_download=True`: `get_download_url_by_ready_result()`; `ready_to_download=False`: poll `get_activity_by_result()` until downloadable → `get_download_url_by_ready_result(start_result)`; then `APMClient.download_file()` |
+| `synology-apm m365 (exchange\|group) export download --id` | `<Export>.list(wl)` → `get_download_url_by_activity()` + `APMClient.download_file()` |
 | `synology-apm plan protection list [--category machine\|m365]` | `ProtectionPlanCollection.list(category=)` |
 | `synology-apm plan protection get NAME` | `ProtectionPlanCollection.get_by_name(name)` (cross-category keyword search + exact match) |
 | `synology-apm plan protection get --id` | `ProtectionPlanCollection.get(plan_id)` |

@@ -1,11 +1,14 @@
 """synology-apm m365 — Microsoft 365 backup resource management commands.
 
 Command structure:
-  synology-apm m365 (exchange|onedrive|chat|group|sharepoint|teams) list/get/backup/cancel/retire
+  synology-apm m365 (exchange|onedrive|chat|group|sharepoint|teams)
+    list/get/backup/cancel/retire/change-plan/version (all types)
+    export list/cancel/download (exchange and group only)
 
-get / backup / cancel / retire / change-plan support two modes:
-  Search mode: <identifier> -t <tid>         (UPN / group email / site or team name)
-  Direct mode: --id <uid> --namespace <ns>   (nsUidPair exact lookup)
+get / backup / cancel / retire / change-plan / version / export support two modes:
+  Search mode: <identifier> -t <tid>       (UPN / group email / site or team name)
+  Direct mode: --id <uid> --namespace <ns> (exact lookup; version/export subcommands
+               use --workload-id because --id refers to the version/activity there)
 """
 from __future__ import annotations
 

@@ -30,11 +30,11 @@ Usage: synology-apm activity backup list [OPTIONS]
 |------|-------------|
 | `--status <STATUS, ...>` | Repeatable: queuing / backing_up / canceling / success / failed / partial / canceled |
 | `--search <SEARCH>` | Keyword search |
-| `--machine-type <MACHINE_TYPE, ...>` | Machine sub-type filter, repeatable: pc / vm / ps / fs |
+| `--machine-type <MACHINE_TYPE, ...>` | Machine sub-type filter, repeatable: pc / ps / vm / fs |
 | `--m365-type <M365_TYPE, ...>` | M365 service type filter, repeatable: exchange / onedrive / chat / sharepoint / teams / group |
 | `--namespace, -n <NAMESPACE, ...>` | Repeatable. Show only activities on the specified backup server(s) (get namespace from synology-apm infra server list --verbose) |
-| `--since <SINCE>` | Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
-| `--until <UNTIL>` | End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
+| `--since <SINCE>` | Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
+| `--until <UNTIL>` | End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
 | `--history` | Show completed activities instead of ongoing activities |
 
 ### `synology-apm activity backup get`
@@ -95,8 +95,8 @@ Usage: synology-apm activity restore list [OPTIONS]
 |------|-------------|
 | `--status <STATUS, ...>` | Repeatable: preparing / restoring / canceling / ready_for_migrate / migrate_vm_manually / migrating / success / failed / partial / canceled |
 | `--search <SEARCH>` | Keyword search |
-| `--since <SINCE>` | Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
-| `--until <UNTIL>` | End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
+| `--since <SINCE>` | Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
+| `--until <UNTIL>` | End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
 | `--history` | Show completed activities instead of ongoing activities |
 
 ### `synology-apm activity restore get`

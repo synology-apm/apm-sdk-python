@@ -38,6 +38,7 @@ from datetime import datetime
 
 from _common import (
     Progress,
+    _remove_quietly,
     fmt_bytes,
     fmt_dt,
     fmt_speed,
@@ -229,14 +230,6 @@ async def _download_one(
             progress.downloading -= 1
             progress.done += 1
             progress.print_progress()
-
-
-def _remove_quietly(path: str) -> None:
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-    except OSError:
-        pass
 
 
 # ── CSV output ────────────────────────────────────────────────────────────────

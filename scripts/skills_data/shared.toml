@@ -15,6 +15,9 @@ into command groups, each covered by its own skill:
 
 This skill covers what is common to all of them: connecting to APM, output formats,
 exit codes, and the `synology-apm config` commands used to store connection settings.
+
+The CLI is distributed on PyPI as `synology-apm-cli` and must be installed separately —
+these skills only describe how to use it.
 """
 
 common_flags_intro = """
@@ -66,6 +69,10 @@ commands = [
 ]
 
 tips = """
+- If `synology-apm` is not found on PATH (shell reports "command not found"), the CLI
+  is not installed — install it with `pip install synology-apm-cli` (or
+  `pipx install synology-apm-cli`), then re-run. The PyPI package name is
+  `synology-apm-cli`, not `synology-apm`.
 - For non-interactive use, pass `--no-input`: this disables all interactive prompts
   and makes the CLI exit with an error instead of blocking on stdin.
 - Prefer `--output json` (or `yaml`) over the default `table` when you need to parse

@@ -1598,7 +1598,10 @@ def _write_rs_credentials(
     """
     tmp_path = f"{path}.tmp"
     bak_path = f"{path}.{backup_suffix}.bak"
-    with open(tmp_path, "w", newline="", encoding="utf-8") as fh:
+    # Create the tmp file owner-only (0600) so the secrets it holds are never
+    # world-readable, and so the final os.replace() preserves that mode.
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(
             fh, fieldnames=[
                 "storage_type", "endpoint", "vault_name",

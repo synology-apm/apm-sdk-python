@@ -148,6 +148,13 @@ def format_flag(param: click.Parameter, ctx: click.Context) -> str:
     return f"`{opts} <{metavar}{suffix}>`"
 
 
+def render_flag_table(rows: list[tuple[str, str]]) -> str:
+    """Render (flag label, description) pairs as a markdown flags table."""
+    lines = ["| Flag | Description |", "|------|-------------|"]
+    lines.extend(f"| {flag} | {desc} |" for flag, desc in rows)
+    return "\n".join(lines)
+
+
 def caution_block(cmd: click.Command) -> str | None:
     """Return a CAUTION/confirmation callout for commands with --yes, or None."""
     has_yes = any(isinstance(p, click.Option) and "--yes" in p.opts for p in cmd.params)
@@ -193,9 +200,7 @@ def render_command(root: click.Group, path: str) -> str:
         rows.append((format_flag(param, ctx), help_text))
 
     if rows:
-        lines.append("| Flag | Description |")
-        lines.append("|------|-------------|")
-        lines.extend(f"| {flag} | {desc} |" for flag, desc in rows)
+        lines.append(render_flag_table(rows))
         lines.append("")
 
     caution = caution_block(cmd)
@@ -223,9 +228,7 @@ def render_common_flags_table(root: click.Group) -> str:
                 break
         else:
             raise SystemExit(f"flag {flag!r} not found on reference command 'synology-apm {cmd_path}'")
-    lines = ["| Flag | Description |", "|------|-------------|"]
-    lines.extend(f"| {flag} | {desc} |" for flag, desc in rows)
-    return "\n".join(lines)
+    return render_flag_table(rows)
 
 
 def render_global_options(root: click.Group) -> str:
@@ -239,9 +242,7 @@ def render_global_options(root: click.Group) -> str:
         if not help_text:
             continue
         rows.append((format_flag(param, ctx), help_text))
-    lines = ["| Flag | Description |", "|------|-------------|"]
-    lines.extend(f"| {flag} | {desc} |" for flag, desc in rows)
-    return "\n".join(lines)
+    return render_flag_table(rows)
 
 
 def assert_m365_scopes(root: click.Group, data: dict[str, Any]) -> None:

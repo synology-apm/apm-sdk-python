@@ -58,6 +58,43 @@ _FAILED  = {BackupActivityStatus.FAILED, BackupActivityStatus.PARTIAL, BackupAct
 _ONGOING = {BackupActivityStatus.BACKING_UP, BackupActivityStatus.QUEUING, BackupActivityStatus.CANCELING}
 
 
+def _merge_activities(
+    completed: list[BackupActivity],
+    ongoing: list[BackupActivity],
+) -> dict[str, BackupActivity]:
+    act_map: dict[str, BackupActivity] = {}
+    for act in completed:
+        act_map.setdefault(act.workload_id, act)
+    for act in ongoing:
+        act_map[act.workload_id] = act  # ongoing overrides: more current status
+    return act_map
+
+
+def _tally(
+    wl: MachineWorkload | M365Workload,
+    wl_act: BackupActivity | None,
+) -> dict[str, Any]:
+    base   = {"workload_id": wl.workload_id, "name": wl.name,
+              "category": category_label(wl), "type": workload_type_label(wl),
+              "last_backup_at": wl.last_backup_at}
+    if wl_act is None or wl_act.status not in (_SUCCESS | _FAILED | _ONGOING):
+        return {**base, "result": "no_activity", "duration_seconds": None,
+                "transferred_bytes": None, "progress": None}
+    elif wl_act.status in _SUCCESS:
+        return {**base, "result": "success",
+                "duration_seconds": wl_act.duration_seconds,
+                "transferred_bytes": wl_act.data_transferred_bytes or 0,
+                "progress": None}
+    elif wl_act.status in _FAILED:
+        return {**base, "result": wl_act.status.value,
+                "duration_seconds": wl_act.duration_seconds,
+                "transferred_bytes": wl_act.data_transferred_bytes,
+                "progress": None}
+    else:  # _ONGOING
+        return {**base, "result": wl_act.status.value, "duration_seconds": None,
+                "transferred_bytes": None, "progress": wl_act.progress or 0}
+
+
 async def run(
     report_date: date,
     retired_only: bool,
@@ -108,11 +145,7 @@ async def run(
                 offset=offset,
             )
         )
-        act_map: dict[str, BackupActivity] = {}
-        for act in completed:
-            act_map.setdefault(act.workload_id, act)
-        for act in ongoing:
-            act_map[act.workload_id] = act  # ongoing overrides: more current status
+        act_map = _merge_activities(completed, ongoing)
 
         # 2. Collect workloads and tally into rows.
         workloads, total_workloads = await collect_workloads(
@@ -120,30 +153,8 @@ async def run(
             is_retired=retired_only,
         )
 
-    def _tally(wl: MachineWorkload | M365Workload) -> None:
-        base   = {"workload_id": wl.workload_id, "name": wl.name,
-                  "category": category_label(wl), "type": workload_type_label(wl),
-                  "last_backup_at": wl.last_backup_at}
-        wl_act = act_map.get(wl.workload_id)
-        if wl_act is None or wl_act.status not in (_SUCCESS | _FAILED | _ONGOING):
-            rows.append({**base, "result": "no_activity", "duration_seconds": None,
-                         "transferred_bytes": None, "progress": None})
-        elif wl_act.status in _SUCCESS:
-            rows.append({**base, "result": "success",
-                         "duration_seconds": wl_act.duration_seconds,
-                         "transferred_bytes": wl_act.data_transferred_bytes or 0,
-                         "progress": None})
-        elif wl_act.status in _FAILED:
-            rows.append({**base, "result": wl_act.status.value,
-                         "duration_seconds": wl_act.duration_seconds,
-                         "transferred_bytes": wl_act.data_transferred_bytes,
-                         "progress": None})
-        else:  # _ONGOING
-            rows.append({**base, "result": wl_act.status.value, "duration_seconds": None,
-                         "transferred_bytes": None, "progress": wl_act.progress or 0})
-
     for wl in workloads:
-        _tally(wl)
+        rows.append(_tally(wl, act_map.get(wl.workload_id)))
 
     # ── Output ─────────────────────────────────────────────────────────
     include_category_col = category == "all"

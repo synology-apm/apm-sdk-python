@@ -130,7 +130,7 @@ async def backup_list(
     search: str | None = typer.Option(None, "--search", help="Keyword search"),
     machine_type: list[str] | None = typer.Option(
         None, "--machine-type",
-        help="Machine sub-type filter, repeatable: pc / vm / ps / fs",
+        help="Machine sub-type filter, repeatable: pc / ps / vm / fs",
     ),
     m365_type: list[str] | None = typer.Option(
         None, "--m365-type",

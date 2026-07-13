@@ -10,7 +10,6 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .._creds import TEMPLATE
 from .._driver import build_argparser
 from ._cli_runner import CliRunner, load_cli_env
 from ._context import M365_SCOPES, SmokeContext
@@ -46,11 +45,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-
-    if args.output_creds_template:
-        print(TEMPLATE, end="")
-        return 0
-
     cli_env = load_cli_env()
     runner = CliRunner(cli_env)
 

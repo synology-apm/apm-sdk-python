@@ -58,6 +58,33 @@ _FAILED_RESULTS  = {s.value for s in _FAILED}
 _ONGOING_RESULTS = {s.value for s in _ONGOING}
 
 
+def _merge_activities(
+    completed: list[RestoreActivity],
+    ongoing: list[RestoreActivity],
+) -> dict[str, RestoreActivity]:
+    _seen: dict[str, RestoreActivity] = {}
+    for act in completed:
+        _seen.setdefault(act.activity_id, act)
+    for act in ongoing:
+        _seen[act.activity_id] = act
+    return _seen
+
+
+def _build_row(act: RestoreActivity) -> dict[str, Any]:
+    result = "success" if act.status in _SUCCESS else act.status.value
+    return {
+        "workload_id":      act.workload_id,
+        "workload_name":    act.workload_name,
+        "workload_type":    act.workload_type.value,
+        "result":           result,
+        "operator":         act.operator,
+        "restore_type":     act.restore_type.value if act.restore_type else None,
+        "destination":      act.restore_destination,
+        "started_at":       act.started_at,
+        "duration_seconds": act.duration_seconds,
+    }
+
+
 async def run(
     report_date: date,
     category: str,
@@ -88,12 +115,7 @@ async def run(
         )
         # Merge by activity_id: completed first, ongoing overrides (more current status).
         # The two sets are disjoint in practice; dedup handles edge cases.
-        _seen: dict[str, RestoreActivity] = {}
-        for act in completed:
-            _seen.setdefault(act.activity_id, act)
-        for act in ongoing:
-            _seen[act.activity_id] = act
-        activities = list(_seen.values())
+        activities = list(_merge_activities(completed, ongoing).values())
 
     # Filter by category
     if category == "machine":
@@ -101,24 +123,7 @@ async def run(
     elif category == "m365":
         activities = [a for a in activities if a.category == WorkloadCategory.M365]
 
-    rows: list[dict[str, Any]] = []
-    for act in activities:
-        if act.status in _SUCCESS:
-            result = "success"
-        else:  # _FAILED | _ONGOING — both use status.value as display string
-            result = act.status.value
-
-        rows.append({
-            "workload_id":      act.workload_id,
-            "workload_name":    act.workload_name,
-            "workload_type":    act.workload_type.value,
-            "result":           result,
-            "operator":         act.operator,
-            "restore_type":     act.restore_type.value if act.restore_type else None,
-            "destination":      act.restore_destination,
-            "started_at":       act.started_at,
-            "duration_seconds": act.duration_seconds,
-        })
+    rows: list[dict[str, Any]] = [_build_row(act) for act in activities]
 
     output_fields: list[str] = [
         "workload_id", "workload_name", "workload_type",

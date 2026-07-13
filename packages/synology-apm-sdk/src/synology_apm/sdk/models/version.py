@@ -56,8 +56,8 @@ class WorkloadVersion:
     execution_id: str
     locked: bool
     changed_size_bytes: int
-    portal_version_id: str = ""  # spec.versionId; used in portal export/restore API paths
-    snapshot_id: str = ""        # spec.snapshotId; used in portal download API
+    portal_version_id: str = ""  # portal-scoped version identifier (export/restore)
+    snapshot_id: str = ""        # portal-scoped snapshot identifier (download)
     verify_status: VerifyStatus | None = field(default=None, kw_only=True)
     locations: list[VersionLocation] = field(default_factory=list)
     copy_status: VersionCopyStatus | None = field(default=None, kw_only=True)

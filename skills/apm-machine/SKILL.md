@@ -225,8 +225,8 @@ Usage: synology-apm machine version list [OPTIONS] [NAME]
 | `[NAME]` | Workload name (search mode) |
 | `--id <WORKLOAD_ID>` | Workload ID (direct mode) |
 | `--namespace, -n <NAMESPACE>` | Backup server namespace (direct mode) |
-| `--since <SINCE>` | Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
-| `--until <UNTIL>` | End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
+| `--since <SINCE>` | Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
+| `--until <UNTIL>` | End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
 | `--retired` | Search in retired workloads (search mode) |
 
 ### `synology-apm machine version get`

@@ -13,8 +13,20 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read   # publish-* / build-binaries jobs elevate their own
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # Same gate as every push — a tag must never ship code that would fail CI.
+  test:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,8 +55,40 @@ jobs:
           name: dist-synology-apm-cli
           path: dist/synology-apm-cli/
 
-  publish-sdk:
+  # The wheels are installed and exercised before anything reaches PyPI —
+  # PyPI uploads are immutable, so a broken artifact would burn the version.
+  verify-dist:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download synology-apm-sdk dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-synology-apm-sdk
+          path: dist/synology-apm-sdk
+
+      - name: Download synology-apm-cli dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-synology-apm-cli
+          path: dist/synology-apm-cli
+
+      - name: Verify wheel versions match the tag
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          ls dist/synology-apm-sdk/synology_apm_sdk-"$V"-py3-none-any.whl
+          ls dist/synology-apm-cli/synology_apm_cli-"$V"-py3-none-any.whl
+
+      - name: Install wheels and smoke-run the CLI
+        run: |
+          python3 -m venv .venv-smoke
+          .venv-smoke/bin/pip install --quiet \
+            dist/synology-apm-sdk/*.whl dist/synology-apm-cli/*.whl
+          .venv-smoke/bin/python -c "import synology_apm.sdk, synology_apm.cli"
+          .venv-smoke/bin/synology-apm --help
+
+  publish-sdk:
+    needs: [build, verify-dist]
     runs-on: ubuntu-latest
     environment:
       name: pypi-synology-apm-sdk

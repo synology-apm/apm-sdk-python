@@ -9,7 +9,7 @@ class LocationInfo:
     """Display information for a storage location.
 
     Used for both Workload.backup_server / backup_copy_destination and
-    WorkloadVersion.VersionLocation.
+    VersionLocation.location_info (the entries of WorkloadVersion.locations).
 
     Attributes:
         is_remote_storage: True for remote storage destinations (e.g. S3, APV); False for on-appliance backup servers.

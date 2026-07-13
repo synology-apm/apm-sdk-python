@@ -120,7 +120,7 @@ class list itself does not convey:
 - API errorCode → exception mappings are operation-specific and documented per collection in
   [Collection Behavior Rules](#collection-behavior-rules) (e.g. 4013 → `PlanNameConflictError`,
   4017/4019/4029 → `PlanInUseError`, 3004/3014 → the RemoteStorage conflict/in-use errors,
-  7001 → `DuplicateWorkloadError`).
+  3006 → `RemoteStorageEncryptionMismatchError`, 7001 → `DuplicateWorkloadError`).
 - `str(exc)` automatically appends formatted JSON when `response_body` has a value;
   `exc.message` always contains only a brief description and is unaffected by `response_body`.
 
@@ -424,7 +424,7 @@ extracts each plan's `plan_id` and sends it as a separate `filter.planId` query 
 | Method | Notes |
 |------|------|
 | `get(workload_id, namespace, tenant_id, workload_type)` | Queries by the `(namespace, workload_id)` primary key; `tenant_id` and `workload_type` are both required |
-| `get_by_name(name, tenant_id, workload_type, is_retired=False)` | `tenant_id` and `workload_type` are both required; matches against name / UPN / email / URL (case-insensitive) |
+| `get_by_name(name, tenant_id, workload_type, is_retired=False)` | `tenant_id` and `workload_type` are both required; matches against display name / UPN / group email / workload ID (case-insensitive) |
 
 **Number of API calls for list():**
 - Always 1 API request (`workload_type` is required, queries only a single service subtype)
@@ -513,7 +513,8 @@ alone has no filtering effect, so the SDK only ever sends them as a pair.
 If no workload matching `(workload.workload_id, workload.namespace)` exists on the server,
 `BackupActivityCollection.list(workload=...)` returns `([], 0)`, while
 `RestoreActivityCollection.list(workload=...)` raises `ResourceNotFoundError`
-(`resource_type="unknown"`, HTTP 404, API `errorCode 1002` / `database_query_failed`). This
+(`resource_type="Workload"` via `_not_found_as`; underlying HTTP 404, API `errorCode 1002` /
+`database_query_failed`). This
 difference comes from the underlying API, not the SDK.
 
 **RestoreActivityCollection.list() filter support:**

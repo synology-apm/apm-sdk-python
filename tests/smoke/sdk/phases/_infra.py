@@ -3,7 +3,7 @@
 Populates ctx.data["site_info"], ctx.data["servers"], ctx.data["dp_servers"],
 ctx.data["remote_storages"], and ctx.data["hypervisors"] for use by later phases.
 
-Reads ctx.data["smoke_creds"] (set by __main__.py from --creds / tests/smoke/smoke_creds.toml) to
+Reads ctx.data["smoke_creds"] (set by __main__.py from tests/smoke/smoke_creds.toml) to
 run an add → get → update → delete roundtrip for each [[remote_storage]] entry.  When no
 credential file is present, all CRUD steps are recorded as skipped.
 """
@@ -343,7 +343,7 @@ async def _run_storage_crud_roundtrip(ctx: SmokeContext, creds: SmokeCreds) -> N
         ctx.skip(
             DOMAIN, "infra.remote_storages.add[*]",
             "No [[remote_storage]] entries in smoke_creds.toml"
-            " — run --output-creds-template to get started.",
+            " — copy smoke_creds.toml.example to get started.",
         )
         return
 

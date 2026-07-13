@@ -245,7 +245,7 @@ def validate_name_or_id_args(
 
 
 def parse_time_filter(value: str) -> datetime:
-    """Parse a --since / --until time-filter argument; supports ISO 8601 and relative times (1h, 24h, 7d)."""
+    """Parse a --since / --until time-filter argument; supports ISO 8601 and relative times (30m, 1h, 24h, 7d)."""
     now = datetime.now(tz=UTC)
     value = value.strip()
     if value.endswith("h"):
@@ -262,7 +262,7 @@ def parse_time_filter(value: str) -> datetime:
     except ValueError:
         raise typer.BadParameter(
             f"Cannot parse time format: {value!r}. "
-            "Supported: ISO 8601 (e.g. 2026-04-01) or relative (e.g. 1h, 24h, 7d)."
+            "Supported: ISO 8601 (e.g. 2026-04-01) or relative (e.g. 30m, 1h, 24h, 7d)."
         )
 
 

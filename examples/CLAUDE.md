@@ -4,40 +4,41 @@ This file provides context for Claude Code when helping write scripts that use t
 
 ---
 
-## APMClient Setup
+## Script Skeleton
+
+Every script follows this shape: build the client with `make_client()` — which reads
+`APM_HOST` / `APM_USERNAME` / `APM_PASSWORD` / `APM_NO_VERIFY_SSL` from the environment /
+`.env` (see `.env.example` at the repository root) — and hand an async entry coroutine to
+`run_main()`. Never hardcode credentials.
 
 ```python
-from synology_apm.sdk import APMClient
+import argparse
+import sys
 
-# host is hostname or IP only — no https:// prefix; SDK prepends it internally
-# supports host:port format
-async with APMClient("apm.corp.com", "admin", "password", verify_ssl=False) as apm:
+from _common import add_output_arg, make_client, run_main
+
+
+async def run(output_format: str) -> int | None:
+    print("Collecting data...", file=sys.stderr)
+    async with make_client() as apm:
+        servers, total = await apm.backup_servers.list()
     ...
+    return 0  # None also means success; run_main() maps APMError to exit code 1
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_output_arg(parser)
+    args = parser.parse_args()
+    run_main(run(args.output))
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-Read credentials from environment / `.env`:
-
-```python
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-host     = os.environ["APM_HOST"]
-username = os.environ["APM_USERNAME"]
-password = os.environ["APM_PASSWORD"]
-no_ssl   = os.environ.get("APM_NO_VERIFY_SSL", "").lower() == "true"
-
-async with APMClient(host, username, password, verify_ssl=not no_ssl) as apm:
-    ...
-```
-
-`.env` format:
-```ini
-APM_HOST=apm.corp.com
-APM_USERNAME=admin
-APM_PASSWORD=yourpassword
-APM_NO_VERIFY_SSL=true
-```
+> **Note:** `APMClient` takes a scheme-less `host[:port]` — the SDK prepends `https://`
+> internally.
 
 ---
 
@@ -45,53 +46,21 @@ APM_NO_VERIFY_SSL=true
 
 Example scripts must reuse `_common.py` instead of re-implementing boilerplate; read the file directly to see what's available. Add new helpers there rather than copying into individual scripts.
 
-Raw `list()` returns only one page (default 500 items); use `paginate()` or the `collect_*` helpers from `_common.py` to retrieve all records.
+`list()` returns a single page of `(items, total)`; the default page size varies by collection. Use `paginate()` or the `collect_*` helpers from `_common.py` to retrieve all records.
 
 ---
 
-## Collection Map
+## Finding SDK Entry Points and Types
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `apm.machine.workloads` | `MachineWorkloadCollection` | PC / PS / VM / FS workloads |
-| `apm.machine.plans` | `MachinePlanCollection` | Protection plans for machine workloads |
-| `apm.m365.workloads` | `M365WorkloadCollection` | Microsoft 365 workloads |
-| `apm.m365.plans` | `M365PlanCollection` | Protection plans for M365 workloads |
-| `apm.activities.backup` | `BackupActivityCollection` | Backup activity records |
-| `apm.activities.restore` | `RestoreActivityCollection` | Restore activity records |
-| `apm.backup_servers` | `BackupServerCollection` | Backup server list |
-| `apm.hypervisors` | `HypervisorCollection` | Hypervisor inventory servers |
-| `apm.remote_storages` | `RemoteStorageCollection` | Remote storage targets |
-| `apm.retirement_plans` | `RetirementPlanCollection` | Archive / retirement plans |
-| `apm.tiering_plans` | `TieringPlanCollection` | Tiering plans (version tiering to remote storage) |
-| `apm.saas` | `SaasCollection` | SaaS tenant list |
-| `apm.plans` | `ProtectionPlanCollection` | Cross-category read queries (all categories) |
-| `apm.get_site_info()` | direct method | Site info + management server info + storage stats |
-
----
-
-## SDK Source Access
-
-For field names, method signatures, enum values, or any other SDK details, look them up from the installed source rather than guessing.
-
-**Find the installed source path** (then use the Read tool on any `.py` file):
+- For the access-path overview (`apm.machine.workloads`, `apm.activities.backup`, ...), see
+  the **Collection Map** in `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` —
+  the authoritative list.
+- For field names, method signatures, or enum values, look them up in the installed source
+  rather than guessing — find the path, then use the Read tool on any `.py` file
+  (`enums.py`, `models/*.py`, `collections/*.py`):
 
 ```bash
 python -c "import synology_apm.sdk, os; print(os.path.dirname(synology_apm.sdk.__file__))"
-```
-
-Key files: `enums.py`, `models/workload.py`, `models/activity.py`, `models/backup_server.py`, `models/version.py`, `models/protection_plan.py`, `models/retirement_plan.py`, `models/tiering_plan.py`, `models/saas.py`, `models/remote_storage.py`.
-
-**List all public names** (classes, enums, models, exceptions):
-
-```bash
-python -c "import synology_apm.sdk; print('\n'.join(synology_apm.sdk.__all__))"
-```
-
-**Inspect a specific class:**
-
-```bash
-python -c "import inspect, synology_apm.sdk; print(inspect.getsource(synology_apm.sdk.MachineWorkload))"
 ```
 
 ---
@@ -99,10 +68,6 @@ python -c "import inspect, synology_apm.sdk; print(inspect.getsource(synology_ap
 ## Script Design Guidelines
 
 Read the existing scripts as concrete examples; the guidelines below describe the patterns they all follow.
-
-### Entry point
-
-Every script uses `run_main(run(...))` from `_common.py`. The async `run()` function takes all parsed arguments and returns `int | None` (0 = success, non-zero = error). `make_client()` builds the `APMClient` from environment variables; never hardcode credentials.
 
 ### stdout / stderr discipline
 
@@ -142,17 +107,49 @@ Large batch operations should write a CSV report recording the outcome of every 
 
 ---
 
-## Quality Standards
+## Unit Tests
 
-Every example script must pass both checks before committing:
+Example scripts are unit-tested in `tests/unit/examples/` (one `test_<module>*.py` family per
+script). Test layering:
+
+- A script's module-level `_`-prefixed helpers are its **internal contract** and may be unit
+  tested directly (the same precedent as the CLI's `cli/_display.py` public-named functions).
+  A pure re-decomposition of a script is expected to update these tests.
+- Every script must also have **`run()`-level behavior tests as the primary layer**: inject a
+  fake client with `make_fake_apm()` + `patch_make_client()` from
+  `tests/unit/examples/_fixtures.py`, then assert output formats (parse csv/json; match table
+  label+value on the same line), exit codes, and per-item error resilience.
+- Build SDK model values with the `make_*` builders in `tests/unit/examples/_fixtures.py`
+  rather than hand-constructing dataclasses; test data follows the placeholder table in the
+  repository CLAUDE.md.
+- Tests must not hit the network, sleep for real, or read the developer's `.env` (note
+  `_common.py` calls `load_dotenv()` at import time — environment-dependent tests must
+  monkeypatch every variable they read).
+
+> **Note:** `tests/unit/examples/conftest.py` inserts `examples/` into `sys.path`, so test
+> modules import scripts flat (`from backup_catchup import ...`); shared test helpers use the
+> full package path (`from tests.unit.examples._fixtures import ...`).
+
+---
+
+## Pre-commit Checks
+
+Every example change must pass all three before committing:
 
 ```bash
+uv run pytest tests/unit/examples/ -q
 ruff check .
 mypy .
 ```
 
-Rules:
-- `ruff check` must produce no warnings or errors (unused imports, undefined names, etc.)
-- `mypy` must produce no errors under default settings — generic types must carry full type arguments (e.g. `dict[str, Any]`, not bare `dict`; `list[str]`, not bare `list`)
-- `--strict` is not required, but `[type-arg]` errors are not acceptable
+`mypy` runs under default settings (`--strict` is not required), but generic types must carry full type arguments (e.g. `dict[str, Any]`, not bare `dict`) — `[type-arg]` errors are not acceptable.
 
+---
+
+## Adding a New Script
+
+- Add it to the appropriate category table in `examples/README.md`.
+- Add its `tests/unit/examples/test_<module>.py` — `examples/` is included in the unit-test
+  coverage gate (`make test`).
+- Dependencies are limited to the public SDK API and the existing dev dependencies
+  (`python-dotenv`, `pyyaml`, `openpyxl`); do not introduce new third-party packages.

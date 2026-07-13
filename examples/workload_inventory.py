@@ -70,6 +70,50 @@ async def _get_version_count(
         return total
 
 
+def _build_inventory(
+    workloads: list[MachineWorkload | M365Workload],
+    version_counts: list[int | None],
+    tenant_names: dict[str, str],
+    category: str,
+    include_versions: bool,
+) -> tuple[list[str], list[list[str | int | None]]]:
+    include_category_col = category == "all"
+    include_tenant_col   = category in ("m365", "all")
+
+    headers: list[str] = ["name"]
+    if include_category_col:
+        headers.append("category")
+    headers.append("type")
+    if include_tenant_col:
+        headers.append("tenant")
+    headers.extend(["plan_name", "backup_server", "last_backup_at", "backup_status"])
+    if include_versions:
+        headers.append("version_count")
+
+    rows: list[list[str | int | None]] = []
+    for wl, vc in zip(workloads, version_counts):
+        if isinstance(wl, M365Workload):
+            cat_label  = "M365"
+            tenant_col = tenant_names.get(wl.tenant_id, wl.tenant_id)
+        else:
+            cat_label  = "Machine"
+            tenant_col = ""
+        server = wl.backup_server.name if wl.backup_server else ""
+        status = wl.status.value
+        row: list[str | int | None] = [wl.name]
+        if include_category_col:
+            row.append(cat_label)
+        row.append(workload_type_label(wl))
+        if include_tenant_col:
+            row.append(tenant_col)
+        row.extend([wl.plan.name, server, fmt_dt(wl.last_backup_at), status])
+        if include_versions:
+            row.append(vc)
+        rows.append(row)
+
+    return headers, rows
+
+
 async def run(
     retired_only: bool,
     include_versions: bool,
@@ -106,39 +150,7 @@ async def run(
             version_counts = [None] * len(workloads)
 
     # Build rows and render.
-    include_category_col = category == "all"
-    include_tenant_col   = category in ("m365", "all")
-
-    headers: list[str] = ["name"]
-    if include_category_col:
-        headers.append("category")
-    headers.append("type")
-    if include_tenant_col:
-        headers.append("tenant")
-    headers.extend(["plan_name", "backup_server", "last_backup_at", "backup_status"])
-    if include_versions:
-        headers.append("version_count")
-
-    rows: list[list[str | int | None]] = []
-    for wl, vc in zip(workloads, version_counts):
-        if isinstance(wl, M365Workload):
-            cat_label  = "M365"
-            tenant_col = tenant_names.get(wl.tenant_id, wl.tenant_id)
-        else:
-            cat_label  = "Machine"
-            tenant_col = ""
-        server = wl.backup_server.name if wl.backup_server else ""
-        status = wl.status.value
-        row: list[str | int | None] = [wl.name]
-        if include_category_col:
-            row.append(cat_label)
-        row.append(workload_type_label(wl))
-        if include_tenant_col:
-            row.append(tenant_col)
-        row.extend([wl.plan.name, server, fmt_dt(wl.last_backup_at), status])
-        if include_versions:
-            row.append(vc)
-        rows.append(row)
+    headers, rows = _build_inventory(workloads, version_counts, tenant_names, category, include_versions)
 
     if output_format == "csv":
         writer = csv.writer(sys.stdout)

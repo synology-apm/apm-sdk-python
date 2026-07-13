@@ -61,6 +61,7 @@ from typing import Any
 
 from _common import (
     Progress,
+    _remove_quietly,
     fmt_bytes,
     fmt_duration,
     fmt_speed,
@@ -379,14 +380,6 @@ async def download_job(
             raise
         finally:
             progress.downloading -= 1
-
-
-def _remove_quietly(path: str) -> None:
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-    except OSError:
-        pass
 
 
 # ── Pipeline: one workload ────────────────────────────────────────────────--

@@ -34,7 +34,9 @@ autodoc_typehints_description_target = "documented"
 
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
-napoleon_use_ivar = True  # use :ivar: for Attributes section; prevents duplicate entries with autodoc's dataclass field discovery
+# Use :ivar: for the Attributes section; prevents duplicate entries with
+# autodoc's dataclass field discovery.
+napoleon_use_ivar = True
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),

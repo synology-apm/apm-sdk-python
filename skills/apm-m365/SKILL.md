@@ -237,8 +237,8 @@ Usage: synology-apm m365 exchange version list [OPTIONS] [NAME]
 | `--namespace, -n <NAMESPACE>` | Backup server namespace (direct mode) |
 | `--tenant-id, -t <TENANT_ID>` | Tenant ID (from synology-apm saas list; omit to auto-use the first M365 tenant) |
 | `--retired` | Search in retired workloads (search mode) |
-| `--since <SINCE>` | Start time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
-| `--until <UNTIL>` | End time: 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
+| `--since <SINCE>` | Start time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-01T00:00:00) |
+| `--until <UNTIL>` | End time: 30m / 1h / 24h / 7d or ISO 8601 (e.g. 2026-04-20T23:59:59) |
 
 ### `synology-apm m365 exchange version get`
 
@@ -402,7 +402,7 @@ Usage: synology-apm m365 exchange export download [OPTIONS] [NAME]
 |------|-------------|
 | `[NAME]` | UPN (search mode, e.g. alice@contoso.com) |
 | `--id <ACTIVITY_ID>` | Activity ID (from export list) |
-| `--filename, -f <FILENAME>` | Output file path (e.g. mailbox.pst); auto-generated from workload name and ID if omitted |
+| `--filename, -f <FILENAME>` | Output file path (e.g. mailbox.pst); auto-generated from the workload name if omitted |
 | `--version-id <VERSION_ID>` | Version ID for auto-start (omit for latest version) |
 | `--archive-mailbox` | Export archive mailbox instead of primary (auto-start only; Exchange only) |
 | `--export-name <EXPORT_NAME>` | PST filename (auto-generated if omitted; auto-start only) |
