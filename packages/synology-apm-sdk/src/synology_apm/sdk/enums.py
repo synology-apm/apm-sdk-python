@@ -365,7 +365,7 @@ class OracleLogSetting(Enum):
 
 
 class MachineOsType(Enum):
-    """Operating system type within a configDevice task entry.
+    """Operating system type for a PC or physical server protection plan task entry.
 
     WINDOWS: Windows PC or physical server.
     MAC:     macOS PC.

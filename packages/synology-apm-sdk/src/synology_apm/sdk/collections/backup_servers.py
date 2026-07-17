@@ -98,11 +98,11 @@ class BackupServerCollection:
         """Fetch a backup server by name (keyword search + exact match).
 
         Searches using name as keyword; matches each result in order:
-        exact backup_server_id → case-insensitive name → case-insensitive hostname.
+        case-insensitive name → case-insensitive hostname.
         Returns immediately on the first match without fetching further pages.
 
         Args:
-            name: Server display name, hostname, or ID.
+            name: Server display name or hostname.
 
         Raises:
             ResourceNotFoundError: No backup server with an exact match was found.
@@ -113,7 +113,7 @@ class BackupServerCollection:
             return await self.list(name_contains=name, limit=limit, offset=offset)
 
         async for s in _paginate(fetch):
-            if s.backup_server_id == name or s.name.lower() == q or s.hostname.lower() == q:
+            if s.name.lower() == q or s.hostname.lower() == q:
                 return s
         raise ResourceNotFoundError(
             f"BackupServer '{name}' not found.",

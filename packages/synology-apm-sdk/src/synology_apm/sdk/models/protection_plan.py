@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import time, timedelta
+from typing import Any
 
 from ..enums import (
     CopyReason,
@@ -18,6 +19,7 @@ from ..enums import (
     WeekDay,
     WorkloadCategory,
 )
+from ._shared import auto_to_dict
 from .backup_server import BackupServer
 from .location import LocationInfo
 from .remote_storage import RemoteStorage
@@ -41,6 +43,19 @@ class ProtectionSchedule:
     start_time: time | None
     weekdays: tuple[WeekDay, ...] = ()
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            exclude=frozenset({"weekdays", "start_time"}),
+            extra={
+                "weekdays": [d.name.lower() for d in sorted(self.weekdays, key=lambda w: w.value)],
+                "start_time": (
+                    f"{self.start_time.hour:02d}:{self.start_time.minute:02d}" if self.start_time else None
+                ),
+            },
+        )
+
 
 @dataclass(frozen=True)
 class GFSRetention:
@@ -50,6 +65,10 @@ class GFSRetention:
     monthly_versions: int
     yearly_versions: int
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 @dataclass(frozen=True)
 class ProtectionRetentionPolicy:
@@ -58,6 +77,10 @@ class ProtectionRetentionPolicy:
     days: int | None = None
     versions: int | None = None
     gfs: GFSRetention | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -70,6 +93,10 @@ class ProtectionPlanPolicy:
     """
     retention: ProtectionRetentionPolicy
     schedule: ProtectionSchedule | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 # ── Backup Copy status (read-only) ───────────────────────────────────────
@@ -95,6 +122,10 @@ class PlanBackupCopyStatus:
     remaining_bytes: int | None = None
     skipped_workload_count: int = 0
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 # ── Backup Copy config (read / write) ───────────────────────────────────
 
@@ -115,6 +146,10 @@ class BackupCopyPolicy:
     destination: LocationInfo
     retention: ProtectionRetentionPolicy
     schedule: ProtectionSchedule
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -153,6 +188,10 @@ class MachineVmConfig:
     enable_datastore_usage_detection: bool = False
     datastore_min_free_space_percent: int = 10
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 @dataclass(frozen=True)
 class MachinePcConfig:
@@ -166,6 +205,10 @@ class MachinePcConfig:
     shutdown_after_backup: bool = False
     wake_for_backup: bool = False
     prevent_sleep_during_backup: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -187,6 +230,10 @@ class MachinePsConfig:
     wake_for_backup: bool = False
     prevent_sleep_during_backup: bool = False
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 @dataclass(frozen=True)
 class MachineDbConfig:
@@ -200,6 +247,10 @@ class MachineDbConfig:
     action_on_error: DbActionOnError = DbActionOnError.CONTINUE
     mssql_log_setting: MssqlLogSetting = MssqlLogSetting.DO_NOT_TRUNCATE
     oracle_log_setting: OracleLogSetting = OracleLogSetting.DO_NOT_DELETE
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -215,6 +266,19 @@ class MachineBackupWindow:
     """
     enabled: bool
     allowed_hours: dict[WeekDay, frozenset[int]] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            exclude=frozenset({"allowed_hours"}),
+            extra={
+                "allowed_hours": {
+                    day.name.lower(): sorted(hours)
+                    for day, hours in sorted(self.allowed_hours.items(), key=lambda x: x[0].value)
+                },
+            },
+        )
 
 
 # ── Per-task config ──────────────────────────────────────────────────────
@@ -249,6 +313,14 @@ class EventTriggerConfig:
         if self.min_interval.total_seconds() <= 0:
             raise ValueError("min_interval must be a positive duration.")
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            exclude=frozenset({"min_interval"}),
+            extra={"min_interval_seconds": int(self.min_interval.total_seconds())},
+        )
+
 
 @dataclass(frozen=True)
 class MachineTaskSchedule:
@@ -262,6 +334,10 @@ class MachineTaskSchedule:
     """
     time_schedule: ProtectionSchedule | None = None
     event_trigger: EventTriggerConfig | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 def _validate_plan_schedule_and_retention(
@@ -332,6 +408,10 @@ class MachineTaskConfig:
     use_main_schedule: bool = True
     schedule: MachineTaskSchedule | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 # ── ProtectionPlan (read model) ──────────────────────────────────────────
 
@@ -380,6 +460,10 @@ class ProtectionPlan:
     db_config: MachineDbConfig | None = None
     backup_window: MachineBackupWindow | None = None
     tasks: tuple[MachineTaskConfig, ...] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 # ── Request dataclasses ──────────────────────────────────────────────────

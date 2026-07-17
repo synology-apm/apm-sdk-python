@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ..enums import HypervisorType
+from ._shared import auto_to_dict
 
 
 @dataclass(frozen=True)
@@ -28,3 +30,7 @@ class Hypervisor:
     description:   str
     port:          int
     version:       str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)

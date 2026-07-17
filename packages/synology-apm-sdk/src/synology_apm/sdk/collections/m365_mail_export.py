@@ -8,6 +8,7 @@ from typing import Any
 from .._http import WebAPISession
 from ..enums import M365ExportStatus
 from ..exceptions import APIError, ResourceNotFoundError, ResourceNotReadyError
+from ..models._shared import auto_to_dict
 from ..models.activity import M365ExportActivity
 from ..models.version import VersionLocation, WorkloadVersion
 from ..models.workload import M365GroupInfo, M365UserInfo, M365Workload
@@ -35,6 +36,14 @@ class M365ExportStartResult:
     location: VersionLocation
     workload: M365Workload
     version: WorkloadVersion
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            exclude=frozenset({"execution_id", "location", "workload", "version"}),
+            extra={"workload_id": self.workload.workload_id, "version_id": self.version.version_id},
+        )
 
 
 def _resolve_version_location(

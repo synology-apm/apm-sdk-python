@@ -1,0 +1,26 @@
+{
+  "name": "synology-apm-mcp",
+  "version": "0.1.0",
+  "description": "MCP server and workflow skills for Synology ActiveProtect Manager (APM). Exposes backup and restore operations, protection plans, M365, infrastructure, activities, and logs as MCP tools.",
+  "author": {
+    "name": "Synology APM SDK maintainers"
+  },
+  "repository": "https://github.com/synology-apm/apm-sdk-python",
+  "license": "Apache-2.0",
+  "keywords": ["synology", "apm", "backup", "mcp"],
+  "mcpServers": {
+    "synology-apm": {
+      "command": "uvx",
+      "args": ["synology-apm-mcp"],
+      "env": {
+        "APM_HOST": "",
+        "APM_USERNAME": "",
+        "APM_PASSWORD": "",
+        "APM_PROFILE": "default",
+        "APM_NO_VERIFY_SSL": "false",
+        "APM_MCP_MODE": "operator"
+      }
+    }
+  },
+  "skills": "./skills/"
+}

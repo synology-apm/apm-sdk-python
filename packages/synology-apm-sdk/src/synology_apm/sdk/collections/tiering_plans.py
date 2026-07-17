@@ -185,7 +185,7 @@ def _build_tiering_body(request: TieringPlanCreateRequest) -> dict[str, Any]:
                 "runHour": t.hour,
                 "runMin": t.minute,
             },
-            "tieringAfterDays": request.tier_after_days,
+            "tieringAfterDays": request.tiering_after_days,
         },
         "runScheduleByControllerTime": request.run_schedule_by_controller_time,
     }
@@ -213,26 +213,21 @@ async def _get_plans_bulk(
     """Fetch multiple tiering plans concurrently, resolving all destinations in one batch.
 
     Used by BackupServerCollection to resolve per-server tiering plan references
-    without the per-plan sequential destination fetch of get(). Plans that cannot
-    be fetched or parsed are silently omitted.
+    without the per-plan sequential destination fetch of get(). Plans that no
+    longer exist (dangling references) are omitted; any other fetch failure
+    propagates.
     """
     async def fetch_raw(pid: str) -> dict[str, Any] | None:
         try:
             raw: dict[str, Any] = await session.get(f"/api/v1/plan/tiering_plan/{pid}")
             return raw
-        except Exception:
+        except ResourceNotFoundError:
             return None
 
     raws = await asyncio.gather(*[fetch_raw(p) for p in plan_ids])
     plan_raws = [(pid, raw) for pid, raw in zip(plan_ids, raws) if raw is not None]
     dest_cache = await _build_destination_cache(session, [raw for _, raw in plan_raws])
-    result: dict[str, TieringPlan] = {}
-    for pid, raw in plan_raws:
-        try:
-            result[pid] = _parse_tiering_plan(raw, dest_cache)
-        except Exception:
-            continue
-    return result
+    return {pid: _parse_tiering_plan(raw, dest_cache) for pid, raw in plan_raws}
 
 
 def _parse_tiering_plan(raw: dict[str, Any], dest_cache: dict[str, LocationInfo]) -> TieringPlan:

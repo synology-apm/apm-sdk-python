@@ -377,7 +377,7 @@ _COMMENT_TIERING_PLANS: list[str] = [
     "                                      If a display name is given, a case-insensitive name match",
     "                                      is used; no match triggers plan creation.",
     "  description                     — optional description.",
-    "  tier_after_days                 — move versions older than this many days to the destination.",
+    "  tiering_after_days              — move versions older than this many days to the destination.",
     "  destination_ref                 — ref_key of the remote storage target (remote_storages above).",
     "                                      Plans with a missing destination are skipped on import.",
     "  daily_check_time                — daily time (HH:MM) to check for versions eligible for tiering.",
@@ -681,7 +681,7 @@ def _ser_tiering_plan(plan: TieringPlan, rs_ref_keys: dict[str, str]) -> dict[st
         "_comment": f"name_or_id: {plan.plan_id}",
         "name_or_id": plan.name,
         "description": plan.description,
-        "tier_after_days": plan.tiering_after_days,
+        "tiering_after_days": plan.tiering_after_days,
         "destination_ref": dest_ref,
         "daily_check_time": plan.daily_check_time.strftime("%H:%M"),
         "run_schedule_by_controller_time": plan.run_schedule_by_controller_time,
@@ -1062,7 +1062,7 @@ def _parse_tiering_request(
     check_time = _parse_time_str(d.get("daily_check_time")) or time(20, 0)
     return TieringPlanCreateRequest(
         name=name,
-        tier_after_days=int(d["tier_after_days"]),
+        tiering_after_days=int(d["tiering_after_days"]),
         destination=dest,
         daily_check_time=check_time,
         description=str(d.get("description", "")),

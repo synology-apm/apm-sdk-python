@@ -79,6 +79,47 @@ async def test_list_last_backup_at_timezone_aware(apm: APMClient) -> None:
             )
 
 
+async def test_list_status_filter_returns_only_matching_status(apm: APMClient) -> None:
+    workloads, _ = await apm.machine.workloads.list(status=[WorkloadStatus.SUCCESS])
+    for wl in workloads:
+        assert wl.status == WorkloadStatus.SUCCESS
+
+
+async def test_list_status_filter_multi_value_or_within_same_field(apm: APMClient) -> None:
+    """SUCCESS + FAILED are both latestVersionResult-governed (same underlying field);
+    the two values should OR together."""
+    workloads, _ = await apm.machine.workloads.list(status=[WorkloadStatus.SUCCESS, WorkloadStatus.FAILED])
+    for wl in workloads:
+        assert wl.status in (WorkloadStatus.SUCCESS, WorkloadStatus.FAILED)
+
+
+async def test_list_status_filter_cross_field_combination_is_or_not_and(apm: APMClient) -> None:
+    """SUCCESS (latestVersionResult) + DELETING (jobStatus) must OR across the two fields:
+    combined total should equal the sum of the two individual totals, not collapse toward 0."""
+    _, total_success = await apm.machine.workloads.list(status=[WorkloadStatus.SUCCESS])
+    _, total_deleting = await apm.machine.workloads.list(status=[WorkloadStatus.DELETING])
+    _, total_combined = await apm.machine.workloads.list(
+        status=[WorkloadStatus.SUCCESS, WorkloadStatus.DELETING]
+    )
+    assert total_combined == total_success + total_deleting
+
+
+async def test_list_status_retired_raises_value_error(apm: APMClient) -> None:
+    with pytest.raises(ValueError, match="RETIRED"):
+        await apm.machine.workloads.list(status=[WorkloadStatus.RETIRED])
+
+
+async def test_list_verify_status_filter_returns_only_matching_verify_status(apm: APMClient) -> None:
+    from synology_apm.sdk.enums import VerifyStatus
+
+    workloads, _ = await apm.machine.workloads.list(
+        workload_types=[MachineWorkloadType.VM, MachineWorkloadType.PS],
+        verify_status=[VerifyStatus.SUCCESS],
+    )
+    for wl in workloads:
+        assert wl.verify_status == VerifyStatus.SUCCESS
+
+
 # ── apm.machine.workloads.get() ───────────────────────────────────────────────
 
 
@@ -229,6 +270,23 @@ async def test_m365_workloads_list_onedrive_scope(apm: APMClient) -> None:
     assert isinstance(workloads, list)
     for wl in workloads:
         assert wl.workload_type == M365WorkloadType.ONEDRIVE
+
+
+async def test_m365_workloads_list_status_filter_returns_only_matching_status(apm: APMClient) -> None:
+    tid = await _first_m365_tenant_id(apm)
+    workloads, _ = await apm.m365.workloads.list(
+        tid, workload_type=M365WorkloadType.EXCHANGE, status=[WorkloadStatus.SUCCESS]
+    )
+    for wl in workloads:
+        assert wl.status == WorkloadStatus.SUCCESS
+
+
+async def test_m365_workloads_list_status_retired_raises_value_error(apm: APMClient) -> None:
+    tid = await _first_m365_tenant_id(apm)
+    with pytest.raises(ValueError, match="RETIRED"):
+        await apm.m365.workloads.list(
+            tid, workload_type=M365WorkloadType.EXCHANGE, status=[WorkloadStatus.RETIRED]
+        )
 
 
 # ── apm.m365.workloads.get() ──────────────────────────────────────────────────

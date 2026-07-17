@@ -525,6 +525,47 @@ async def test_get_detail_error_code_first_detail_not_dict() -> None:
         await disconnect_session(m, session)
 
 
+async def test_request_4xx_non_dict_body_falls_back_to_default_message() -> None:
+    """A 4xx response whose JSON body is not a dict (e.g. a list) should fall back to the default message."""
+    session = make_session()
+    with aioresponses() as m:
+        await connect_session(m, session)
+        m.get(f"{BASE_URL}/api/v1/workload/device_workload", status=400, payload=["unexpected", "list", "body"])
+        with pytest.raises(APIError) as exc_info:
+            await session.get("/api/v1/workload/device_workload")
+        await disconnect_session(m, session)
+
+    assert "HTTP error 400" in exc_info.value.message
+
+
+async def test_success_response_invalid_utf8_body_raises_api_error() -> None:
+    """A 2xx response whose body cannot be decoded as UTF-8 should raise APIError, not propagate UnicodeDecodeError."""
+    session = make_session()
+    with aioresponses() as m:
+        await connect_session(m, session)
+        m.get(
+            f"{BASE_URL}/api/v1/workload/device_workload",
+            status=200,
+            body=b"\xff\xfe\xfd",
+            content_type="application/json",
+        )
+        with pytest.raises(APIError, match="non-JSON response"):
+            await session.get("/api/v1/workload/device_workload")
+        await disconnect_session(m, session)
+
+
+async def test_success_response_non_dict_json_body_is_returned_as_is() -> None:
+    """A 2xx response whose JSON body is a list (not a dict) should be returned unchanged, skipping error-code checks."""
+    session = make_session()
+    with aioresponses() as m:
+        await connect_session(m, session)
+        m.get(f"{BASE_URL}/api/v1/workload/device_workload", status=200, payload=["a", "b"])
+        result = await session.get("/api/v1/workload/device_workload")
+        await disconnect_session(m, session)
+
+    assert result == ["a", "b"]
+
+
 async def test_error_code_in_body_format3_nested_raises_api_error() -> None:
     """{"error": {"errorCode": N, "message": "..."}} nested format should raise the corresponding exception."""
     session = make_session()

@@ -55,10 +55,11 @@ class HypervisorCollection:
     async def get_by_name(self, name: str) -> Hypervisor:
         """Fetch a hypervisor inventory server by hostname.
 
-        Matches in order: exact hypervisor_id → case-insensitive hostname → case-insensitive address.
+        Matches in order: case-insensitive hostname → case-insensitive address;
+        returns the first match.
 
         Args:
-            name: Hostname, address, or UUID.
+            name: Hostname or address.
 
         Raises:
             ResourceNotFoundError: No hypervisor with an exact match was found.
@@ -66,7 +67,7 @@ class HypervisorCollection:
         items, _ = await self.list()
         q = name.lower()
         for h in items:
-            if h.hypervisor_id == name or h.hostname.lower() == q or h.address.lower() == q:
+            if h.hostname.lower() == q or h.address.lower() == q:
                 return h
         raise ResourceNotFoundError(
             f"Hypervisor '{name}' not found.",

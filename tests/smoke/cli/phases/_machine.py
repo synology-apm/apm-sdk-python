@@ -22,6 +22,20 @@ def run(ctx: SmokeContext) -> None:
     if not (parse_json(retired_json) or []):
         ctx.skip(DOMAIN, "machine.list[retired][data]", "No retired Machine Workloads found.")
 
+    _, status_json = ctx.run_both(
+        DOMAIN, "machine.list[status]", ["machine", "list", "--status", "success", "--status", "failed"],
+    )
+    if not (parse_json(status_json) or []):
+        ctx.skip(DOMAIN, "machine.list[status][data]", "No Machine Workloads with status success/failed found.")
+
+    _, verify_status_json = ctx.run_both(
+        DOMAIN, "machine.list[verify-status]", ["machine", "list", "--verify-status", "not_enabled"],
+    )
+    if not (parse_json(verify_status_json) or []):
+        ctx.skip(
+            DOMAIN, "machine.list[verify-status][data]", "No Machine Workloads with verify-status not_enabled found.",
+        )
+
     ctx.run(
         DOMAIN, "machine.list[page-all]", ["machine", "list", "--page-all"],
         output_format="json", note="Exercises NDJSON streaming for --page-all.",

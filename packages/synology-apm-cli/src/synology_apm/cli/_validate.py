@@ -20,7 +20,9 @@ from synology_apm.sdk import (
     ProtectionPlan,
     RetirementPlan,
     TieringPlan,
+    VerifyStatus,
     WorkloadCategory,
+    WorkloadStatus,
     WorkloadVersion,
 )
 
@@ -33,6 +35,31 @@ MACHINE_TYPE_ARGS: dict[str, MachineWorkloadType] = {
     "ps": MachineWorkloadType.PS,
     "vm": MachineWorkloadType.VM,
     "fs": MachineWorkloadType.FS,
+}
+
+# Shared by `machine list --status` and `m365 <scope> list --status`.
+# RETIRED is excluded — already governed by the --retired flag, not a filterable status value.
+WORKLOAD_STATUS_ARGS: dict[str, WorkloadStatus] = {
+    "queuing":    WorkloadStatus.QUEUING,
+    "backing_up": WorkloadStatus.BACKING_UP,
+    "success":    WorkloadStatus.SUCCESS,
+    "failed":     WorkloadStatus.FAILED,
+    "partial":    WorkloadStatus.PARTIAL,
+    "canceled":   WorkloadStatus.CANCELED,
+    "no_backups": WorkloadStatus.NO_BACKUPS,
+    "deleting":   WorkloadStatus.DELETING,
+}
+
+# `machine list --verify-status` (Machine-only; M365 has no verification concept).
+VERIFY_STATUS_ARGS: dict[str, VerifyStatus] = {
+    "verifying":     VerifyStatus.VERIFYING,
+    "success":       VerifyStatus.SUCCESS,
+    "failed":        VerifyStatus.FAILED,
+    "canceled":      VerifyStatus.CANCELED,
+    "not_supported": VerifyStatus.NOT_SUPPORTED,
+    "not_enabled":   VerifyStatus.NOT_ENABLED,
+    "partial":       VerifyStatus.PARTIAL,
+    "waiting":       VerifyStatus.WAITING,
 }
 
 
@@ -242,6 +269,31 @@ def validate_name_or_id_args(
     if name is None and resource_id is None:
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
+
+
+def parse_enum_list(
+    values: list[str] | None,
+    mapping: dict[str, _T],
+    option_name: str,
+    available: str | None = None,
+) -> list[_T] | None:
+    """Validate and convert a list of CLI string values to enum instances.
+
+    Returns None when values is empty or None; exits with code 1 on unknown value.
+    """
+    if not values:
+        return None
+    result: list[_T] = []
+    for v in values:
+        enum_val = mapping.get(v.lower())
+        if enum_val is None:
+            if available:
+                err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v} (available: {available})")
+            else:
+                err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v}")
+            raise typer.Exit(code=1)
+        result.append(enum_val)
+    return result
 
 
 def parse_time_filter(value: str) -> datetime:

@@ -486,6 +486,20 @@ async def test_get_by_name_finds_exact_match_among_partials() -> None:
     assert wl.workload_id == WORKLOAD_UID
 
 
+async def test_get_by_name_does_not_match_workload_id() -> None:
+    """get_by_name() should not match on workload_id; ID lookup goes through get()."""
+    async with connected_session() as (session, m):
+
+        m.post(WORKLOAD_POST_URL, payload={"m365Workloads": [SAMPLE_M365_WORKLOAD]})
+
+        collection = M365WorkloadCollection(session)
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await collection.get_by_name(WORKLOAD_UID, TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
+        await session.disconnect()
+
+    assert_resource_error(exc_info, resource_type="M365Workload", resource_id=WORKLOAD_UID)
+
+
 # ── M365WorkloadCollection.list(keyword=) ────────────────────────────────
 
 
@@ -617,6 +631,52 @@ async def test_list_without_plan_omits_plan_uids_field() -> None:
     _, kwargs = mock_post.call_args
     body = kwargs["json"]["filter"]
     assert "planUids" not in body
+
+
+async def test_list_status_is_passed_as_backup_status_in_filter_body() -> None:
+    """list(status=[FAILED, PARTIAL]) should include backupStatus (raw API values) in the POST body."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = M365WorkloadCollection(session)
+
+    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"m365Workloads": []}
+        await collection.list(
+            TENANT_ID, workload_type=M365WorkloadType.EXCHANGE,
+            status=[WorkloadStatus.FAILED, WorkloadStatus.PARTIAL],
+        )
+
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]["filter"]
+    assert body["backupStatus"] == ["ERROR", "WARNING"]
+
+
+async def test_list_without_status_omits_backup_status_field() -> None:
+    """list() without status should NOT include backupStatus in the POST body."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = M365WorkloadCollection(session)
+
+    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"m365Workloads": []}
+        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
+
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]["filter"]
+    assert "backupStatus" not in body
+
+
+async def test_list_status_retired_raises_value_error() -> None:
+    """status=[WorkloadStatus.RETIRED] is rejected; use is_retired=True instead."""
+    session = make_session()
+    collection = M365WorkloadCollection(session)
+
+    with pytest.raises(ValueError, match="RETIRED"):
+        await collection.list(
+            TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, status=[WorkloadStatus.RETIRED]
+        )
 
 
 # ── M365WorkloadCollection.list_versions() ────────────────────────────────

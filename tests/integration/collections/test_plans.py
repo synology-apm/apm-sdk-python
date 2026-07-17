@@ -652,7 +652,7 @@ async def test_tiering_plan_create_returns_tiering_plan(apm: APMClient) -> None:
         pytest.skip("No remote storages available")
     plan = await apm.tiering_plans.create(TieringPlanCreateRequest(
         name="integ-tiering-create",
-        tier_after_days=30,
+        tiering_after_days=30,
         destination=storages[0],
     ))
     try:
@@ -663,19 +663,19 @@ async def test_tiering_plan_create_returns_tiering_plan(apm: APMClient) -> None:
         await apm.tiering_plans.delete(plan)
 
 
-async def test_tiering_plan_update_changes_tier_after_days(apm: APMClient) -> None:
+async def test_tiering_plan_update_changes_tiering_after_days(apm: APMClient) -> None:
     storages, _ = await apm.remote_storages.list()
     if not storages:
         pytest.skip("No remote storages available")
     plan = await apm.tiering_plans.create(TieringPlanCreateRequest(
         name="integ-tiering-update",
-        tier_after_days=30,
+        tiering_after_days=30,
         destination=storages[0],
     ))
     try:
         updated = await apm.tiering_plans.update(plan.plan_id, TieringPlanCreateRequest(
             name="integ-tiering-update",
-            tier_after_days=60,
+            tiering_after_days=60,
             destination=storages[0],
         ))
         assert updated.tiering_after_days == 60
@@ -689,14 +689,14 @@ async def test_tiering_plan_create_duplicate_name_raises(apm: APMClient) -> None
         pytest.skip("No remote storages available")
     plan = await apm.tiering_plans.create(TieringPlanCreateRequest(
         name="integ-tiering-dup",
-        tier_after_days=30,
+        tiering_after_days=30,
         destination=storages[0],
     ))
     try:
         with pytest.raises(PlanNameConflictError):
             await apm.tiering_plans.create(TieringPlanCreateRequest(
                 name="integ-tiering-dup",
-                tier_after_days=30,
+                tiering_after_days=30,
                 destination=storages[0],
             ))
     finally:
@@ -709,7 +709,7 @@ async def test_tiering_plan_create_then_get(apm: APMClient) -> None:
         pytest.skip("No remote storages available")
     plan = await apm.tiering_plans.create(TieringPlanCreateRequest(
         name="integ-tiering-get",
-        tier_after_days=30,
+        tiering_after_days=30,
         destination=storages[0],
         daily_check_time=time(20, 0),
     ))
@@ -737,7 +737,7 @@ async def test_tiering_plan_delete_removes_plan(apm: APMClient) -> None:
         pytest.skip("No remote storages available")
     plan = await apm.tiering_plans.create(TieringPlanCreateRequest(
         name="integ-tiering-delete",
-        tier_after_days=30,
+        tiering_after_days=30,
         destination=storages[0],
     ))
     plan_id = plan.plan_id

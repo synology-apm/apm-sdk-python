@@ -31,11 +31,7 @@ from synology_apm.cli._options import (
 )
 from synology_apm.cli._serializers import (
     hypervisor_to_csv_row,
-    hypervisor_to_dict,
-    remote_storage_to_dict,
     server_to_csv_row,
-    server_to_dict,
-    site_info_to_dict,
 )
 from synology_apm.cli._validate import _resolve_tiering_plan, validate_name_or_id_args
 from synology_apm.cli.errors import err_console
@@ -50,9 +46,13 @@ from synology_apm.cli.output import (
     new_table,
 )
 from synology_apm.sdk import (
+    BackupServer,
     BackupServerRole,
     BackupServerType,
+    Hypervisor,
+    RemoteStorage,
     ServerStatus,
+    SiteInfo,
     VersionCopyStatus,
     WorkloadStatType,
 )
@@ -93,7 +93,7 @@ async def infra_info(
     async with apm_session(ctx) as apm:
         site = await apm.get_site_info()
 
-    if dispatch_output(site, output, site_info_to_dict):
+    if dispatch_output(site, output, SiteInfo.to_dict):
         return
 
     mgmt = site.primary_management_server
@@ -202,7 +202,7 @@ async def server_list(
                 offset=off,
             ),
             limit=limit, offset=offset, page_all=page_all, output=output,
-            to_dict=server_to_dict, to_csv_row=server_to_csv_row,
+            to_dict=BackupServer.to_dict, to_csv_row=server_to_csv_row,
         )
 
     if result is None:
@@ -292,7 +292,7 @@ async def server_get(
             assert name is not None
             server = await apm.backup_servers.get_by_name(name)
 
-    if dispatch_output(server, output, server_to_dict):
+    if dispatch_output(server, output, BackupServer.to_dict):
         return
 
     status = fmt_server_status(server.status)
@@ -434,7 +434,7 @@ async def remote_storage_list(
     async with apm_session(ctx, spinner="Fetching remote storages...") as apm:
         remote_storages, total = await apm.remote_storages.list()
 
-    if dispatch_list_output(remote_storages, output, remote_storage_to_dict):
+    if dispatch_list_output(remote_storages, output, RemoteStorage.to_dict):
         return
 
     t = new_table()
@@ -494,7 +494,7 @@ async def remote_storage_get(
             assert name is not None
             remote_storage = await apm.remote_storages.get_by_name(name)
 
-    if dispatch_output(remote_storage, output, remote_storage_to_dict):
+    if dispatch_output(remote_storage, output, RemoteStorage.to_dict):
         return
 
     status = fmt_remote_storage_status(remote_storage.status)
@@ -528,7 +528,7 @@ async def hypervisor_list(
     async with apm_session(ctx, spinner="Fetching hypervisors...") as apm:
         hypervisors, total = await apm.hypervisors.list()
 
-    if dispatch_list_output(hypervisors, output, hypervisor_to_dict, hypervisor_to_csv_row):
+    if dispatch_list_output(hypervisors, output, Hypervisor.to_dict, hypervisor_to_csv_row):
         return
 
     t = new_table()
@@ -583,7 +583,7 @@ async def hypervisor_get(
             assert name is not None
             hypervisor = await apm.hypervisors.get_by_name(name)
 
-    if dispatch_output(hypervisor, output, hypervisor_to_dict):
+    if dispatch_output(hypervisor, output, Hypervisor.to_dict):
         return
 
     type_label = fmt_hypervisor_type(hypervisor.host_type)

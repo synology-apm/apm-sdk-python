@@ -206,6 +206,18 @@ async def test_get_by_name_not_found_raises() -> None:
     assert_resource_error(exc_info, resource_type="RemoteStorage", resource_id="no-such-storage")
 
 
+async def test_get_by_name_does_not_match_storage_id() -> None:
+    """get_by_name() should not match on storage_id; ID lookup goes through get()."""
+    async with connected_session() as (session, m):
+        m.get(LIST_URL, payload={"storages": [SAMPLE_STORAGE_RAW]})
+        collection = RemoteStorageCollection(session)
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await collection.get_by_name(STORAGE_ID)
+        await session.disconnect()
+
+    assert_resource_error(exc_info, resource_type="RemoteStorage", resource_id=STORAGE_ID)
+
+
 # ── parser: space fields ───────────────────────────────────────────────────
 
 

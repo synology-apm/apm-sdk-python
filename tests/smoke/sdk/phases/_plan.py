@@ -511,7 +511,7 @@ async def _run_mutating_checks(ctx: SmokeContext) -> None:
         tier_plan = await ctx.call(DOMAIN, "plan.tiering.create", lambda: apm.tiering_plans.create(
             TieringPlanCreateRequest(
                 name=f"smoke-tier-{uid}",
-                tier_after_days=30,
+                tiering_after_days=30,
                 destination=remote_storages[0],
                 daily_check_time=time(20, 0),
             )
@@ -522,7 +522,7 @@ async def _run_mutating_checks(ctx: SmokeContext) -> None:
                 tier_plan.name == f"smoke-tier-{uid}",
             )
             ctx.check(
-                DOMAIN, "plan.tiering.check[tier_after_days]",
+                DOMAIN, "plan.tiering.check[tiering_after_days]",
                 tier_plan.tiering_after_days == 30,
             )
             fetched_tier = await ctx.call(
@@ -539,14 +539,14 @@ async def _run_mutating_checks(ctx: SmokeContext) -> None:
                     tier_plan.plan_id,
                     TieringPlanCreateRequest(
                         name=f"smoke-tier-{uid}-updated",
-                        tier_after_days=60,
+                        tiering_after_days=60,
                         destination=remote_storages[0],
                         daily_check_time=time(20, 0),
                     ),
                 ),
             )
             ctx.check(
-                DOMAIN, "plan.tiering.check[update_tier_after_days]",
+                DOMAIN, "plan.tiering.check[update_tiering_after_days]",
                 updated_tier is not None and updated_tier.tiering_after_days == 60,
             )
             await ctx.call(
@@ -565,7 +565,7 @@ async def _run_mutating_checks(ctx: SmokeContext) -> None:
                 del_exc_tier, "resource_id", tier_plan_id)
     else:
         for op in ["create", "get[post_create]", "update", "check[create_name_roundtrip]",
-                   "check[tier_after_days]", "check[get_roundtrip]", "check[update_tier_after_days]",
+                   "check[tiering_after_days]", "check[get_roundtrip]", "check[update_tiering_after_days]",
                    "delete", "get[post_delete]", "check[post_delete_resource_type]",
                    "check[post_delete_resource_id]"]:
             ctx.skip(DOMAIN, f"plan.tiering.{op}", "No remote storages available")

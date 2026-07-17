@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ..enums import BackupServerRole, BackupServerType, ServerStatus
+from ._shared import auto_to_dict
 from .location import LocationInfo
 from .tiering_plan import TieringStatus
 
@@ -81,3 +83,17 @@ class BackupServer:
         if reduction is None or self.logical_backup_data_bytes is None or self.logical_backup_data_bytes == 0:
             return 0.0
         return reduction / self.logical_backup_data_bytes * 100
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            extra={
+                "backup_data_reduction_bytes": self.backup_data_reduction_bytes,
+                "backup_data_reduction_ratio": (
+                    round(self.backup_data_reduction_ratio, 1)
+                    if self.backup_data_reduction_bytes is not None
+                    else None
+                ),
+            },
+        )

@@ -12,8 +12,8 @@ from synology_apm.cli._options import (
     OFFSET_OPTION,
     PAGE_ALL_OPTION,
 )
-from synology_apm.cli._serializers import tenant_to_dict
 from synology_apm.cli.output import ListOutputFormat, cell, console, dispatch_paginated_list, new_table
+from synology_apm.sdk import SaasTenant
 
 app = typer.Typer(
     help="List connected SaaS tenants (M365 / GWS).",
@@ -37,7 +37,7 @@ async def saas_list(
         result = await dispatch_paginated_list(
             lambda off, lim: apm.saas.list(limit=lim, offset=off),
             limit=limit, offset=offset, page_all=page_all, output=output,
-            to_dict=tenant_to_dict,
+            to_dict=SaasTenant.to_dict,
         )
 
     if result is None:

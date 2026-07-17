@@ -697,7 +697,7 @@ def test_tiering_plan_roundtrip_with_destination() -> None:
     assert isinstance(req, TieringPlanCreateRequest)
     assert req.name == "My Tiering Plan"
     assert req.description == "Tiering to cold storage"
-    assert req.tier_after_days == 30
+    assert req.tiering_after_days == 30
     assert req.daily_check_time == time(20, 0)
     assert req.destination is fake_rs
     assert req.run_schedule_by_controller_time is False

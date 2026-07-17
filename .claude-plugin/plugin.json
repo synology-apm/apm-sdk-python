@@ -1,11 +1,55 @@
 {
-  "name": "synology-apm",
-  "displayName": "Synology APM CLI Skills",
-  "description": "Skills that teach Claude to operate Synology ActiveProtect Manager (APM) via the synology-apm CLI.",
+  "name": "synology-apm-mcp",
+  "displayName": "Synology APM MCP Server",
+  "description": "MCP server and workflow skills for Synology ActiveProtect Manager (APM). Exposes backup and restore operations, protection plans, M365, infrastructure, activities, and logs as MCP tools.",
   "author": {
     "name": "Synology APM SDK maintainers"
   },
   "repository": "https://github.com/synology-apm/apm-sdk-python",
   "license": "Apache-2.0",
-  "keywords": ["synology", "apm", "backup", "cli", "skills"]
+  "keywords": ["synology", "apm", "backup", "mcp"],
+  "userConfig": {
+    "host": {
+      "type": "string",
+      "title": "APM Host",
+      "description": "Hostname or IP of your APM instance (e.g. apm.corp.com). Leave blank to use an existing CLI profile (APM_PROFILE)."
+    },
+    "username": {
+      "type": "string",
+      "title": "Username",
+      "description": "APM account username."
+    },
+    "password": {
+      "type": "string",
+      "title": "Password",
+      "description": "APM account password.",
+      "sensitive": true
+    },
+    "no_verify_ssl": {
+      "type": "boolean",
+      "title": "Skip SSL verification",
+      "description": "Enable for self-signed certificates. Not recommended for production.",
+      "default": false
+    },
+    "mode": {
+      "type": "string",
+      "title": "Operation mode",
+      "description": "Controls which tools are available: readonly (monitoring only), operator (backup/restore), manager (lock/unlock versions), admin (full CRUD). Default: operator.",
+      "default": "operator"
+    }
+  },
+  "mcpServers": {
+    "synology-apm": {
+      "command": "uvx",
+      "args": ["synology-apm-mcp"],
+      "env": {
+        "APM_HOST": "${user_config.host}",
+        "APM_USERNAME": "${user_config.username}",
+        "APM_PASSWORD": "${user_config.password}",
+        "APM_PROFILE": "",
+        "APM_NO_VERIFY_SSL": "${user_config.no_verify_ssl}",
+        "APM_MCP_MODE": "${user_config.mode}"
+      }
+    }
+  }
 }

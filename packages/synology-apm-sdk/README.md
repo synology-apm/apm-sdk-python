@@ -78,7 +78,7 @@ finally:
 Manages device backup workloads: PC, Physical Server, VM, and File Server.
 
 ```python
-from synology_apm.sdk import MachineWorkloadType
+from synology_apm.sdk import MachineWorkloadType, VerifyStatus, WorkloadStatus
 
 # List all machine workloads
 workloads, total = await apm.machine.workloads.list()
@@ -88,6 +88,10 @@ vms,     _ = await apm.machine.workloads.list(workload_types=[MachineWorkloadTyp
 fs,      _ = await apm.machine.workloads.list(workload_types=[MachineWorkloadType.FS])
 retired, _ = await apm.machine.workloads.list(is_retired=True)
 results, _ = await apm.machine.workloads.list(name_contains="prod")
+
+# Filter by backup status or verification status (both repeatable; verify_status is PS/VM only)
+failed,       _ = await apm.machine.workloads.list(status=[WorkloadStatus.FAILED, WorkloadStatus.PARTIAL])
+not_verified, _ = await apm.machine.workloads.list(verify_status=[VerifyStatus.NOT_ENABLED])
 
 # Get a single workload by ID (namespace comes from list() results)
 wl = await apm.machine.workloads.get("123e4567-e89b-12d3-a456-426614174000", namespace="123e4567-e89b-12d3-a456-426614174001")
@@ -342,7 +346,7 @@ print(f"  servers={plan.server_count}")
 storage = await apm.remote_storages.get_by_name("tiering-remote")
 plan = await apm.tiering_plans.create(TieringPlanCreateRequest(
     name="30-Day Tiering",
-    tier_after_days=30,
+    tiering_after_days=30,
     destination=storage,
     daily_check_time=time(20, 0),
 ))
@@ -350,7 +354,7 @@ plan = await apm.tiering_plans.create(TieringPlanCreateRequest(
 # Update — pass the plan_id and a new request
 plan = await apm.tiering_plans.update(plan.plan_id, TieringPlanCreateRequest(
     name="30-Day Tiering",
-    tier_after_days=45,
+    tiering_after_days=45,
     destination=storage,
 ))
 
@@ -366,7 +370,7 @@ Manages Microsoft 365 SaaS backup workloads (Mailbox, OneDrive, SharePoint, Team
 `tenant_id` is required for all M365 workload operations.
 
 ```python
-from synology_apm.sdk import M365WorkloadType
+from synology_apm.sdk import M365WorkloadType, WorkloadStatus
 
 # tenant_id comes from apm.saas.list()
 tenants, _ = await apm.saas.list()
@@ -375,6 +379,9 @@ tenant = await apm.saas.get_m365_tenant(TENANT)   # single-tenant detail lookup
 
 # List M365 workloads of a given service sub-type for a tenant
 mailboxes, total = await apm.m365.workloads.list(TENANT, workload_type=M365WorkloadType.EXCHANGE)
+
+# Filter by backup status (repeatable; M365 has no verification concept)
+failed, _ = await apm.m365.workloads.list(TENANT, workload_type=M365WorkloadType.EXCHANGE, status=[WorkloadStatus.FAILED])
 
 # Get a single workload by name — tenant_id required
 wl = await apm.m365.workloads.get_by_name("alice@contoso.com", TENANT, workload_type=M365WorkloadType.EXCHANGE)

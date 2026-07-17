@@ -32,6 +32,7 @@ from synology_apm.sdk import (
     ResourceNotReadyError,
     RetirementPlan,
     WorkloadCategory,
+    WorkloadStatus,
     WorkloadVersion,
 )
 
@@ -214,6 +215,18 @@ async def _run_scope(ctx: SmokeContext, tenant_id: str, scope: str) -> None:
         all(w.workload_type == workload_type for w in workloads),
         note="list() with workload_type must only contain that type.",
     )
+
+    status_result = await ctx.call(
+        DOMAIN, f"m365.{scope}.list[status]",
+        lambda: apm.m365.workloads.list(tenant_id, workload_type, status=[WorkloadStatus.SUCCESS], limit=500),
+    )
+    if status_result is not None:
+        status_workloads, _status_total = status_result
+        ctx.check(
+            DOMAIN, f"m365.{scope}.check[status_filter]",
+            all(w.status == WorkloadStatus.SUCCESS for w in status_workloads),
+            note="Every workload returned by status=[SUCCESS] must report status SUCCESS.",
+        )
 
     if not workloads:
         reason = f"No {workload_type.name} M365 Workloads found"

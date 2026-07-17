@@ -40,6 +40,17 @@ _M365_STATUS_MAP: dict[str, WorkloadStatus] = {
     "NOT_BACKED_UP_YET": WorkloadStatus.NO_BACKUPS,
 }
 
+# WorkloadStatus filter reverse map (list() `status` parameter). RETIRED is intentionally
+# absent — it's controlled by the is_retired parameter, not a raw status field, and is
+# rejected by list() if requested via `status`.
+_STATUS_TO_API_BACKUP_STATUS: dict[WorkloadStatus, str] = {
+    **{v: k for k, v in _M365_STATUS_MAP.items()},
+    # no forward-map counterpart; parsed via elif branches in _parse_workload() instead
+    WorkloadStatus.BACKING_UP: "BACKUPING",
+    WorkloadStatus.QUEUING:    "QUEUING",
+    WorkloadStatus.DELETING:   "DELETING",
+}
+
 
 _TYPE_TO_API_TYPE: dict[M365WorkloadType, str] = {
     M365WorkloadType.EXCHANGE:   "USER_EXCHANGE",
@@ -192,6 +203,7 @@ class M365WorkloadCollection(_VersionMixin):
         plan: list[ProtectionPlan | RetirementPlan] | None = None,
         keyword: str | None = None,
         is_retired: bool = False,
+        status: list[WorkloadStatus] | None = None,
         limit: int = 500,
         offset: int = 0,
     ) -> tuple[list[M365Workload], int]:
@@ -205,6 +217,8 @@ class M365WorkloadCollection(_VersionMixin):
             plan:          Restrict results to workloads assigned to one of the given plans (OR logic).
             keyword:       Name keyword (partial match).
             is_retired:    True = retired only; False = protected workloads only (default).
+            status:        Filter by one or more backup statuses (OR logic); None returns all statuses.
+                           WorkloadStatus.RETIRED is not accepted here — use is_retired=True instead.
             limit:         Maximum records to return (default 500).
             offset:        Pagination start offset (default 0).
 
@@ -213,7 +227,13 @@ class M365WorkloadCollection(_VersionMixin):
 
         Raises:
             ResourceNotFoundError: No backup server matching the specified namespace exists.
+            ValueError: WorkloadStatus.RETIRED was passed in `status`.
         """
+        if status and WorkloadStatus.RETIRED in status:
+            raise ValueError(
+                "WorkloadStatus.RETIRED cannot be used as a status filter; use is_retired=True instead."
+            )
+
         # Resolve namespace → backup_server_id
         backup_server_id: str | None = None
         if namespace:
@@ -234,6 +254,8 @@ class M365WorkloadCollection(_VersionMixin):
             filter_body["backupServerUids"] = [backup_server_id]
         if plan:
             filter_body["planUids"] = [p.plan_id for p in plan]
+        if status:
+            filter_body["backupStatus"] = [_STATUS_TO_API_BACKUP_STATUS[s] for s in status]
         raw = await self._session.post(
             "/api/v1/workload/m365_workload",
             json={"filter": filter_body},
@@ -293,15 +315,17 @@ class M365WorkloadCollection(_VersionMixin):
     ) -> M365Workload:
         """Fetch an M365 Workload by name, UPN, or group email (keyword search + exact match).
 
+        Returns the first workload whose display name, UPN, or group email matches
+        exactly (case-insensitive), without fetching further pages.
+
         Args:
-            name:          Display name, UPN, or group email (exact match, case-insensitive);
-                           a workload ID is also accepted.
+            name:          Display name, UPN, or group email (exact match, case-insensitive).
             tenant_id:     Azure AD tenant ID; required to scope the search.
             workload_type: Service sub-type (EXCHANGE / ONEDRIVE / etc.).
             is_retired:    True=retired only, False=protected workloads only (default).
 
         Raises:
-            ResourceNotFoundError: Not found, or name is ambiguous (multiple matches).
+            ResourceNotFoundError: No workload with an exact match was found.
         """
         plan_type = _m365_plan_type(is_retired)
 
@@ -324,7 +348,7 @@ class M365WorkloadCollection(_VersionMixin):
             parsed = _parse_m365_workload(w)
             if parsed is None:
                 continue
-            if parsed.workload_id == name or _label_matches(parsed, name):
+            if _label_matches(parsed, name):
                 return parsed
         raise ResourceNotFoundError(
             f"M365Workload '{name}' not found.",

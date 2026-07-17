@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ..enums import RemoteStorageStatus, RemoteStorageType
+from ._shared import auto_to_dict
 from .retirement_plan import RetirementPlan
 
 
@@ -33,6 +35,10 @@ class RemoteStorage:
     remaining_bytes:    int | None
     encryption_enabled: bool = False
     vault_name:         str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -204,3 +210,7 @@ class RemoteStorageAddResult:
     storage:        RemoteStorage
     encryption_key: str | None
     relink_warning: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)

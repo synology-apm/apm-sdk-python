@@ -512,3 +512,74 @@ def test_activity_list_page_all_continues_past_full_page_with_total_zero(mock_ap
     assert "Showing 3" in result.output
     assert mock_apm.logs.list_activity.call_args_list[0].kwargs["offset"] == 0
     assert mock_apm.logs.list_activity.call_args_list[1].kwargs["offset"] == 2
+
+
+# ── --since / --until forwarding (all four log kinds) ────────────────────────
+
+_LOG_LIST_CASES = [
+    ("activity", ["log", "activity", "list"], "list_activity"),
+    ("drive", ["log", "drive", "list"], "list_drive"),
+    ("connection", ["log", "connection", "list"], "list_connection"),
+    ("system", ["log", "system", "list"], "list_system"),
+]
+
+
+@pytest.mark.parametrize("kind,cmd_path,list_attr", _LOG_LIST_CASES, ids=[c[0] for c in _LOG_LIST_CASES])
+def test_log_list_passes_since_until_to_sdk(kind: str, cmd_path: list[str], list_attr: str) -> None:
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        ctx_holder: dict[str, AsyncMock] = {}
+
+        @asynccontextmanager
+        async def _ctx(*_a: object, **_kw: object) -> AsyncIterator[AsyncMock]:
+            mock_apm = AsyncMock()
+            mock_apm.backup_servers.get = AsyncMock(return_value=SAMPLE_SERVER)
+            getattr(mock_apm.logs, list_attr).return_value = ([], 0)
+            ctx_holder["apm"] = mock_apm
+            yield mock_apm
+
+        mock_gc.return_value = _ctx()
+        runner.invoke(app, [
+            *cmd_path, "--id", SERVER_ID,
+            "--since", "2026-04-01T00:00:00", "--until", "2026-04-02T00:00:00",
+        ])
+
+    call_kwargs = getattr(ctx_holder["apm"].logs, list_attr).call_args.kwargs
+    assert call_kwargs["since"] == datetime(2026, 4, 1, tzinfo=UTC)
+    assert call_kwargs["until"] == datetime(2026, 4, 2, tzinfo=UTC)
+
+
+def test_drive_list_passes_location_filter() -> None:
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        ctx_holder: dict[str, AsyncMock] = {}
+
+        @asynccontextmanager
+        async def _ctx(*_a: object, **_kw: object) -> AsyncIterator[AsyncMock]:
+            mock_apm = AsyncMock()
+            mock_apm.backup_servers.get = AsyncMock(return_value=SAMPLE_SERVER)
+            mock_apm.logs.list_drive = AsyncMock(return_value=([], 0))
+            ctx_holder["apm"] = mock_apm
+            yield mock_apm
+
+        mock_gc.return_value = _ctx()
+        runner.invoke(app, ["log", "drive", "list", "--id", SERVER_ID, "--location", "Slot 1"])
+
+    call_kwargs = ctx_holder["apm"].logs.list_drive.call_args.kwargs
+    assert call_kwargs["location"] == "Slot 1"
+
+
+# ── NAS server rejection (drive / connection / system) ───────────────────────
+# activity's rejection is covered by test_activity_list_rejects_nas_server above;
+# drive/connection/system share the same _resolve_server helper but had no test of
+# their own, so a regression isolated to one subcommand's wiring would slip through.
+
+@pytest.mark.parametrize("cmd_path", [
+    ["log", "drive", "list"],
+    ["log", "connection", "list"],
+    ["log", "system", "list"],
+], ids=["drive", "connection", "system"])
+def test_log_list_rejects_nas_server(cmd_path: list[str]) -> None:
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        mock_gc.return_value = _fake_client(server=NAS_SERVER)
+        result = runner.invoke(app, [*cmd_path, "nas-server-01"])
+    assert result.exit_code == 1
+    assert "NAS server" in result.output

@@ -40,6 +40,15 @@ class APMError(Exception):
             parts.append(f"response_body={self.response_body!r}")
         return f"{self.__class__.__name__}({', '.join(parts)})"
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict of this exception's semantic fields.
+
+        Subclasses that add fields (e.g. `_ResourceError`, `PlanInUseError`,
+        `RemoteStorageUnmanagedCatalogError`) override this and extend
+        `super().to_dict()`; a subclass adding no fields needs no override.
+        """
+        return {"message": self.message}
+
 
 class AuthenticationError(APMError):
     """Login failed or session has expired.
@@ -70,6 +79,9 @@ class _ResourceError(APMError):
         super().__init__(message, error_code, response_body)
         self.resource_type = resource_type
         self.resource_id = resource_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**super().to_dict(), "resource_type": self.resource_type, "resource_id": self.resource_id}
 
 
 class ResourceNotFoundError(_ResourceError):
@@ -163,6 +175,14 @@ class PlanInUseError(_ResourceError):
         self.has_server_template = has_server_template
         self.has_backup_servers = has_backup_servers
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **super().to_dict(),
+            "has_workloads": self.has_workloads,
+            "has_server_template": self.has_server_template,
+            "has_backup_servers": self.has_backup_servers,
+        }
+
 
 class DuplicateWorkloadError(_ResourceError):
     """A workload with the same identity already exists.
@@ -228,9 +248,56 @@ class RemoteStorageUnmanagedCatalogError(APMError):
         self.vault_name = vault_name
         self.catalog_count = catalog_count
 
+    def to_dict(self) -> dict[str, Any]:
+        return {**super().to_dict(), "vault_name": self.vault_name, "catalog_count": self.catalog_count}
+
 
 class APIError(APMError):
     """APM REST API returned an error not covered by a more specific exception class.
 
     Report the error_code to the SDK maintainers for finer-grained handling.
     """
+
+
+class KeyringUnavailableError(RuntimeError):
+    """Raised when the OS keyring backend is unavailable or an operation fails.
+
+    Extends ``RuntimeError`` directly (not ``APMError``): it signals a local
+    OS-keyring failure, not a REST API error, and carries no ``error_code`` /
+    ``response_body``.
+    """
+
+
+# Single source of truth for "which APMError subclasses have a distinct machine-readable
+# classification" — consumed by both synology-apm-mcp (JSON "error" field) and
+# synology-apm-cli (exit code + message dispatch), so a new exception type only needs to
+# be classified once for both consumers to pick it up. Deliberately excludes APIError and
+# bare APMError (both consumers have their own generic fallback for those) and
+# KeyringUnavailableError (not an APMError subclass; handled separately by both).
+ERROR_CODES: dict[type[APMError], str] = {
+    ResourceNotFoundError: "not_found",
+    InvalidOperationError: "invalid_operation",
+    DuplicateWorkloadError: "duplicate_workload",
+    PlanNameConflictError: "plan_name_conflict",
+    PlanInUseError: "plan_in_use",
+    RemoteStorageConflictError: "remote_storage_conflict",
+    RemoteStorageEncryptionMismatchError: "remote_storage_encryption_mismatch",
+    RemoteStorageInUseError: "remote_storage_in_use",
+    RemoteStorageUnmanagedCatalogError: "remote_storage_unmanaged_catalog",
+    ResourceNotReadyError: "resource_not_ready",
+    AuthenticationError: "authentication_error",
+    PermissionDeniedError: "permission_denied",
+    NotSupportedError: "not_supported",
+    NotManagementServerError: "not_management_server",
+    BackupServerDisconnectedError: "backup_server_disconnected",
+    ConnectionTimeoutError: "connection_timeout",
+}
+
+
+def classify_error(exc: APMError) -> str | None:
+    """Return the ``ERROR_CODES`` classification for ``exc``, or ``None`` if unclassified.
+
+    Every classified type in ``ERROR_CODES`` is exact (no further subclassing), so
+    this is a direct type lookup, not an isinstance walk.
+    """
+    return ERROR_CODES.get(type(exc))

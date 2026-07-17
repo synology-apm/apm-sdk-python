@@ -6,8 +6,10 @@ from typing import Any
 
 from .._http import WebAPISession
 from ..enums import (
+    _VERIFY_STATUS_MAP,
     FileServerType,
     MachineWorkloadType,
+    VerifyStatus,
     WorkloadCategory,
     WorkloadStatus,
 )
@@ -46,6 +48,21 @@ _LVR_TO_STATUS: dict[str, WorkloadStatus] = {
     "VERSION_RESULT_PARTIAL":  WorkloadStatus.PARTIAL,
     "VERSION_RESULT_CANCELED": WorkloadStatus.CANCELED,
 }
+
+# WorkloadStatus filter reverse maps: each filterable status is governed by exactly one of
+# these two raw fields (see _parse_workload() below for the equivalent forward derivation).
+# RETIRED is intentionally absent — it's controlled by the is_retired parameter, not a raw
+# status field, and is rejected by list() if requested via `status`.
+_STATUS_TO_JOB_STATUS: dict[WorkloadStatus, str] = {
+    WorkloadStatus.QUEUING:    "WAITING_TASK",
+    WorkloadStatus.BACKING_UP: "RUNNING",
+    WorkloadStatus.DELETING:   "DELETING",
+}
+_STATUS_TO_LVR: dict[WorkloadStatus, str] = {
+    **{v: k for k, v in _LVR_TO_STATUS.items()},
+    WorkloadStatus.NO_BACKUPS: "VERSION_RESULT_NONE",  # no forward-parse counterpart; see _parse_workload()
+}
+_VERIFY_STATUS_TO_API: dict[VerifyStatus, str] = {v: k for k, v in _VERIFY_STATUS_MAP.items()}
 
 
 _FS_DUPLICATE_ERROR_CODE = 7001  # workload already exists in the same plan on the same server
@@ -117,6 +134,8 @@ class MachineWorkloadCollection(_VersionMixin):
         is_retired: bool = False,
         name_contains: str | None = None,
         hypervisor_id: str | None = None,
+        status: list[WorkloadStatus] | None = None,
+        verify_status: list[VerifyStatus] | None = None,
         limit: int = 500,
         offset: int = 0,
     ) -> tuple[list[MachineWorkload], int]:
@@ -131,12 +150,26 @@ class MachineWorkloadCollection(_VersionMixin):
                           False → protected workloads only (default).
             name_contains: Name keyword (partial match, case-insensitive).
             hypervisor_id: Filter VM workloads by hypervisor inventory UUID. Only meaningful for VM workloads.
+            status:        Filter by one or more backup statuses (OR logic); None returns all statuses.
+                           WorkloadStatus.RETIRED is not accepted here — use is_retired=True instead.
+            verify_status: Filter by one or more backup verification statuses (OR logic); None returns
+                           all. Only meaningful for PS/VM workloads. PC/FS workloads may still be
+                           included in results (verification is not tracked for them at all, so they
+                           are not excluded by this filter), but always report verify_status=None.
             limit:         Maximum records to return (default 500).
             offset:        Pagination start offset (default 0).
 
         Returns:
             (list of Workload, total count matching the filter)
+
+        Raises:
+            ValueError: WorkloadStatus.RETIRED was passed in `status`.
         """
+        if status and WorkloadStatus.RETIRED in status:
+            raise ValueError(
+                "WorkloadStatus.RETIRED cannot be used as a status filter; use is_retired=True instead."
+            )
+
         # Build params as list-of-tuples to support multi-value workloadType
         param_pairs: list[tuple[str, str | int]] = [
             ("filter.limit", limit),
@@ -154,6 +187,13 @@ class MachineWorkloadCollection(_VersionMixin):
             param_pairs.append(("filter.planId", p.plan_id))
         if hypervisor_id:
             param_pairs.append(("filter.filterVm.inventoryId", hypervisor_id))
+        for s in status or ():
+            if s in _STATUS_TO_JOB_STATUS:
+                param_pairs.append(("filter.jobStatus", _STATUS_TO_JOB_STATUS[s]))
+            else:
+                param_pairs.append(("filter.latestVersionResult", _STATUS_TO_LVR[s]))
+        for vs in verify_status or ():
+            param_pairs.append(("filter.verifyStatus", _VERIFY_STATUS_TO_API[vs]))
 
         raw = await self._session.get(
             "/api/v2/workload/device_workload", params=param_pairs
@@ -186,12 +226,15 @@ class MachineWorkloadCollection(_VersionMixin):
     async def get_by_name(self, name: str, is_retired: bool = False) -> MachineWorkload:
         """Fetch a device Workload by display name (keyword search + exact match).
 
+        Returns the first workload whose display name matches exactly
+        (case-insensitive), without fetching further pages.
+
         Args:
             name:       Workload display name (exact match, case-insensitive).
             is_retired: True=retired only, False=protected workloads only (default).
 
         Raises:
-            ResourceNotFoundError: Not found, or name is ambiguous (multiple matches).
+            ResourceNotFoundError: No workload with an exact match was found.
         """
         q = name.lower()
 
@@ -208,7 +251,7 @@ class MachineWorkloadCollection(_VersionMixin):
 
         async for raw_wl in _paginate(fetch):
             wl = _parse_workload(raw_wl)
-            if wl.workload_id == name or wl.name.lower() == q:
+            if wl.name.lower() == q:
                 return wl
         raise ResourceNotFoundError(
             f"Workload '{name}' not found.",
@@ -220,11 +263,11 @@ class MachineWorkloadCollection(_VersionMixin):
         """Pass the device sub-type to the version parser so PS/VM verify status is resolved."""
         return workload.workload_type if isinstance(workload, MachineWorkload) else None
 
-    async def backup_now(self, workload: Workload) -> None:
+    async def backup_now(self, workload: MachineWorkload) -> None:
         """Trigger an on-demand backup for a device Workload.
 
         Args:
-            workload: Workload object (obtained via get()).
+            workload: MachineWorkload object (obtained via get()).
 
         Raises:
             InvalidOperationError: The workload is already retired.
@@ -235,11 +278,11 @@ class MachineWorkloadCollection(_VersionMixin):
             json={"workloadRefs": [{"uid": workload.workload_id, "namespace": workload.namespace}]},
         )
 
-    async def cancel_backup(self, workload: Workload) -> None:
+    async def cancel_backup(self, workload: MachineWorkload) -> None:
         """Cancel the running backup for a device Workload.
 
         Args:
-            workload: Workload object (obtained via get()).
+            workload: MachineWorkload object (obtained via get()).
 
         Raises:
             InvalidOperationError: The workload is already retired.
@@ -389,13 +432,13 @@ class MachineWorkloadCollection(_VersionMixin):
 
     async def retire(
         self,
-        workload: Workload,
+        workload: MachineWorkload,
         plan: RetirementPlan,
     ) -> None:
         """Retire a Workload (apply a retirement policy; irreversible).
 
         Args:
-            workload: Workload object (obtained via get(); must not be already retired).
+            workload: MachineWorkload object (obtained via get(); must not be already retired).
             plan:     RetirementPlan object (obtained via apm.retirement_plans.get() or get_by_name()).
 
         Raises:
@@ -433,11 +476,11 @@ class MachineWorkloadCollection(_VersionMixin):
                 response_body=resp,
             )
 
-    async def change_plan(self, workload: Workload, plan: ProtectionPlan | RetirementPlan) -> None:
+    async def change_plan(self, workload: MachineWorkload, plan: ProtectionPlan | RetirementPlan) -> None:
         """Change the Protection Plan or Retirement Plan assigned to a Workload.
 
         Args:
-            workload: Workload object (obtained via get() or get_by_name()).
+            workload: MachineWorkload object (obtained via get() or get_by_name()).
             plan:     ProtectionPlan (workload must not be retired, and its category must match
                       the workload's category) or RetirementPlan (workload must already be retired).
 
@@ -450,7 +493,7 @@ class MachineWorkloadCollection(_VersionMixin):
         _check_change_plan_preconditions(workload, plan)
         await self._put_plan_change(workload, plan.plan_id)
 
-    async def _put_plan_change(self, workload: Workload, plan_id: str) -> None:
+    async def _put_plan_change(self, workload: MachineWorkload, plan_id: str) -> None:
         resp = await self._session.put(
             "/api/v1/workload/device_workloads/plan",
             json={

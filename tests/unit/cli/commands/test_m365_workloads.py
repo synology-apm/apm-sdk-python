@@ -200,6 +200,43 @@ def test_m365_exchange_list_no_plan_passes_none() -> None:
     call_kwargs = mock_apm.m365.workloads.list.call_args.kwargs
     assert call_kwargs["plan"] is None
 
+@pytest.mark.parametrize("status_flags,expected_status", [
+    (["--status", "failed"], [WorkloadStatus.FAILED]),
+    (
+        ["--status", "failed", "--status", "partial"],
+        [WorkloadStatus.FAILED, WorkloadStatus.PARTIAL],
+    ),
+])
+def test_m365_exchange_list_status_filter(
+    status_flags: list[str], expected_status: list[WorkloadStatus]
+) -> None:
+    """m365 exchange list --status <value> (repeatable) should pass status= to the SDK."""
+    mock_apm = make_mock_apm()
+
+    result = invoke_cli(mock_apm, ["m365", "exchange", "list", "-t", TENANT_ID, *status_flags])
+
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.m365.workloads.list.call_args.kwargs
+    assert call_kwargs["status"] == expected_status
+
+def test_m365_exchange_list_no_status_passes_none() -> None:
+    """m365 exchange list without --status passes status=None to the SDK."""
+    mock_apm = make_mock_apm()
+
+    result = invoke_cli(mock_apm, ["m365", "exchange", "list", "-t", TENANT_ID])
+
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.m365.workloads.list.call_args.kwargs
+    assert call_kwargs["status"] is None
+
+def test_m365_exchange_list_invalid_status_exits_1() -> None:
+    """m365 exchange list --status <invalid> should exit with code 1."""
+    mock_apm = make_mock_apm()
+
+    result = invoke_cli(mock_apm, ["m365", "exchange", "list", "-t", TENANT_ID, "--status", "nope"])
+
+    assert result.exit_code == 1
+
 def test_m365_exchange_list_shows_backup_server_name() -> None:
     """m365 exchange list table should display the backup server hostname."""
     mock_apm = make_mock_apm()

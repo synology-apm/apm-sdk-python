@@ -115,21 +115,25 @@ async def _fetch_remote_storage_location(
     session: WebAPISession,
     dest_id: str,
 ) -> LocationInfo | None:
-    """Look up the LocationInfo for a single remote storage destination. Returns None silently on failure."""
+    """Look up the LocationInfo for a single remote storage destination.
+
+    Returns None when the destination no longer exists (dangling reference) or
+    carries no display name; any other lookup failure propagates to the caller.
+    """
     try:
         raw = await session.get(f"/api/v1/external_storage/{dest_id}")
-        name = raw.get("displayName", "")
-        if not name:
-            return None
-        return LocationInfo(
-            is_remote_storage=True,
-            identifier=raw.get("id", dest_id),
-            name=name,
-            endpoint=raw.get("endpoint", ""),
-            vault=raw.get("vaultName") or None,
-        )
-    except Exception:
+    except ResourceNotFoundError:
         return None
+    name = raw.get("displayName", "")
+    if not name:
+        return None
+    return LocationInfo(
+        is_remote_storage=True,
+        identifier=raw.get("id", dest_id),
+        name=name,
+        endpoint=raw.get("endpoint", ""),
+        vault=raw.get("vaultName") or None,
+    )
 
 
 async def _build_remote_location_cache(
@@ -138,7 +142,8 @@ async def _build_remote_location_cache(
 ) -> dict[str, LocationInfo]:
     """Resolve remote storage destinations concurrently and return {dest_id: LocationInfo}.
 
-    dest_ids should already be deduplicated; unresolvable destinations are omitted.
+    dest_ids should already be deduplicated; destinations that no longer exist
+    are omitted, while any other lookup failure propagates.
     """
     if not dest_ids:
         return {}

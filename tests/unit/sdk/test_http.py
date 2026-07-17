@@ -4,7 +4,9 @@ Uses aioresponses to mock all HTTP requests; no real APM connection required.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from aioresponses import aioresponses
@@ -307,6 +309,87 @@ async def test_401_after_reauth_raises_not_retried_again() -> None:
             await session.get("/api/v1/workload/device_workload")
 
         await session.disconnect()
+
+
+async def test_concurrent_401s_relogin_only_once() -> None:
+    """Concurrent requests that hit 401 on the same expired session share a single re-login."""
+    import asyncio
+
+    login_url = "https://fake-apm.test/webapi/entry.cgi?account=testuser&api=SYNO.API.Auth&client=browser&enable_syno_token=yes&method=login&passwd=testpass&session=webui&version=6"
+
+    async def slow_login(url: Any, **kwargs: Any) -> None:
+        # Keep the re-login in flight for a few event-loop ticks so the second
+        # request's 401 arrives while the first still holds the re-auth lock.
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    session = make_session()
+    with aioresponses() as m:
+        await connect_session(m, session)
+
+        m.get(f"{BASE_URL}/api/v1/slow", status=401)
+        m.get(f"{BASE_URL}/api/v1/fast", status=401)
+        m.get(login_url, payload=LOGIN_OK, callback=slow_login, repeat=True)
+        m.get(f"{BASE_URL}/api/v1/slow", payload={"which": "slow"})
+        m.get(f"{BASE_URL}/api/v1/fast", payload={"which": "fast"})
+
+        r_slow, r_fast = await asyncio.gather(
+            session.get("/api/v1/slow"), session.get("/api/v1/fast")
+        )
+        await session.disconnect()
+
+    assert r_slow == {"which": "slow"}
+    assert r_fast == {"which": "fast"}
+    login_calls = sum(len(v) for k, v in m.requests.items() if "SYNO.API.Auth" in str(k[1]))
+    assert login_calls == 2  # one for connect(), one shared re-login — not one per request
+
+
+async def test_concurrent_401_second_waiter_skips_relogin_when_epoch_already_advanced() -> None:
+    """The second of two concurrent 401s must detect the epoch already advanced (while it
+    was queued on the re-auth lock) and skip calling _do_login() a second time — deterministic
+    variant of test_concurrent_401s_relogin_only_once, using explicit events instead of
+    incidental event-loop scheduling to force the exact interleaving onto the skip branch."""
+    do_login_started = asyncio.Event()
+    do_login_may_finish = asyncio.Event()
+    do_login_call_count = 0
+
+    session = make_session()
+    real_do_login = session._do_login
+
+    async def guarded_do_login() -> None:
+        nonlocal do_login_call_count
+        do_login_call_count += 1
+        do_login_started.set()
+        await do_login_may_finish.wait()
+        await real_do_login()
+
+    with aioresponses() as m:
+        await connect_session(m, session)
+
+        m.get(f"{BASE_URL}/api/v1/slow", status=401)
+        m.get(f"{BASE_URL}/api/v1/fast", status=401)
+        m.get(
+            "https://fake-apm.test/webapi/entry.cgi?account=testuser&api=SYNO.API.Auth&client=browser&enable_syno_token=yes&method=login&passwd=testpass&session=webui&version=6",
+            payload=LOGIN_OK,
+        )
+        m.get(f"{BASE_URL}/api/v1/slow", payload={"which": "slow"})
+        m.get(f"{BASE_URL}/api/v1/fast", payload={"which": "fast"})
+
+        with patch.object(session, "_do_login", side_effect=guarded_do_login):
+            slow_task = asyncio.create_task(session.get("/api/v1/slow"))
+            await do_login_started.wait()  # slow has taken the True branch and is stuck in _do_login
+
+            fast_task = asyncio.create_task(session.get("/api/v1/fast"))
+            await asyncio.sleep(0)  # let fast reach its own 401 and queue on the (held) re-auth lock
+
+            do_login_may_finish.set()  # let slow finish: bumps the epoch, then releases the lock
+            r_slow, r_fast = await asyncio.gather(slow_task, fast_task)
+
+        await session.disconnect()
+
+    assert r_slow == {"which": "slow"}
+    assert r_fast == {"which": "fast"}
+    assert do_login_call_count == 1  # fast must have skipped its own _do_login call
 
 
 # ── URL format ─────────────────────────────────────────────────────────────

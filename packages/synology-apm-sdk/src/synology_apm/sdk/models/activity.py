@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from ..enums import (
     ActivityWorkloadType,
@@ -15,6 +16,7 @@ from ..enums import (
     VerifyStatus,
     WorkloadCategory,
 )
+from ._shared import auto_to_dict
 from .hypervisor import Hypervisor
 from .location import LocationInfo
 
@@ -25,6 +27,10 @@ class ActivityLogEntry:
     timestamp: datetime
     level: LogLevel
     message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -82,6 +88,10 @@ class Activity:
             + (self.processed_warning_count or 0)
             + (self.processed_error_count or 0)
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation of the fields common to all Activity subclasses."""
+        return auto_to_dict(self, exclude=frozenset({"execution_id"}))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -157,3 +167,7 @@ class M365ExportActivity:
     started_at: datetime | None
     finished_at: datetime | None
     version_timestamp: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, exclude=frozenset({"execution_id"}))

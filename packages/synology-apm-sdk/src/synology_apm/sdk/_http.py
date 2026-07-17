@@ -9,6 +9,7 @@ Authentication flow (connect):
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import os
@@ -111,6 +112,11 @@ class WebAPISession:
         self._debug_seq = itertools.count(1)
         self._session: aiohttp.ClientSession | None = None
         self._connected: bool = False
+        # Serializes 401 re-login across concurrent requests: the epoch marks
+        # each successful login, so requests that raced on the same expired
+        # session re-login only once and the rest just retry.
+        self._reauth_lock = asyncio.Lock()
+        self._auth_epoch = 0
 
     # ── Public interface ───────────────────────────────────────────────────
 
@@ -243,6 +249,10 @@ class WebAPISession:
     ) -> None:
         """Download a binary file from a full URL and write it to dest_path (streaming).
 
+        The download is staged in a temporary file next to dest_path and moved
+        into place only on success; an existing file at dest_path is never
+        touched by a failed download.
+
         Args:
             url:         Full download URL (as returned by the entries:download endpoint).
             dest_path:   Local filesystem path to write the file to.
@@ -262,11 +272,15 @@ class WebAPISession:
         if self._debug:
             _debug_print_request(req_id, "GET", url)
 
+        part_path = dest_path + ".part"
         try:
             async with self._session.get(
                 url,
                 ssl=self._ssl_param(),
-                timeout=aiohttp.ClientTimeout(total=None),  # no timeout: file size is unpredictable
+                # No total timeout (file size is unpredictable), but bound the
+                # connect and per-read idle time so a stalled server cannot
+                # hang the download forever.
+                timeout=aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=300),
             ) as resp:
                 if self._debug:
                     _debug_print_response(
@@ -281,24 +295,26 @@ class WebAPISession:
                 total: int | None = int(resp.headers["Content-Length"]) if "Content-Length" in resp.headers else None
                 downloaded = 0
                 try:
-                    with open(dest_path, "wb") as f:
+                    with open(part_path, "wb") as f:
                         async for chunk in resp.content.iter_chunked(65536):
                             f.write(chunk)
                             downloaded += len(chunk)
                             if on_progress is not None:
                                 on_progress(downloaded, total)
+                        if downloaded == 0:
+                            raise APIError(
+                                "Downloaded file is empty; the export may not be ready for download yet."
+                            )
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(part_path, dest_path)
                 except BaseException:
                     # Remove the partial file so a subsequent attempt starts clean.
                     try:
-                        os.unlink(dest_path)
+                        os.unlink(part_path)
                     except OSError:
                         pass
                     raise
-                if downloaded == 0:
-                    os.unlink(dest_path)
-                    raise APIError(
-                        "Downloaded file is empty; the export may not be ready for download yet."
-                    )
         except _CONNECTION_ERRORS as exc:
             raise _map_connection_error(exc, self._base_url, context="Download") from exc
 
@@ -384,13 +400,15 @@ class WebAPISession:
             PermissionDeniedError: HTTP 403.
             ResourceNotFoundError: HTTP 404.
             NotSupportedError: HTTP 501.
-            APIError: HTTP 5xx or non-zero errorCode in the JSON body.
+            APIError: HTTP 5xx, non-zero errorCode in the JSON body, or a success
+                status with a non-empty body that is not valid JSON.
         """
         if not self._session or not self._connected:
             raise AuthenticationError(
                 "Session is not connected. Call connect() first.",
             )
 
+        auth_epoch = self._auth_epoch
         url = f"{self._base_url}{path}"
 
         req_id = next(self._debug_seq)
@@ -405,7 +423,7 @@ class WebAPISession:
             async with self._session.request(
                 method, url, ssl=self._ssl_param(), **kwargs
             ) as resp:
-                body = await _safe_json(resp)
+                body, body_valid = await _safe_json(resp)
 
                 if self._debug:
                     _debug_print_response(
@@ -415,7 +433,10 @@ class WebAPISession:
 
                 if resp.status == 401:
                     if _reauth:
-                        await self._do_login()
+                        async with self._reauth_lock:
+                            if self._auth_epoch == auth_epoch:
+                                await self._do_login()
+                                self._auth_epoch += 1
                         return await self._request(method, path, _reauth=False, **kwargs)
                     raise AuthenticationError(
                         "Session expired and re-authentication failed.",
@@ -469,6 +490,11 @@ class WebAPISession:
                         error_code=resp.status, response_body=body,
                     )
 
+                if not body_valid:
+                    raise APIError(
+                        f"Unexpected non-JSON response from the server (HTTP {resp.status}).",
+                        error_code=resp.status,
+                    )
                 if isinstance(body, dict):
                     self._check_api_error(body)
                 return body
@@ -553,12 +579,23 @@ def _extract_error_message(body: Any, default: str) -> str:
     return str(body.get("message")) if body.get("message") else default
 
 
-async def _safe_json(resp: aiohttp.ClientResponse) -> Any:
-    """Attempt to parse the response as JSON; return an empty dict on failure or empty body."""
+async def _safe_json(resp: aiohttp.ClientResponse) -> tuple[Any, bool]:
+    """Attempt to parse the response as JSON.
+
+    Returns (body, valid): an empty body yields ({}, True); a non-empty body
+    that is not valid JSON yields ({}, False) so the caller can decide whether
+    that is fatal (2xx success path) or best-effort (error-message mining).
+    """
     try:
-        return await resp.json(content_type=None)
-    except Exception:
-        return {}
+        text = await resp.text()
+    except UnicodeDecodeError:
+        return {}, False
+    if not text.strip():
+        return {}, True
+    try:
+        return json.loads(text), True
+    except ValueError:
+        return {}, False
 
 
 def _get_detail_error_code(body: Any) -> int | None:

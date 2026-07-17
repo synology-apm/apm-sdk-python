@@ -166,6 +166,18 @@ async def test_get_by_name_not_found_raises() -> None:
     assert_resource_error(exc_info, resource_type="Hypervisor", resource_id="no-such-hypervisor")
 
 
+async def test_get_by_name_does_not_match_hypervisor_id() -> None:
+    """get_by_name() should not match on hypervisor_id; ID lookup goes through get()."""
+    async with connected_session() as (session, m):
+        m.get(LIST_URL, payload={"inventories": [SAMPLE_HYPERVISOR_RAW]})
+        collection = HypervisorCollection(session)
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await collection.get_by_name(HV_ID)
+        await session.disconnect()
+
+    assert_resource_error(exc_info, resource_type="Hypervisor", resource_id=HV_ID)
+
+
 # ── host_type mapping ──────────────────────────────────────────────────────
 
 

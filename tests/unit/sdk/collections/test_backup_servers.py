@@ -338,18 +338,19 @@ async def test_get_by_name_returns_server_by_hostname() -> None:
     assert server.hostname == "192.0.2.1"
 
 
-async def test_get_by_name_returns_server_by_id() -> None:
-    """get_by_name() should do an exact match on backup_server_id."""
+async def test_get_by_name_does_not_match_server_id() -> None:
+    """get_by_name() should not match on backup_server_id; ID lookup goes through get()."""
     session = make_session()
     page_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=100&keyword={SERVER_ID}"
     with aioresponses() as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(page_url, payload={"backupServers": [SAMPLE_SERVER_RAW]})
-        server = await BackupServerCollection(session).get_by_name(SERVER_ID)
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await BackupServerCollection(session).get_by_name(SERVER_ID)
         await session.disconnect()
 
-    assert server.backup_server_id == SERVER_ID
+    assert_resource_error(exc_info, resource_type="BackupServer", resource_id=SERVER_ID)
 
 
 async def test_get_by_name_case_insensitive_name() -> None:
@@ -785,8 +786,8 @@ async def test_tiering_status_unknown_raw_status_is_none() -> None:
     assert servers[0].tiering_status is None
 
 
-async def test_list_skips_unparsable_tiering_plan() -> None:
-    """A tiering plan that fails to parse is omitted; other servers still resolve theirs."""
+async def test_list_unparsable_tiering_plan_propagates() -> None:
+    """A tiering plan response that fails to parse propagates instead of being silently omitted."""
     import copy
     good_server = copy.deepcopy(SAMPLE_SERVER_RAW)
     good_server["spec"]["tieringPlanRef"] = {"uid": "plan-good"}
@@ -801,15 +802,12 @@ async def test_list_skips_unparsable_tiering_plan() -> None:
         },
         "tieringInfo": {},
     }
-    bad_plan_raw = {"spec": {"name": "broken"}}  # missing "id" → parse error → skipped
+    bad_plan_raw = {"spec": {"name": "broken"}}  # missing "id" → parse error
 
     async with connected_session() as (session, m):
         m.get(SERVERS_URL, payload={"backupServers": [good_server, bad_server], "total": 2})
         m.get(f"{BASE_URL}/api/v1/plan/tiering_plan/plan-good", payload=good_plan_raw)
         m.get(f"{BASE_URL}/api/v1/plan/tiering_plan/plan-bad", payload=bad_plan_raw)
-        servers, _ = await BackupServerCollection(session).list()
+        with pytest.raises(KeyError):
+            await BackupServerCollection(session).list()
         await session.disconnect()
-
-    by_name = {s.name: s for s in servers}
-    assert by_name["apm-server-01"].tiering_plan_name == "30-Day Tiering"
-    assert by_name["apm-server-dr"].tiering_plan_name is None

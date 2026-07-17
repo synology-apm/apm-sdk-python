@@ -71,26 +71,23 @@ async def _build_location_cache(
     cache: dict[str, LocationInfo] = {}
 
     if appliance_namespaces:
-        try:
-            raw = await session.get(
-                "/api/v1/infra/backup_server",
-                params={"limit": _BACKUP_SERVER_MAX_COUNT, "offset": 0},
-            )
-            for s in raw.get("backupServers", []):
-                ns = s.get("namespace", "")
-                if ns not in appliance_namespaces:
-                    continue
-                name = s.get("status", {}).get("hostName", "")
-                if name:
-                    cache[ns] = LocationInfo(
-                        is_remote_storage=False,
-                        identifier=ns,
-                        name=name,
-                        endpoint=s.get("spec", {}).get("addr", ""),
-                        vault=None,
-                    )
-        except Exception:
-            pass
+        raw = await session.get(
+            "/api/v1/infra/backup_server",
+            params={"limit": _BACKUP_SERVER_MAX_COUNT, "offset": 0},
+        )
+        for s in raw.get("backupServers", []):
+            ns = s.get("namespace", "")
+            if ns not in appliance_namespaces:
+                continue
+            name = s.get("status", {}).get("hostName", "")
+            if name:
+                cache[ns] = LocationInfo(
+                    is_remote_storage=False,
+                    identifier=ns,
+                    name=name,
+                    endpoint=s.get("spec", {}).get("addr", ""),
+                    vault=None,
+                )
 
     cache.update(await _build_remote_location_cache(session, remote_ids))
 

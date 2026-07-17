@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
+from ._shared import auto_to_dict
 
 
 @dataclass(frozen=True)
@@ -14,6 +17,10 @@ class RetirementRetentionPolicy:
     """
     days: int | None
     keep_latest_version: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -35,6 +42,10 @@ class RetirementPlan:
     retention: RetirementRetentionPolicy | None = None
     workload_count: int | None = None
     run_schedule_by_controller_time: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)

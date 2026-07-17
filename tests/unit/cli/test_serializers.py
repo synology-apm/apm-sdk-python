@@ -2,6 +2,10 @@
 
 Each test asserts the dict structure (required keys present, correct types, enum
 values serialized to strings, etc.) without going through the CLI invocation pipeline.
+
+Fields with zero CLI-specific transformation (no local-time conversion, renaming, or
+computed additions) are not re-asserted here — they are already covered by the SDK-level
+to_dict() tests in tests/unit/sdk/models/test_models.py.
 """
 from __future__ import annotations
 
@@ -17,27 +21,19 @@ from synology_apm.cli._serializers import (
     drive_log_to_csv_row,
     drive_log_to_dict,
     hypervisor_to_csv_row,
-    hypervisor_to_dict,
-    location_info_to_dict,
     m365_export_activity_to_csv_row,
     m365_export_activity_to_dict,
     m365_workload_to_csv_row,
     m365_workload_to_dict,
     protection_plan_to_csv_row,
     protection_plan_to_dict,
-    remote_storage_to_dict,
     restore_activity_to_csv_row,
     retirement_plan_to_csv_row,
     retirement_plan_to_dict,
     server_to_csv_row,
-    server_to_dict,
-    site_info_to_dict,
     system_log_to_csv_row,
     system_log_to_dict,
-    tenant_to_dict,
     tiering_plan_to_csv_row,
-    tiering_plan_to_dict,
-    tiering_status_to_dict,
     version_to_csv_row,
     version_to_dict,
     workload_to_csv_row,
@@ -53,8 +49,6 @@ from synology_apm.sdk.enums import (
     M365ExportStatus,
     M365WorkloadType,
     MachineWorkloadType,
-    RemoteStorageStatus,
-    RemoteStorageType,
     RestoreActivityStatus,
     RetentionType,
     ScheduleFrequency,
@@ -62,7 +56,6 @@ from synology_apm.sdk.enums import (
     VersionCopyStatus,
     VersionStatus,
     WorkloadCategory,
-    WorkloadStatType,
     WorkloadStatus,
 )
 from synology_apm.sdk.models.activity import BackupActivity, M365ExportActivity, RestoreActivity
@@ -76,10 +69,7 @@ from synology_apm.sdk.models.protection_plan import (
     ProtectionRetentionPolicy,
     ProtectionSchedule,
 )
-from synology_apm.sdk.models.remote_storage import RemoteStorage
 from synology_apm.sdk.models.retirement_plan import RetirementPlan, RetirementRetentionPolicy
-from synology_apm.sdk.models.saas import SaasTenant
-from synology_apm.sdk.models.system import SiteInfo, SiteStorageStats, WorkloadTypeStat, WorkloadUsageSummary
 from synology_apm.sdk.models.tiering_plan import TieringPlan, TieringStatus
 from synology_apm.sdk.models.version import VersionLocation, WorkloadVersion
 from synology_apm.sdk.models.workload import M365UserInfo, M365Workload, MachineWorkload
@@ -239,12 +229,16 @@ SAMPLE_VERSION = WorkloadVersion(
 def test_workload_to_dict_required_fields() -> None:
     d = workload_to_dict(SAMPLE_WL)
     required = {"workload_id", "name", "namespace", "category", "is_retired",
-                "plan_id", "plan_name", "last_backup_at", "status", "workload_type"}
+                "plan_id", "plan_name", "last_backup_at", "status", "workload_type",
+                "backup_progress", "items_backed_up", "fs_config"}
     assert required <= set(d.keys())
     assert d["is_retired"] is False
     assert d["status"] == "success"
     assert d["category"] == "machine"
     assert d["workload_id"] == "wl-id-001"
+    assert d["backup_progress"] is None
+    assert d["items_backed_up"] is None
+    assert d["fs_config"] is None
 
 
 def test_workload_to_dict_backup_server_nested() -> None:
@@ -263,23 +257,11 @@ def test_workload_to_csv_row_required_fields() -> None:
     assert row["workload_id"] == "wl-id-001"
 
 
-# ── server_to_dict ────────────────────────────────────────────────────────────
-
-def test_server_to_dict_required_fields() -> None:
-    d = server_to_dict(SAMPLE_SERVER)
-    required = {"backup_server_id", "namespace", "name", "hostname", "model",
-                "system_version", "status", "serial"}
-    assert required <= set(d.keys())
-    assert isinstance(d["status"], str)
-    assert d["status"] == "healthy"
-    assert d["backup_server_id"] == "bs-001"
-
-
-def test_server_to_dict_no_tiering() -> None:
-    d = server_to_dict(SAMPLE_SERVER)
-    assert d["tiering_status"] is None
-    assert d["tiering_plan_name"] is None
-
+# ── server_to_csv_row ─────────────────────────────────────────────────────────
+# server_to_dict was removed: BackupServer.to_dict() has zero CLI-specific transform
+# and is passed directly to dispatch_output/dispatch_paginated_list (see
+# tests/unit/sdk/models/test_models.py for field coverage, and
+# tests/unit/cli/commands/test_infra_backup_server.py for the JSON output wiring test).
 
 def test_server_to_csv_row_required_fields() -> None:
     row = server_to_csv_row(SAMPLE_SERVER)
@@ -295,12 +277,18 @@ def test_server_to_csv_row_required_fields() -> None:
 def test_protection_plan_to_dict_required_fields() -> None:
     d = protection_plan_to_dict(SAMPLE_PROTECTION_PLAN)
     required = {"plan_id", "name", "category", "is_immutable", "policy",
-                "workload_count", "successful_workload_count"}
+                "workload_count", "successful_workload_count",
+                "run_schedule_by_controller_time", "vm_config", "pc_config", "ps_config", "db_config"}
     assert required <= set(d.keys())
     assert isinstance(d["category"], str)
     assert d["category"] == "machine"
     assert d["is_immutable"] is False
     assert d["plan_id"] == "plan-001"
+    assert d["run_schedule_by_controller_time"] is False
+    assert d["vm_config"] is None
+    assert d["pc_config"] is None
+    assert d["ps_config"] is None
+    assert d["db_config"] is None
 
 
 def test_protection_plan_to_dict_policy_nested() -> None:
@@ -325,11 +313,12 @@ def test_protection_plan_to_csv_row_required_fields() -> None:
 
 def test_retirement_plan_to_dict_required_fields() -> None:
     d = retirement_plan_to_dict(SAMPLE_RETIREMENT_PLAN)
-    required = {"plan_id", "name", "retention", "workload_count"}
+    required = {"plan_id", "name", "retention", "workload_count", "run_schedule_by_controller_time"}
     assert required <= set(d.keys())
     assert d["plan_id"] == "retire-001"
     assert d["retention"]["days"] == 30
     assert d["retention"]["keep_latest_version"] is True
+    assert d["run_schedule_by_controller_time"] is False
 
 
 def test_retirement_plan_to_csv_row_required_fields() -> None:
@@ -340,33 +329,11 @@ def test_retirement_plan_to_csv_row_required_fields() -> None:
     assert row["retention_keep_latest"] is True
 
 
-# ── tiering_plan_to_dict ──────────────────────────────────────────────────────
-
-def test_tiering_plan_to_dict_required_fields() -> None:
-    d = tiering_plan_to_dict(SAMPLE_TIERING_PLAN)
-    required = {"plan_id", "name", "tiering_after_days", "daily_check_time",
-                "server_count", "destination", "tiering_status"}
-    assert required <= set(d.keys())
-    assert d["plan_id"] == "tiering-001"
-    assert d["tiering_after_days"] == 30
-    assert d["daily_check_time"] == "02:00"
-
-
-def test_tiering_plan_to_dict_destination_nested() -> None:
-    d = tiering_plan_to_dict(SAMPLE_TIERING_PLAN)
-    dest = d["destination"]
-    assert dest is not None
-    assert dest["name"] == "DSM-Storage"
-    assert dest["vault"] == "MyVault"
-
-
-def test_tiering_plan_to_dict_tiering_status_serialized() -> None:
-    d = tiering_plan_to_dict(SAMPLE_TIERING_PLAN)
-    ts = d["tiering_status"]
-    assert ts is not None
-    assert isinstance(ts["status"], str)
-    assert ts["status"] == "completed"
-
+# ── tiering_plan_to_csv_row ───────────────────────────────────────────────────
+# tiering_plan_to_dict was removed: TieringPlan.to_dict() has zero CLI-specific transform
+# and is passed directly to dispatch_output/dispatch_paginated_list (see
+# tests/unit/sdk/models/test_models.py for field coverage, and
+# tests/unit/cli/commands/test_plan_tiering.py for the JSON output wiring test).
 
 def test_tiering_plan_to_csv_row_required_fields() -> None:
     row = tiering_plan_to_csv_row(SAMPLE_TIERING_PLAN)
@@ -387,6 +354,24 @@ def test_version_to_dict_enum_values_are_strings() -> None:
     assert len(d["locations"]) == 1
 
 
+def test_version_to_dict_excludes_execution_id_and_includes_ids() -> None:
+    d = version_to_dict(SAMPLE_VERSION)
+    assert "execution_id" not in d
+    assert d["workload_id"] == "wl-id-001"
+    assert d["namespace"] == "ns-001"
+    assert d["portal_version_id"] == ""
+    assert d["snapshot_id"] == ""
+
+
+def test_version_to_dict_location_includes_namespace_and_connection_id() -> None:
+    d = version_to_dict(SAMPLE_VERSION)
+    loc = d["locations"][0]
+    assert loc["location_id"] == "loc-001"
+    assert loc["namespace"] == "ns-001"
+    assert loc["connection_id"] is None
+    assert loc["name"] == "apm-server-01"
+
+
 def test_version_to_csv_row_required_fields() -> None:
     row = version_to_csv_row(SAMPLE_VERSION)
     assert isinstance(row["status"], str)
@@ -404,6 +389,7 @@ def test_activity_to_dict_backup_fields() -> None:
     assert "data_change_bytes" in d
     assert "data_deduped_bytes" in d
     assert d["workload_id"] == "wl-id-001"
+    assert "execution_id" not in d
 
 
 def test_activity_to_dict_restore_fields() -> None:
@@ -411,6 +397,8 @@ def test_activity_to_dict_restore_fields() -> None:
     assert d["activity_type"] == "restore"
     assert isinstance(d["status"], str)
     assert d["status"] == "success"
+    assert "execution_id" not in d
+    assert "restore_type" not in d  # unset on SAMPLE_RESTORE_ACT, omitted rather than shown as null
 
 
 def test_backup_activity_to_csv_row_required_fields() -> None:
@@ -424,43 +412,6 @@ def test_restore_activity_to_csv_row_required_fields() -> None:
     row = restore_activity_to_csv_row(SAMPLE_RESTORE_ACT)
     assert isinstance(row["status"], str)
     assert row["activity_id"] == "act-002"
-
-
-# ── location_info_to_dict / tiering_status_to_dict ───────────────────────────
-
-def test_location_info_to_dict_all_fields() -> None:
-    loc = LocationInfo(
-        is_remote_storage=True,
-        identifier="ns-001",
-        name="DSM-Storage",
-        endpoint="192.0.2.20:8444",
-        vault="MyVault",
-    )
-    d = location_info_to_dict(loc)
-    assert d == {
-        "is_remote_storage": True,
-        "identifier": "ns-001",
-        "name": "DSM-Storage",
-        "endpoint": "192.0.2.20:8444",
-        "vault": "MyVault",
-    }
-
-
-def test_tiering_status_to_dict_none_returns_none() -> None:
-    assert tiering_status_to_dict(None) is None
-
-
-def test_tiering_status_to_dict_enum_serialized() -> None:
-    ts = TieringStatus(
-        status=VersionCopyStatus.IN_PROGRESS,
-        reason=None,
-        pending_version_count=5,
-    )
-    d = tiering_status_to_dict(ts)
-    assert d is not None
-    assert isinstance(d["status"], str)
-    assert d["status"] == "in_progress"
-    assert d["pending_version_count"] == 5
 
 
 # ── Serializers centralized from command modules ─────────────────────────────
@@ -493,13 +444,14 @@ def test_m365_workload_to_dict_required_fields() -> None:
     d = m365_workload_to_dict(SAMPLE_M365_WL)
     required = {"workload_id", "name", "category", "workload_type", "namespace", "tenant_id",
                 "is_retired", "status", "plan_name", "plan_id", "last_backup_at",
-                "protected_data_bytes", "backup_copy_data_bytes", "info_label",
+                "protected_data_bytes", "backup_copy_data_bytes", "info_label", "info",
                 "backup_server", "backup_copy_destination"}
     assert required <= set(d.keys())
     assert d["workload_id"] == "m365-wl-001"
     assert d["workload_type"] == "exchange"
     assert d["status"] == "success"
     assert d["info_label"] == "alice@contoso.com"
+    assert d["info"] == {"kind": "user", "user_principal_name": "alice@contoso.com"}
     assert d["backup_server"]["name"] == "apm-server-01"
     assert d["backup_copy_destination"] is None
 
@@ -515,57 +467,6 @@ def test_m365_workload_to_csv_row_required_fields() -> None:
     assert row["workload_id"] == "m365-wl-001"
 
 
-def test_tenant_to_dict_fields() -> None:
-    tenant = SaasTenant(
-        tenant_id="m365-tenant-uuid-001",
-        tenant_name="Contoso",
-        tenant_email="admin@contoso.com",
-        category=WorkloadCategory.M365,
-        protected_data_bytes=1073741824,
-    )
-    d = tenant_to_dict(tenant)
-    assert d == {
-        "tenant_id": "m365-tenant-uuid-001",
-        "tenant_name": "Contoso",
-        "tenant_email": "admin@contoso.com",
-        "category": "m365",
-        "protected_data_bytes": 1073741824,
-    }
-
-
-def test_site_info_to_dict_fields() -> None:
-    site = SiteInfo(
-        site_uuid="550e8400-e29b-41d4-a716-446655440000",
-        external_address="apm.corp.com",
-        port="443",
-        primary_management_server=SAMPLE_SERVER,
-        secondary_management_server=None,
-        site_storage=SiteStorageStats(
-            logical_backup_data_bytes=2000,
-            physical_backup_data_bytes=1000,
-        ),
-        workload_usage=WorkloadUsageSummary(
-            by_type=(
-                WorkloadTypeStat(
-                    workload_type=WorkloadStatType.MACHINE_PC,
-                    total_count=3,
-                    protected_data_bytes=300,
-                ),
-            ),
-        ),
-    )
-    d = site_info_to_dict(site)
-    assert d["site_uuid"] == "550e8400-e29b-41d4-a716-446655440000"
-    assert d["external_address"] == "apm.corp.com"
-    assert d["primary_management_server"]["name"] == SAMPLE_SERVER.name
-    assert d["secondary_management_server"] is None
-    assert d["site_storage"]["logical_backup_data_bytes"] == 2000
-    assert d["site_storage"]["backup_data_reduction_bytes"] == 1000
-    assert d["site_storage"]["backup_data_reduction_ratio"] == 50.0
-    assert d["workload_usage"]["by_type"][0]["workload_type"] == "machine_pc"
-    assert d["workload_usage"]["by_type"][0]["total_count"] == 3
-
-
 SAMPLE_HYPERVISOR = Hypervisor(
     hypervisor_id="978eabd4-e332-459f-a8e0-35a0aa312118",
     hostname="esxi1.example.com",
@@ -578,47 +479,12 @@ SAMPLE_HYPERVISOR = Hypervisor(
 )
 
 
-def test_hypervisor_to_dict_fields() -> None:
-    d = hypervisor_to_dict(SAMPLE_HYPERVISOR)
-    assert d == {
-        "hypervisor_id": "978eabd4-e332-459f-a8e0-35a0aa312118",
-        "hostname":      "esxi1.example.com",
-        "address":       "192.0.2.40",
-        "host_type":     HypervisorType.VSPHERE_ESXI.value,
-        "account":       "root",
-        "description":   "",
-        "port":          443,
-        "version":       "6.5",
-    }
-
-
 def test_hypervisor_to_csv_row_fields() -> None:
     row = hypervisor_to_csv_row(SAMPLE_HYPERVISOR)
     required = {"hostname", "address", "host_type", "account", "description", "hypervisor_id"}
     assert set(row.keys()) == required
     assert row["hostname"] == "esxi1.example.com"
     assert row["hypervisor_id"] == "978eabd4-e332-459f-a8e0-35a0aa312118"
-
-
-def test_remote_storage_to_dict_fields() -> None:
-    storage = RemoteStorage(
-        storage_id="f0d5d047-7dda-59fe-8d1b-47441c80bd1e",
-        name="DSM-Storage",
-        storage_type=RemoteStorageType.ACTIVE_PROTECT_VAULT,
-        device_model="DSM",
-        endpoint="192.0.2.20:8444",
-        status=RemoteStorageStatus.CONNECTED,
-        used_bytes=453378,
-        remaining_bytes=366960877568,
-    )
-    d = remote_storage_to_dict(storage)
-    assert d["storage_id"] == "f0d5d047-7dda-59fe-8d1b-47441c80bd1e"
-    assert d["name"] == "DSM-Storage"
-    assert d["storage_type"] == RemoteStorageType.ACTIVE_PROTECT_VAULT.value
-    assert d["status"] == RemoteStorageStatus.CONNECTED.value
-    assert d["used_bytes"] == 453378
-    assert d["remaining_bytes"] == 366960877568
-    assert d["encryption_enabled"] is False
 
 
 SAMPLE_EXPORT_ACTIVITY = M365ExportActivity(
@@ -639,13 +505,14 @@ SAMPLE_EXPORT_ACTIVITY = M365ExportActivity(
 def test_m365_export_activity_to_dict_fields() -> None:
     d = m365_export_activity_to_dict(SAMPLE_EXPORT_ACTIVITY)
     required = {"activity_id", "namespace", "workload_id", "workload_namespace", "item",
-                "version_timestamp", "status", "started_at", "finished_at"}
+                "is_archive_mail", "version_timestamp", "status", "started_at", "finished_at"}
     assert set(d.keys()) == required
     assert d["activity_id"] == "act-uuid-001"
     assert d["item"] == "Entire mailbox"
     assert d["status"] == "ready_to_download"
     assert d["finished_at"] is None
     assert d["started_at"] is not None
+    assert d["is_archive_mail"] is False
 
 
 def test_m365_export_activity_to_csv_row_fields() -> None:

@@ -2,28 +2,13 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
-from typing import NoReturn
+from collections.abc import Callable, Iterator
+from typing import NoReturn, cast
 
 import typer
 from rich.console import Console
 
-from synology_apm.cli.config import KeyringUnavailableError
-from synology_apm.sdk import (
-    APMError,
-    AuthenticationError,
-    BackupServerDisconnectedError,
-    ConnectionTimeoutError,
-    DuplicateWorkloadError,
-    InvalidOperationError,
-    NotManagementServerError,
-    NotSupportedError,
-    PermissionDeniedError,
-    PlanInUseError,
-    PlanNameConflictError,
-    ResourceNotFoundError,
-    ResourceNotReadyError,
-)
+from synology_apm.sdk import APMError, KeyringUnavailableError, ResourceNotFoundError, classify_error
 
 err_console = Console(stderr=True)
 
@@ -35,6 +20,15 @@ EXIT_CONNECT = 3
 EXIT_CANCEL = 4
 EXIT_NOT_SUPPORTED = 5
 
+# Exit code for each ERROR_CODES classification that isn't the EXIT_ERROR default.
+_EXIT_CODE_BY_CODE: dict[str, int] = {
+    "authentication_error": EXIT_AUTH,
+    "not_management_server": EXIT_CONNECT,
+    "backup_server_disconnected": EXIT_CONNECT,
+    "connection_timeout": EXIT_CONNECT,
+    "not_supported": EXIT_NOT_SUPPORTED,
+}
+
 
 def _exit(code: int, message: str, detail: str = "") -> NoReturn:
     err_console.print(f"[red]✗[/red] {message}")
@@ -43,48 +37,45 @@ def _exit(code: int, message: str, detail: str = "") -> NoReturn:
     raise typer.Exit(code=code)
 
 
+def _not_found_message(exc: APMError) -> tuple[str, str]:
+    # classify_error() only maps ResourceNotFoundError to "not_found" at runtime (see
+    # ERROR_CODES's docstring) — cast() documents that as a type-only narrowing to
+    # access resource_type/resource_id, not a runtime branch.
+    not_found = cast(ResourceNotFoundError, exc)
+    if not_found.resource_type and not_found.resource_type != "unknown":
+        return f"{not_found.resource_type} not found: {not_found.resource_id}", ""
+    return exc.message, ""
+
+
+# Only codes needing something other than a plain exc.message passthrough are listed
+# here; every other code defaults to (exc.message, "") in _message_for.
+_MESSAGE_BUILDERS: dict[str, Callable[[APMError], tuple[str, str]]] = {
+    "authentication_error": lambda exc: (f"Authentication failed: {exc.message}", ""),
+    "not_found": _not_found_message,
+    "permission_denied": lambda exc: (f"Permission denied: {exc.message}", ""),
+    "not_supported": lambda exc: (f"Not supported: {exc.message}", ""),
+    "backup_server_disconnected": lambda exc: (
+        "Unable to perform this operation because the designated backup server is disconnected",
+        "",
+    ),
+    "connection_timeout": lambda exc: ("Connection timed out", exc.message),
+}
+
+
+def _message_for(code: str, exc: APMError) -> tuple[str, str]:
+    """Return (message, detail) for an sdk.ERROR_CODES-classified exception."""
+    builder = _MESSAGE_BUILDERS.get(code)
+    return builder(exc) if builder is not None else (exc.message, "")
+
+
 def handle_apm_error(exc: APMError) -> NoReturn:
     """Convert an SDK exception to a CLI error message and exit the process."""
-    if isinstance(exc, AuthenticationError):
-        _exit(EXIT_AUTH, f"Authentication failed: {exc.message}")
+    code = classify_error(exc)
+    if code is not None:
+        message, detail = _message_for(code, exc)
+        _exit(_EXIT_CODE_BY_CODE.get(code, EXIT_ERROR), message, detail)
 
-    if isinstance(exc, NotManagementServerError):
-        _exit(EXIT_CONNECT, exc.message)
-
-    if isinstance(exc, InvalidOperationError):
-        _exit(EXIT_ERROR, exc.message)
-
-    if isinstance(exc, ResourceNotReadyError):
-        _exit(EXIT_ERROR, exc.message)
-
-    if isinstance(exc, ResourceNotFoundError):
-        if exc.resource_type and exc.resource_type != "unknown":
-            _exit(EXIT_ERROR, f"{exc.resource_type} not found: {exc.resource_id}")
-        else:
-            _exit(EXIT_ERROR, exc.message)
-
-    if isinstance(exc, PlanNameConflictError):
-        _exit(EXIT_ERROR, exc.message)
-
-    if isinstance(exc, PlanInUseError):
-        _exit(EXIT_ERROR, exc.message)
-
-    if isinstance(exc, DuplicateWorkloadError):
-        _exit(EXIT_ERROR, exc.message)
-
-    if isinstance(exc, PermissionDeniedError):
-        _exit(EXIT_ERROR, f"Permission denied: {exc.message}")
-
-    if isinstance(exc, NotSupportedError):
-        _exit(EXIT_NOT_SUPPORTED, f"Not supported: {exc.message}")
-
-    if isinstance(exc, BackupServerDisconnectedError):
-        _exit(EXIT_CONNECT, "Unable to perform this operation because the designated backup server is disconnected")
-
-    if isinstance(exc, ConnectionTimeoutError):
-        _exit(EXIT_CONNECT, "Connection timed out", exc.message)
-
-    # APIError and other APMErrors (backup rejected, connection issues, etc.)
+    # APIError and other unclassified APMErrors (backup rejected, connection issues, etc.)
     msg = exc.message
     if "ssl certificate verification failed" in msg.lower():
         _exit(

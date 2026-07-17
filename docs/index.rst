@@ -32,6 +32,12 @@ Python SDK for `Synology ActiveProtect Manager <https://www.synology.com/product
 
 .. toctree::
    :maxdepth: 2
+   :caption: Configuration
+
+   api/synology_apm.sdk.config
+
+.. toctree::
+   :maxdepth: 2
    :caption: Exceptions & Enums
 
    api/synology_apm.sdk.exceptions

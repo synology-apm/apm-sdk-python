@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
+from ._shared import auto_to_dict
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,10 @@ class M365AutoBackupRule:
     onedrive_group_ids: tuple[str, ...]
     chat_group_ids: tuple[str, ...]
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 @dataclass(frozen=True)
 class M365CollabServiceSetting:
@@ -50,6 +57,10 @@ class M365CollabServiceSetting:
         """True when this collaboration service type has an assigned backup plan."""
         return bool(self.plan_id)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, extra={"enabled": self.enabled})
+
 
 @dataclass(frozen=True)
 class M365AutoBackupRuleListResult:
@@ -68,3 +79,18 @@ class M365AutoBackupRuleListResult:
     mysite: M365CollabServiceSetting
     sharepoint: M365CollabServiceSetting
     teams: M365CollabServiceSetting
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            exclude=frozenset({"group_exchange", "mysite", "sharepoint", "teams"}),
+            extra={
+                "collab_settings": {
+                    "group_exchange": self.group_exchange.to_dict(),
+                    "mysite": self.mysite.to_dict(),
+                    "sharepoint": self.sharepoint.to_dict(),
+                    "teams": self.teams.to_dict(),
+                },
+            },
+        )

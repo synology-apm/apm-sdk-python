@@ -67,10 +67,10 @@ When adding or modifying commands, follow the conventions of existing commands (
 - **Missing required arguments**: declare as `Optional` at the Typer layer; the function checks for `None` internally and prints `ctx.get_help()`, then exits with 0.
 - **Shared option constants**: the recurring pagination (`--limit`/`--offset`/`--page-all`), output (`--output`), and time-filter (`--since`/`--until`) options are declared once in `synology_apm.cli._options` and referenced as parameter defaults (e.g. `limit: int = LIMIT_OPTION`); `--since`/`--until` values are parsed with `parse_time_range(since, until)` from `synology_apm.cli._validate`. Only declare an option inline when its default or help text genuinely differs.
 - **Destructive operations** (`retire`, overwrite-style `change-plan`): require interactive confirmation unless `--yes` is given; the summary message is always printed.
-- **Serialization**: before output, resource objects are converted to dicts via public functions in `_serializers.py` (e.g. `workload_to_dict`, `server_to_dict`, `protection_plan_to_dict`); command modules import and call these. This rule has no exemptions: command modules must not define their own `*_to_dict` / `*_to_csv_row` helpers (auditable via `grep -r "def .*_to_dict" commands/` — expected empty). Do not call `print_json()` or `dataclasses.asdict()` directly on an SDK model.
+- **Serialization**: when a resource needs no CLI-specific transform before output, command modules call the SDK model's `to_dict()` directly (or pass the unbound method, e.g. `Hypervisor.to_dict`, as a `dispatch_output`/`dispatch_list_output` callback) — do not add a zero-transform wrapper to `_serializers.py` just to route through it. When CLI-specific work *is* needed (local-time conversion, field renaming/flattening such as `plan_name`/`plan_id`, computed labels such as `schedule_label`/`info_label`), add a named function in `_serializers.py` (e.g. `workload_to_dict`, `protection_plan_to_dict`) and have command modules import and call it. Command modules must not define their own `*_to_dict` / `*_to_csv_row` helpers (auditable via `grep -r "def .*_to_dict" commands/` — expected empty). Do not call `print_json()` or `dataclasses.asdict()` directly on an SDK model. `_serializers.py`'s `*_to_dict` functions build on `d = obj.to_dict()` and mutate only the deltas (`d[key] = ...` for an override/addition, `d[new] = d.pop(old)` for a rename, `del d[key]` for a deliberate omission with a comment explaining why) — never manually reconstruct the full dict field-by-field, since that silently drops any field added to the SDK model later. `*_to_csv_row` functions build their flat, string-safe row independently — they are not required to source from `to_dict()`.
 - **Enum display text**: all enum → display-string mapping tables live in `_display.py` (e.g. `_SERVER_STATUS_DISPLAY`, `_FILE_SERVER_TYPE_DISPLAY`, `_RESTORE_TYPE_DISPLAY`); command modules import and use them — they do not define their own. Each table is accessed through a public `fmt_*` wrapper (e.g. `fmt_server_status`, `fmt_export_status`) that owns the fallback for unmapped values, and the wrapper is what commands call and unit tests exercise. SDK enums contain only semantic values, so adding or adjusting display text requires changes in `_display.py` only (the concrete display strings — e.g. the FS protocol sub-labels and the `plan protection get` task-table labels — are defined there and in the per-command specs below). Display maps must always contain final display strings — no intermediate empty-string sentinels requiring call-site post-processing.
 - **Datetime precision**: table/text output shows local time at second precision (`YYYY-MM-DD HH:MM:SS` via `fmt_datetime()`); JSON/CSV output uses local-timezone ISO 8601 (via `fmt_datetime_iso()` / `to_local_iso()`). **Exception**: schedule time-of-day fields (`schedule.start_time`, `daily_check_time`) are always `HH:MM` (no seconds, no timezone) in every output format, since APM schedules only support minute granularity.
-- **External non-SDK dependencies** (e.g. the OS keyring): wrap calls with a narrow `try/except` and a dedicated CLI-defined exception type (e.g. `KeyringUnavailableError`), not `apm_error_handler()` — that helper converts `APMError` to structured messages and also converts `ValueError` to a plain `EXIT_ERROR` message; it re-raises everything else.
+- **External non-SDK dependencies** (e.g. the OS keyring): wrap calls with a narrow `try/except` and the SDK-defined `KeyringUnavailableError` (re-exported via `synology_apm.sdk`), not `apm_error_handler()` — that helper converts `APMError` to structured messages and also converts `ValueError` to a plain `EXIT_ERROR` message; it re-raises everything else.
 - **Shared backup/cancel/retire/change-plan action bodies**: `machine` and `m365` implement the same four destructive/state-changing commands (`backup`, `cancel`, `retire`, `change-plan`) with identical resolve → confirm → invoke → print-success flow. The domain-agnostic body of each lives once in `commands/_actions.py` (`_do_backup` / `_do_cancel` / `_do_retire` / `_do_change_plan`); each command module passes in closures for workload resolution and a `label_fn` callable (`_machine_type_label` for `machine`, `lambda wl: None` for `m365`, since M365 workloads have no type label in this output) to absorb the only real per-domain differences.
 
 ### Technology Choices
@@ -85,11 +85,14 @@ When adding or modifying commands, follow the conventions of existing commands (
 
 ## Package Structure
 
+Each `commands/<name>.py` file implements the `synology-apm <name> ...` top-level command
+group named for the file; only files spanning multiple subcommand groups or with a
+non-command role are annotated below.
+
 ```
 synology_apm/cli/
 ├── __init__.py
 ├── main.py              # Typer app root entry point; registers all sub-apps
-├── config.py            # Config file read/write (~/.config/synology-apm/config.toml)
 ├── output.py            # Formatted output (table/json/yaml/csv); shared console instance
 ├── errors.py            # SDK Exception → CLI error message mapping; err_console
 ├── _async.py            # asyncio.run() wrapper (Typer has no native async support)
@@ -101,13 +104,13 @@ synology_apm/cli/
 └── commands/
     ├── __init__.py
     ├── _actions.py      # Shared backup/cancel/retire/change-plan resolve-confirm-invoke-print bodies; consumed by machine.py and m365.py
-    ├── config.py        # synology-apm config ...
-    ├── machine.py       # synology-apm machine ... (device workloads)
-    ├── saas.py          # synology-apm saas ... (SaaS tenant overview)
-    ├── m365.py          # synology-apm m365 ... (M365 workloads)
+    ├── config.py
+    ├── machine.py
+    ├── saas.py
+    ├── m365.py
     ├── m365_export.py   # Shared M365 export infrastructure (_TENANT_ID_OPTION, _make_export_app, etc.); consumed by m365.py
     ├── plan.py          # synology-apm plan protection / synology-apm plan retirement / synology-apm plan tiering
-    ├── activity.py      # synology-apm activity ...
+    ├── activity.py
     ├── infra.py         # synology-apm infra info / synology-apm infra server ... / synology-apm infra storage ... / synology-apm infra hypervisor ...
     └── log.py           # synology-apm log activity|drive|connection|system list
 ```
@@ -125,6 +128,10 @@ synology_apm/cli/
    stored in plaintext in this file, or looked up from the OS keyring; see "OS Keyring Storage"
    under config — Configuration Management for the keyring-specific details.
 ```
+
+> **Note:** The config file's directory follows the XDG Base Directory Specification:
+> `$XDG_CONFIG_HOME/synology-apm` when `XDG_CONFIG_HOME` is set to a non-empty absolute
+> path, otherwise `~/.config/synology-apm` (the default shown throughout this document).
 
 ### Configuration File Format
 
@@ -322,15 +329,13 @@ $ synology-apm machine list --retired --output json | jq '.[].name'
     "workload_id": "123e4567-e89b-12d3-a456-426614174000",
     "name": "vm-web-01",
     "category": "machine",
-    "workload_type": "virtual_machine",
     "namespace": "123e4567-e89b-12d3-a456-426614174001",
-    "is_retired": true,
-    "status": "retired",
-    "plan_name": null,
-    "plan_id": null,
     "last_backup_at": null,
+    "is_retired": true,
     "protected_data_bytes": 0,
-    "backup_copy_data_bytes": null,
+    "status": "retired",
+    "backup_progress": null,
+    "items_backed_up": null,
     "backup_server": {
       "is_remote_storage": false,
       "identifier": "123e4567-e89b-12d3-a456-426614174001",
@@ -339,15 +344,25 @@ $ synology-apm machine list --retired --output json | jq '.[].name'
       "vault": null
     },
     "backup_copy_destination": null,
-    "verify_status": null,
+    "backup_copy_data_bytes": 0,
+    "workload_type": "virtual_machine",
     "agent_version": null,
+    "verify_status": null,
     "device_uuid": "123e4567-e89b-12d3-a456-426614174006",
     "ip_address": null,
     "inventory_name": "esxi1.example.com",
-    "inventory_type": "ESXi"
+    "inventory_type": "ESXi",
+    "fs_config": null,
+    "plan_name": null,
+    "plan_id": null
   }
 ]
 ```
+
+> **Note:** `backup_progress`/`items_backed_up` (set only while a backup is in progress, on the
+> subset of workload types described in the `Workload` model docstring) and `fs_config` (File
+> Server workloads only) are `null` for this example's retired VM; see the SDK model docstring
+> for when each is populated.
 
 ### YAML (`--output yaml`)
 
@@ -510,7 +525,7 @@ Skip SSL verification? (choose y for self-signed certificates) [y/N]: y
 ```
 
 > - When the profile already has a saved password, the password prompt hint changes to `Password (leave blank to keep the saved password)` (plaintext) or `Password (leave blank to keep the password stored in the OS keyring)` (keyring); leaving it blank keeps the stored password.
-> - **With `--save-password`**, the password is always prompted and confirmed (`Password:` + `Repeat for confirmation:`; cannot be left blank). After the save-confirmation line, `plaintext` additionally prints `⚠ Password is stored in plaintext. Secure the file permissions (chmod 600).`; `keyring` prints `✓ Password stored in the OS keyring.`.
+> - **With `--save-password`**, the password is always prompted and confirmed (`Password:` + `Repeat for confirmation:`; cannot be left blank). After the save-confirmation line, `plaintext` additionally prints `⚠ Password is stored in plaintext in the config file (file permissions are restricted to the current user).`; `keyring` prints `✓ Password stored in the OS keyring.`.
 > - With `--no-input`, `--host` / `--username` become required (error + exit 1 when missing), `--save-password` is rejected (it requires interactive input), the password is left unsaved, and the SSL setting keeps its existing value.
 
 ##### OS Keyring Storage
@@ -562,7 +577,7 @@ Subcommands that support search mode (`get` / `version list` / `version get` / `
 
 #### `synology-apm machine list`
 
-`--type [pc|ps|vm|fs]` is a repeatable type filter (default: all types); other filters: `--retired`, `--search`, `--namespace`, `--hypervisor`, `--plan` (repeatable, name or ID).
+`--type [pc|ps|vm|fs]` is a repeatable type filter (default: all types); other filters: `--retired`, `--search`, `--namespace`, `--hypervisor`, `--plan` (repeatable, name or ID), `--status` (repeatable; see [Status Icons](#status-icons) "Workload Backup Result" for the value set), `--verify-status` (repeatable, meaningful for PS/VM only; see [Status Icons](#status-icons) "Backup Verification Status" — PC/FS workloads aren't excluded server-side and always display `-` in the Verification column regardless of match; combine with `--type vm --type ps` to exclude them).
 
 **Default table columns** (see the canonical list example in [Output Formats](#output-formats)):
 
@@ -719,10 +734,12 @@ synology-apm machine version get --workload-id WORKLOAD_ID --namespace NAMESPACE
   "status":             "success",
   "locked":             false,
   "changed_size_bytes": 1234567,
+  "portal_version_id":  "",
+  "snapshot_id":        "",
   "verify_status":      null,
   "copy_status":        "retry",
   "copy_reason":        "auth_failed",
-  "locations":          [ { "location_id": "...", "is_remote_storage": false, "identifier": "...", "name": "...", "endpoint": "...", "vault": null } ],
+  "locations":          [ { "location_id": "...", "namespace": "...", "connection_id": null, "is_remote_storage": false, "identifier": "...", "name": "...", "endpoint": "...", "vault": null } ],
   "workload_id":        "...",
   "namespace":          "...",
   "activity":           { ... }
@@ -795,6 +812,8 @@ The operation interface is identical for each subcommand group; `exchange` is us
 ---
 
 #### `synology-apm m365 <SCOPE> list`
+
+Filters: `--retired`, `--search`, `--namespace`, `--plan` (repeatable, name or ID), `--status` (repeatable; see [Status Icons](#status-icons) "Workload Backup Result" for the value set). M365 workloads have no verification concept, so there is no `--verify-status` option here.
 
 In table mode, tenant information is shown above the table (calls `SaasCollection.get_m365_tenant(tenant_id)`):
 
@@ -1388,7 +1407,8 @@ Lists all configured remote storage devices (External Vault). The API does not s
     "encryption_enabled": false,
     "status": "connected",
     "used_bytes": 453378,
-    "remaining_bytes": 366960877568
+    "remaining_bytes": 366960877568,
+    "vault_name": "MyVault"
   }
 ]
 ```
@@ -1637,7 +1657,7 @@ Errors are printed to stderr; the exit code is returned to the shell (it is not 
 | `BackupServerDisconnectedError` | 3 | `✗ Unable to perform this operation because the designated backup server is disconnected` |
 | `ConnectionTimeoutError` | 3 | `✗ Connection timed out` + detail line with the SDK message |
 | `ResourceNotFoundError` | 1 | `✗ <ResourceType> not found: <resource-id>` (falls back to the raw message when the resource type is unknown) |
-| `InvalidOperationError` / `ResourceNotReadyError` / `PlanNameConflictError` / `PlanInUseError` / `DuplicateWorkloadError` | 1 | `✗ <message>` |
+| `InvalidOperationError` / `ResourceNotReadyError` / `PlanNameConflictError` / `PlanInUseError` / `DuplicateWorkloadError` / `RemoteStorageConflictError` / `RemoteStorageEncryptionMismatchError` / `RemoteStorageInUseError` / `RemoteStorageUnmanagedCatalogError` | 1 | `✗ <message>` |
 | `PermissionDeniedError` | 1 | `✗ Permission denied: <message>` |
 | `NotSupportedError` | 5 | `✗ Not supported: <message>` |
 | `APIError` (message indicates an SSL certificate verification failure) | 3 | `✗ SSL certificate verification failed` + hint suggesting `--no-verify-ssl` or skipping SSL verification in `config set` |
@@ -1670,7 +1690,7 @@ Rows marked *plan resolution* resolve `--plan` (UUID → `.get()`, otherwise `.g
 | Command | Corresponding SDK |
 |------|---------|
 | `synology-apm config set/show/clear` | — |
-| `synology-apm machine list --type [pc\|ps\|vm\|fs] --plan` | *plan resolution* → `MachineWorkloadCollection.list()` |
+| `synology-apm machine list --type [pc\|ps\|vm\|fs] --plan --status --verify-status` | *plan resolution* → `MachineWorkloadCollection.list()` |
 | `synology-apm machine get` | `MachineWorkloadCollection.get_by_name()` (search) / `MachineWorkloadCollection.get()` (direct) |
 | `synology-apm machine backup` | `MachineWorkloadCollection.backup_now()` |
 | `synology-apm machine cancel` | `MachineWorkloadCollection.cancel_backup()` |
@@ -1691,7 +1711,7 @@ Rows marked *plan resolution* resolve `--plan` (UUID → `.get()`, otherwise `.g
 | `synology-apm infra hypervisor get` | `HypervisorCollection.get()` (direct) / `HypervisorCollection.get_by_name()` (search) |
 | `synology-apm infra info` | `APMClient.get_site_info()` |
 | `synology-apm saas list` | `SaasCollection.list()` |
-| `synology-apm m365 <scope> list [-t] --plan` | *plan resolution* → `M365WorkloadCollection.list()` + `SaasCollection.get_m365_tenant()` |
+| `synology-apm m365 <scope> list [-t] --plan --status` | *plan resolution* → `M365WorkloadCollection.list()` + `SaasCollection.get_m365_tenant()` |
 | `synology-apm m365 <scope> get/backup/cancel` | `M365WorkloadCollection` |
 | `synology-apm m365 <scope> retire --plan` | *plan resolution* → `M365WorkloadCollection.retire()` |
 | `synology-apm m365 <scope> change-plan --plan` | *plan resolution* → `M365WorkloadCollection.change_plan()` |

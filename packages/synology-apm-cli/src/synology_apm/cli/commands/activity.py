@@ -1,8 +1,6 @@
 """synology-apm activity — backup and restore activity record query commands."""
 from __future__ import annotations
 
-from typing import TypeVar
-
 import typer
 
 from synology_apm.cli._async import run_async
@@ -30,9 +28,14 @@ from synology_apm.cli._options import (
     UNTIL_OPTION,
 )
 from synology_apm.cli._serializers import activity_to_dict, backup_activity_to_csv_row, restore_activity_to_csv_row
-from synology_apm.cli._validate import MACHINE_TYPE_ARGS, parse_time_range, require_or_help, validate_activity_args
+from synology_apm.cli._validate import (
+    MACHINE_TYPE_ARGS,
+    parse_enum_list,
+    parse_time_range,
+    require_or_help,
+    validate_activity_args,
+)
 from synology_apm.cli.commands._actions import _cancel_activity
-from synology_apm.cli.errors import err_console
 from synology_apm.cli.output import (
     ListOutputFormat,
     OutputFormat,
@@ -53,8 +56,6 @@ _backup_app  = typer.Typer(help="Query backup activity records.", no_args_is_hel
 _restore_app = typer.Typer(help="Query restore activity records.", no_args_is_help=True)
 app.add_typer(_backup_app,  name="backup")
 app.add_typer(_restore_app, name="restore")
-
-_T = TypeVar("_T")
 
 _BACKUP_STATUS_MAP = {
     "queuing":    BackupActivityStatus.QUEUING,
@@ -88,31 +89,6 @@ _M365_TYPE_MAP: dict[str, M365WorkloadType] = {
     "teams":      M365WorkloadType.TEAMS,
     "group":      M365WorkloadType.GROUP,
 }
-
-
-def _parse_enum_list(
-    values: list[str] | None,
-    mapping: dict[str, _T],
-    option_name: str,
-    available: str | None = None,
-) -> list[_T] | None:
-    """Validate and convert a list of CLI string values to enum instances.
-
-    Returns None when values is empty or None; exits with code 1 on unknown value.
-    """
-    if not values:
-        return None
-    result: list[_T] = []
-    for v in values:
-        enum_val = mapping.get(v.lower())
-        if enum_val is None:
-            if available:
-                err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v} (available: {available})")
-            else:
-                err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v}")
-            raise typer.Exit(code=1)
-        result.append(enum_val)
-    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -153,9 +129,9 @@ async def backup_list(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
     """List backup activity records."""
-    status_enums = _parse_enum_list(status, _BACKUP_STATUS_MAP, "status")
-    machine_type_enums = _parse_enum_list(machine_type, MACHINE_TYPE_ARGS, "machine-type", "pc / ps / vm / fs")
-    m365_type_enums = _parse_enum_list(
+    status_enums = parse_enum_list(status, _BACKUP_STATUS_MAP, "status")
+    machine_type_enums = parse_enum_list(machine_type, MACHINE_TYPE_ARGS, "machine-type", "pc / ps / vm / fs")
+    m365_type_enums = parse_enum_list(
         m365_type, _M365_TYPE_MAP, "m365-type",
         "exchange / onedrive / chat / sharepoint / teams / group",
     )
@@ -323,7 +299,7 @@ async def restore_list(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
     """List restore activity records."""
-    status_enums = _parse_enum_list(status, _RESTORE_STATUS_MAP, "status")
+    status_enums = parse_enum_list(status, _RESTORE_STATUS_MAP, "status")
     since_dt, until_dt = parse_time_range(since, until)
 
     async with apm_session(ctx, spinner="Fetching restore activities...") as apm:

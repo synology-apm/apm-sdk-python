@@ -10,7 +10,7 @@ from yarl import URL
 
 from synology_apm.sdk.client import APMClient
 from synology_apm.sdk.enums import RetentionType, ScheduleFrequency, WorkloadCategory
-from synology_apm.sdk.exceptions import PlanInUseError, ResourceNotFoundError
+from synology_apm.sdk.exceptions import APIError, PlanInUseError, ResourceNotFoundError
 from synology_apm.sdk.models.protection_plan import (
     M365PlanCreateRequest,
     MachinePlanCreateRequest,
@@ -269,8 +269,8 @@ async def test_plans_list_external_storage_empty_name_yields_no_destination() ->
     assert plans[0].backup_copy_policy is None
 
 
-async def test_plans_list_external_storage_error_yields_no_destination() -> None:
-    """list() sets backup_copy_policy=None when the external storage lookup raises an exception."""
+async def test_plans_list_external_storage_error_propagates() -> None:
+    """list() propagates a server error from the external storage lookup instead of dropping the destination."""
     plan_with_copy = {
         "id": "plan-copy-003",
         "spec": {
@@ -293,6 +293,36 @@ async def test_plans_list_external_storage_error_yields_no_destination() -> None
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
         m.get(ext_url, status=500, payload={"error": "server error"})
+        m.get(f"{BASE_URL}/api/v1/preference/logout", payload=LOGOUT_OK)
+        async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:
+            with pytest.raises(APIError):
+                await apm.machine.plans.list()
+
+
+async def test_plans_list_deleted_external_storage_yields_no_destination() -> None:
+    """list() sets backup_copy_policy=None when the copy destination no longer exists."""
+    plan_with_copy = {
+        "id": "plan-copy-004",
+        "spec": {
+            "name": "Cloud Copy Plan 4",
+            "serviceType": "DEVICE",
+            "retention": {"keepDays": 30},
+            "backupCopy": {
+                "enabled": True,
+                "destination": "ext-004",
+                "destinationType": "CLOUD",
+            },
+        },
+        "protectedWorkloadCount": 1,
+        "unprotectedWorkloadCount": 0,
+    }
+    plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
+    ext_url = f"{BASE_URL}/api/v1/external_storage/ext-004"
+    with aioresponses() as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        m.get(ME_URL, payload=ME_OK)
+        m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
+        m.get(ext_url, status=404)
         m.get(f"{BASE_URL}/api/v1/preference/logout", payload=LOGOUT_OK)
         async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:
             plans, _ = await apm.machine.plans.list()
@@ -385,8 +415,8 @@ async def test_plans_list_appliance_namespace_not_in_server_list_yields_no_desti
     assert plans[0].backup_copy_policy is None
 
 
-async def test_plans_list_appliance_server_list_error_yields_no_destination() -> None:
-    """list() sets backup_copy_policy=None when the backup server list call fails."""
+async def test_plans_list_appliance_server_list_error_propagates() -> None:
+    """list() propagates a server error from the backup server lookup instead of dropping the destination."""
     plan_with_copy = {
         "id": "plan-copy-bs-003",
         "spec": {
@@ -411,9 +441,8 @@ async def test_plans_list_appliance_server_list_error_yields_no_destination() ->
         m.get(servers_url, status=500, payload={"error": "server error"})
         m.get(f"{BASE_URL}/api/v1/preference/logout", payload=LOGOUT_OK)
         async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:
-            plans, _ = await apm.machine.plans.list()
-
-    assert plans[0].backup_copy_policy is None
+            with pytest.raises(APIError):
+                await apm.machine.plans.list()
 
 
 async def test_plans_list_name_contains_passes_keyword_param() -> None:

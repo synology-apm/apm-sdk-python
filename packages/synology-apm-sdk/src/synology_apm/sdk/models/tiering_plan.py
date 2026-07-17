@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import time
+from typing import Any
 
 from ..enums import CopyReason, VersionCopyStatus
+from ._shared import auto_to_dict
 from .location import LocationInfo
 from .remote_storage import RemoteStorage
 
@@ -25,6 +27,10 @@ class TieringStatus:
     reason: CopyReason | None
     pending_version_count: int = 0
     remaining_bytes: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,14 @@ class TieringPlan:
     tiering_status: TieringStatus | None = None
     run_schedule_by_controller_time: bool = False
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            exclude=frozenset({"daily_check_time"}),
+            extra={"daily_check_time": f"{self.daily_check_time.hour:02d}:{self.daily_check_time.minute:02d}"},
+        )
+
 
 @dataclass(frozen=True)
 class TieringPlanCreateRequest:
@@ -60,14 +74,14 @@ class TieringPlanCreateRequest:
 
     Attributes:
         name:                           Plan display name.
-        tier_after_days:                Number of days before versions are moved to the destination.
+        tiering_after_days:             Number of days before versions are moved to the destination.
         destination:                    Remote storage destination (from `apm.remote_storages`).
         daily_check_time:               Time of day when the tiering check runs.
         description:                    Plan description.
         run_schedule_by_controller_time: Use APM controller's clock for scheduling.
     """
     name: str
-    tier_after_days: int
+    tiering_after_days: int
     destination: RemoteStorage
     daily_check_time: time = field(default_factory=lambda: time(20, 0))
     description: str = ""

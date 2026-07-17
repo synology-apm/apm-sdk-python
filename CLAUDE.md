@@ -19,6 +19,7 @@ This project develops a Python SDK and CLI tool for **Synology ActiveProtect Man
 |----------|-------------|----------|
 | `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` | **SDK design contract**: enum ↔ API string mappings, non-obvious collection behavior rules, type system notes. Full public API signatures/docstrings live in source code (→ Sphinx). | required |
 | `packages/synology-apm-cli/src/synology_apm/cli/README.md` | **CLI command spec**: command structure, output format, color/status rules, SDK call mapping. Full CLI → SDK mapping table lives at the end of the file. | implementation reference for CLI |
+| `packages/synology-apm-mcp/README.md` | **MCP server usage**: installation, client config (Claude Desktop/Code), environment variables, operation modes. See "Three-Layer Responsibility Separation" below for how MCP fits the SDK/CLI layering. | implementation reference for MCP |
 | `APM_PRODUCT_OVERVIEW.md` | APM product domain knowledge — backup/recovery model, workload categories, key concepts (not the SDK itself — see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` for design rationale and interface) | background reference |
 
 New details belong in the closest document, not here: implementation rationale goes in
@@ -109,17 +110,18 @@ Reuse these values consistently so examples form a coherent, recognizable "sampl
 ### Three-Layer Responsibility Separation (API string → SDK Enum → CLI display)
 
 - **Parser** (collection `_parse_*`): maps raw API strings to semantic enums — API strings must not leak past this layer.
-- **SDK** (model / enum): exposes only semantic enum values (snake_case) — see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` "Enum Definitions and API String Mapping" for the convention.
-- **CLI** (commands): owns all enum → display-string mapping tables — see `packages/synology-apm-cli/src/synology_apm/cli/README.md` "Development Conventions" for the convention.
+- **SDK** (model / enum): exposes only semantic enum values (snake_case), and owns semantic JSON serialization — every response model dataclass exposes a `to_dict()` method (enum fields via `.value`, datetime fields as ISO 8601 strings, nested models via their own `to_dict()`) — see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` "Design Conventions" and "Enum Definitions and API String Mapping" for the conventions.
+- **CLI** (commands): owns all enum → display-string mapping tables, plus any other presentation-only transform (local-time conversion, flattened/derived fields, CSV row shaping) — see `packages/synology-apm-cli/src/synology_apm/cli/README.md` "Development Conventions" for the convention. CLI's JSON/YAML output sources its semantic field values from the SDK model's `to_dict()` rather than re-deriving them.
+- **MCP** (`packages/synology-apm-mcp`): consumes the SDK model's `to_dict()` output directly, without CLI's presentation-only transforms (local-time conversion, flattened/derived fields) — MCP output is the raw semantic shape for machine consumption, while CLI's `--output json` applies the same presentation transforms it uses for table/CSV output. This is an intentional divergence between the two surfaces, not a shared contract. MCP tool output is always machine-readable JSON with no table/display formatting, so MCP code must not contain enum → display-string mapping tables — that concern belongs to CLI only.
 
-No layer may cross into another's domain: raw API strings must not appear in SDK models or CLI code, and display strings must not appear in SDK enum values.
+No layer may cross into another's domain: raw API strings must not appear in SDK models, CLI, or MCP code; display strings must not appear in SDK enum values or in MCP output; and CLI/MCP must not hand-roll a second copy of the semantic dict-building logic already provided by SDK model `to_dict()` methods.
 
 ### API Abstraction in User-Facing Text
 
 Docstrings (module/class/method/function — published via Sphinx), CLI `help=` strings,
-user-visible output strings, and the two PyPI READMEs (`packages/synology-apm-sdk/README.md`,
-`packages/synology-apm-cli/README.md`) describe **domain/SDK-level behavior only**. They
-must not mention:
+user-visible output strings, and the three PyPI READMEs (`packages/synology-apm-sdk/README.md`,
+`packages/synology-apm-cli/README.md`, `packages/synology-apm-mcp/README.md`) describe
+**domain/SDK-level behavior only**. They must not mention:
 
 - REST API paths (e.g. `/api/v1/system/resource`), HTTP methods, or HTTP status codes
   (e.g. "returns 404", "HTTP 401").
@@ -156,42 +158,22 @@ Both READMEs are part of the design contract — read them before implementing, 
 
 ```
 synology-apm-sdk-python/
-├── README.md                ← repository README (project intro + installation)
-├── pyproject.toml           ← workspace root; shared pytest/mypy/ruff config
-├── uv.lock                   ← committed lockfile
-├── Makefile                  ← make test / docs / build / smoke-test shortcuts (see Common Commands)
-├── LICENSE
-├── .env.example              ← template for the .env file described above
-├── .claude-plugin/           ← plugin marketplace manifests (marketplace.json, plugin.json) for /plugin install
-├── .github/workflows/        ← CI, docs, and release pipelines
-├── APM_PRODUCT_OVERVIEW.md  ← product domain knowledge; see Key Documents table above
+├── .claude-plugin/      ← plugin marketplace manifests for /plugin install
+├── .codex-plugin/       ← Codex plugin manifest (Codex equivalent of .claude-plugin/)
+├── .github/workflows/   ← CI, docs, and release pipelines
 ├── packages/
-│   ├── synology-apm-sdk/
-│   │   ├── pyproject.toml   ← PyPI project "synology-apm-sdk"
-│   │   ├── README.md        ← PyPI README
-│   │   └── src/synology_apm/sdk/  ← SDK package; see its README.md for file-level details
-│   └── synology-apm-cli/
-│       ├── pyproject.toml   ← PyPI project "synology-apm-cli"
-│       ├── README.md        ← PyPI README
-│       └── src/synology_apm/cli/  ← CLI package; see its README.md for file-level details
+│   ├── synology-apm-sdk/  ← PyPI project "synology-apm-sdk"; source in src/synology_apm/sdk/ (see its README.md)
+│   ├── synology-apm-cli/  ← PyPI project "synology-apm-cli"; source in src/synology_apm/cli/ (see its README.md)
+│   └── synology-apm-mcp/  ← PyPI project "synology-apm-mcp"; source in src/synology_apm/mcp/ (see its README.md)
 ├── tests/
-│   ├── cassette_lib.py  ← custom cassette record/replay system
-│   ├── unit/            ← unit tests; mirrors sdk/collections/ and cli/commands/ (see "Test File Organization")
+│   ├── unit/            ← unit tests; mirrors sdk/collections/, cli/commands/, and mcp/tools/ (see "Test File Organization"); also covers examples/ and scripts/check_mcp_coverage.py
 │   ├── integration/     ← cassette-backed real-server tests; mirrors sdk/collections/
 │   ├── cassettes/       ← one JSON cassette per integration test; gitignored, local-only
 │   └── smoke/           ← live smoke-test tools; smoke/cli/ drives the CLI binary, smoke/sdk/ the SDK (see their README.md)
-├── skills/              ← apm-*/SKILL.md — generated CLI skills; do not edit by hand
+├── skills/              ← MCP workflow skills (SKILL.md per task), hand-authored; see packages/synology-apm-mcp/README.md
 ├── examples/            ← runnable SDK usage examples; see examples/README.md and examples/CLAUDE.md
-├── docs/
-│   ├── conf.py              ← Sphinx config (committed; holds version/release strings)
-│   ├── index.rst            ← Sphinx toctree root (committed; new modules added manually)
-│   ├── Makefile             ← Sphinx build entry (invoked by root `make docs`)
-│   └── api/                 ← sphinx-apidoc RST stubs (gitignored, generated)
-└── scripts/
-    ├── generate_skills.py   ← generates skills/ from CLI introspection + skills_data/*.toml
-    ├── skills_data/          ← hand-written TOML sidecars for generate_skills.py
-    ├── build-cli-macos.sh
-    └── build-cli-windows.ps1
+├── docs/                ← Sphinx API reference
+└── scripts/             ← build, release, and MCP-SDK coverage-check scripts (check_mcp_coverage.py, mcp_coverage.toml)
 ```
 
 ---
@@ -323,7 +305,7 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 | Integration test renamed or removed | Local-only, no commit impact (`tests/cassettes/` is gitignored): delete the corresponding cassette from `tests/cassettes/`; use `--record-mode=all` to re-record if the underlying API response changed |
 | Major SDK refactor changes request/response format | Local-only, no commit impact: re-record your local cassettes: `pytest tests/integration/ --record-mode=all --import-mode=importlib` |
 
-**Run before every commit:** `make test` (unit + integration tests, lint, mypy, coverage, skills check — same gate as CI).
+**Run before every commit:** `make test` (unit + integration tests, lint, mypy, coverage, MCP coverage check — same gate as CI).
 
 ### Documentation
 
@@ -336,7 +318,7 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 | Non-obvious collection behavior added or changed (e.g. multi-call logic, request body format, mode dispatch) | `packages/synology-apm-sdk/src/synology_apm/sdk/README.md`: Collection Behavior Rules section |
 | New SDK public type added (class, enum, dataclass) | Source docstring (Attributes / class-level description); `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` only if the type has non-obvious behavior or mapping that cannot go in a docstring |
 | SDK-level convention changed (code style, `__all__` exports, field-name mapping, `APMClient` constructor, domain separation) | `packages/synology-apm-sdk/src/synology_apm/sdk/README.md`: Design Conventions section |
-| CLI command/option/flag/help text added, removed, or changed | Regenerate `skills/apm-*/SKILL.md`: `uv run python scripts/generate_skills.py` (or `--group <name>` for one skill). For a **new** command, also add its path to the relevant `commands` (or `extra_sections`) list in `scripts/skills_data/<group>.toml` first |
+| CLI command/option/flag/help text added, removed, or changed | No additional sync beyond the CLI README rows above |
 | Any change | Run `make docs` and fix any warnings or errors before committing (`docs/api/` RST stubs are regenerated automatically via `sphinx-apidoc -f`, but `docs/index.rst` toctree entries must be added manually for new modules) |
 
 > **Note:** When adding/changing CLI commands or options, consider adding/updating the
@@ -363,7 +345,7 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 
 | Change | Sync required |
 |--------|--------------|
-| New source file added, or existing source file renamed/moved/deleted under `packages/synology-apm-sdk/src/synology_apm/sdk/` or `packages/synology-apm-cli/src/synology_apm/cli/` | Update the package README instead: `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` Package Structure for SDK files; `packages/synology-apm-cli/src/synology_apm/cli/README.md` Package Structure for CLI files (test file additions do **not** require this update) |
+| New source file added, or existing source file renamed/moved/deleted under `packages/synology-apm-sdk/src/synology_apm/sdk/` or `packages/synology-apm-cli/src/synology_apm/cli/` | Update the package README instead: `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` Package Structure for SDK files; `packages/synology-apm-cli/src/synology_apm/cli/README.md` Package Structure for CLI files (test file additions do **not** require this update). Always add the file to the tree; add an inline comment only if it doesn't follow that directory's stated naming convention (see each README's Package Structure intro) — a multi-type file, private helper, or entry point still needs one, but a file matching the convention (e.g. `collections/<name>.py` → `<Noun>Collection`, `commands/<name>.py` → `synology-apm <name> ...`) does not |
 | New CLI command added (once feature is complete) | Add to the "CLI → SDK Mapping Table" in `packages/synology-apm-cli/src/synology_apm/cli/README.md`. (New SDK methods need no index update — see the Documentation table above) |
 
 ---
@@ -389,9 +371,7 @@ behavior/feature.
 
 ## Release / Version Bump
 
-Both packages share a single **lockstep version number** — bump them together, never
-independently. Releases are cut by the maintainers and published to PyPI and GitHub
-automatically via `.github/workflows/release.yml`.
+All three packages (`synology-apm-sdk`, `synology-apm-cli`, `synology-apm-mcp`) share a single **lockstep version number** — bump them together, never independently. Releases are cut by the maintainers and published to PyPI and GitHub automatically via `.github/workflows/release.yml`.
 
 External contributors do not need to manage version numbers — include your changes in a PR
 and the maintainers will handle versioning and publishing.
@@ -418,14 +398,10 @@ uv run pytest tests/integration/ --record-mode=all --import-mode=importlib -v
 uv run python -m tests.smoke.cli --group infra
 uv run python -m tests.smoke.sdk --group machine
 
-# Regenerate skills (make test only checks; run this after adding or changing commands)
-uv run python scripts/generate_skills.py
-uv run python scripts/generate_skills.py --group machine   # single skill
-
 # Build API reference docs (first-time: uv sync --group docs)
 make docs
 
-# Makefile shortcuts (make test = unit + integration tests, lint, mypy, coverage, skills check)
+# Makefile shortcuts (make test = unit + integration tests, lint, mypy, coverage, MCP coverage check)
 make test
 make record-integration-cassettes
 make smoke-test                        # runs both CLI and SDK smoke tests
@@ -456,10 +432,9 @@ for the specifics; the recipe only fixes the order.
 1. Implement it in `cli/commands/<module>` — SDK calls only, never raw HTTP (see the CLI README "Development Conventions").
 2. Add a command-level unit test in `tests/unit/cli/commands/` (SDK wiring, exit codes, output dispatch).
 3. Update the CLI README: command spec + CLI → SDK mapping table.
-4. Add the command path to `scripts/skills_data/<group>.toml`, then run `uv run python scripts/generate_skills.py`.
-5. Update `packages/synology-apm-cli/README.md` example blocks if user-facing usage changed.
-6. Consider a matching invocation in `tests/smoke/cli/phases/_<domain>.py`.
-7. Run `make test`.
+4. Update `packages/synology-apm-cli/README.md` example blocks if user-facing usage changed.
+5. Consider a matching invocation in `tests/smoke/cli/phases/_<domain>.py`.
+6. Run `make test`.
 
 ### Add an enum or model field
 

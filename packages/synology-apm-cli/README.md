@@ -142,6 +142,10 @@ synology-apm machine list --retired                    # only retired workloads
 synology-apm machine list --search "prod"              # name keyword search
 synology-apm machine list --type vm --retired          # combine type + retired filter
 synology-apm machine list --verbose                    # add IP Address / Workload ID / Namespace columns
+
+# Filter by backup status / verification status (both repeatable)
+synology-apm machine list --status failed --status partial
+synology-apm machine list --verify-status not_enabled   # PS/VM only
 ```
 
 #### `synology-apm machine get`
@@ -308,6 +312,7 @@ synology-apm m365 exchange   list --retired             # only retired workloads
 synology-apm m365 exchange   list --search "alice"      # name/email keyword search
 synology-apm m365 exchange   list --verbose             # add Workload ID / Namespace columns
 synology-apm m365 exchange   list -o json               # JSON output (no tenant header)
+synology-apm m365 exchange   list --status failed --status partial  # repeatable
 
 # Inspect a single M365 workload — two modes:
 # Search mode (find by name/email/URL — auto-resolves tenant if -t omitted; add --retired

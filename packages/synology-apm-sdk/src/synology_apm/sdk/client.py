@@ -255,6 +255,7 @@ class APMClient:
 
         Streams the file in 64 KB chunks so large PST files do not exhaust memory.
         The session cookie and SSL settings (verify_ssl) are applied automatically.
+        A failed download never modifies an existing file at dest_path.
 
         Args:
             url:         Full HTTPS URL as returned by exchange_export.get_download_url_by_*().

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ..enums import WorkloadStatType
+from ._shared import auto_to_dict
 from .backup_server import BackupServer
 
 
@@ -30,6 +32,16 @@ class SiteStorageStats:
             return 0.0
         return self.backup_data_reduction_bytes / self.logical_backup_data_bytes * 100
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            extra={
+                "backup_data_reduction_bytes": self.backup_data_reduction_bytes,
+                "backup_data_reduction_ratio": round(self.backup_data_reduction_ratio, 1),
+            },
+        )
+
 
 @dataclass(frozen=True)
 class WorkloadTypeStat:
@@ -43,6 +55,10 @@ class WorkloadTypeStat:
     workload_type: WorkloadStatType
     total_count: int
     protected_data_bytes: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -63,6 +79,16 @@ class WorkloadUsageSummary:
     def total_protected_data_bytes(self) -> int:
         """Total protected data size in bytes across all types."""
         return sum(s.protected_data_bytes for s in self.by_type)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(
+            self,
+            extra={
+                "total_count": self.total_count,
+                "total_protected_data_bytes": self.total_protected_data_bytes,
+            },
+        )
 
 
 @dataclass(frozen=True)
@@ -87,3 +113,7 @@ class SiteInfo:
     secondary_management_server: BackupServer | None
     site_storage: SiteStorageStats
     workload_usage: WorkloadUsageSummary
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)

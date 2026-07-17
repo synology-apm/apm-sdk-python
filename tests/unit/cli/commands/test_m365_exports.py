@@ -183,8 +183,8 @@ def test_m365_group_export_list_table_has_item_version_columns() -> None:
     assert "Item" in result.output
     assert "Version" in result.output
 
-def test_m365_group_export_list_json_has_version_timestamp_no_archive_field() -> None:
-    """apm m365 group export list --output json must include version_timestamp, not is_archive_mail."""
+def test_m365_group_export_list_json_has_version_timestamp_and_archive_field() -> None:
+    """apm m365 group export list --output json must include version_timestamp and is_archive_mail."""
     mock_apm = make_mock_apm_with_export(group=True)
 
     result = invoke_cli(mock_apm, [
@@ -197,7 +197,7 @@ def test_m365_group_export_list_json_has_version_timestamp_no_archive_field() ->
     records = json.loads(result.stdout)
     assert len(records) == 1
     assert "version_timestamp" in records[0]
-    assert "is_archive_mail" not in records[0]
+    assert "is_archive_mail" in records[0]
     assert "item" in records[0]
 
 def test_m365_exchange_export_list_table_has_item_version_columns() -> None:
@@ -214,8 +214,8 @@ def test_m365_exchange_export_list_table_has_item_version_columns() -> None:
     assert "Item" in result.output
     assert "Version" in result.output
 
-def test_m365_exchange_export_list_json_has_version_timestamp_no_archive_field() -> None:
-    """apm m365 exchange export list --output json must include version_timestamp, not is_archive_mail."""
+def test_m365_exchange_export_list_json_has_version_timestamp_and_archive_field() -> None:
+    """apm m365 exchange export list --output json must include version_timestamp and is_archive_mail."""
     mock_apm = make_mock_apm_with_export(group=False)
 
     result = invoke_cli(mock_apm, [
@@ -228,7 +228,7 @@ def test_m365_exchange_export_list_json_has_version_timestamp_no_archive_field()
     records = json.loads(result.stdout)
     assert len(records) == 1
     assert "version_timestamp" in records[0]
-    assert "is_archive_mail" not in records[0]
+    assert "is_archive_mail" in records[0]
     assert "item" in records[0]
 
 def test_m365_exchange_export_list_search_mode_resolves_by_name() -> None:

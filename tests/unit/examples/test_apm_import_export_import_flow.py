@@ -640,7 +640,7 @@ async def test_execute_one_create_dispatches_by_request_type() -> None:
     retirement_req = RetirementPlanCreateRequest(name="Compliance Retention", retention_days=365)
     tiering_req = TieringPlanCreateRequest(
         name="Tier Old Versions",
-        tier_after_days=30,
+        tiering_after_days=30,
         destination=make_remote_storage(),
         daily_check_time=time(20, 0),
     )
@@ -1746,7 +1746,7 @@ async def test_run_import_full_pipeline_happy_path(
         "retirement_plans": [{"name_or_id": "Compliance Retention", "retention_days": 365}],
         "tiering_plans": [{
             "name_or_id": "Tier Old Versions",
-            "tier_after_days": 30,
+            "tiering_after_days": 30,
             "destination_ref": "storage-1",
             "daily_check_time": "20:00",
         }],
@@ -1822,7 +1822,7 @@ async def test_run_import_full_pipeline_happy_path(
     assert apm.m365.plans.create.await_args.args[0].name == "M365 Daily Backup"
     assert apm.retirement_plans.create.await_args.args[0].retention_days == 365
     tiering_req = apm.tiering_plans.create.await_args.args[0]
-    assert tiering_req.tier_after_days == 30
+    assert tiering_req.tiering_after_days == 30
     assert tiering_req.destination is created_rs
     # File server created with the credential from the CSV.
     fs_req = apm.machine.workloads.add_file_server.await_args.args[0]

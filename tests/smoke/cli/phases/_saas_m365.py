@@ -45,6 +45,12 @@ def _run_scope(ctx: SmokeContext, scope: str) -> None:
     if not retired_workloads:
         ctx.skip(DOMAIN, f"m365.{scope}.list[retired][data]", f"No retired {scope} workloads found.")
 
+    _, status_json = ctx.run_both(
+        DOMAIN, f"m365.{scope}.list[status]", ["m365", scope, "list", "--status", "success", "--status", "failed"],
+    )
+    if not (parse_json(status_json) or []):
+        ctx.skip(DOMAIN, f"m365.{scope}.list[status][data]", f"No {scope} workloads with status success/failed found.")
+
     workloads = parse_json(all_json) or []
     ctx.data.setdefault("m365_workloads", {})[scope] = workloads
     if not workloads:

@@ -155,10 +155,11 @@ class RemoteStorageCollection:
     async def get_by_name(self, name: str) -> RemoteStorage:
         """Fetch a remote storage device by display name or endpoint.
 
-        Matches in order: exact storage_id → case-insensitive name → case-insensitive endpoint.
+        Matches in order: case-insensitive name → case-insensitive endpoint;
+        returns the first match.
 
         Args:
-            name: Display name, endpoint, or UUID.
+            name: Display name or endpoint.
 
         Raises:
             ResourceNotFoundError: No remote storage with an exact match was found.
@@ -166,7 +167,7 @@ class RemoteStorageCollection:
         items, _ = await self.list()
         q = name.lower()
         for s in items:
-            if s.storage_id == name or s.name.lower() == q or s.endpoint.lower() == q:
+            if s.name.lower() == q or s.endpoint.lower() == q:
                 return s
         raise ResourceNotFoundError(
             f"RemoteStorage '{name}' not found.",

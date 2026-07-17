@@ -9,7 +9,13 @@ import pytest
 from yarl import URL
 
 from synology_apm.sdk.collections.machine import MachineWorkloadCollection
-from synology_apm.sdk.enums import MachineWorkloadType, RetentionType, WorkloadCategory, WorkloadStatus
+from synology_apm.sdk.enums import (
+    MachineWorkloadType,
+    RetentionType,
+    VerifyStatus,
+    WorkloadCategory,
+    WorkloadStatus,
+)
 from synology_apm.sdk.exceptions import InvalidOperationError, ResourceNotFoundError
 from synology_apm.sdk.models.protection_plan import (
     ProtectionPlan,
@@ -255,6 +261,21 @@ async def test_get_by_name_finds_exact_match_among_partials() -> None:
         wl = await collection.get_by_name("CORP-PC-001")
 
     assert wl.workload_id == WORKLOAD_ID
+
+
+async def test_get_by_name_does_not_match_workload_id() -> None:
+    """get_by_name() should not match on workload_id; ID lookup goes through get()."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"workloads": [SAMPLE_WORKLOAD], "total": 1}
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await collection.get_by_name(WORKLOAD_ID)
+
+    assert_resource_error(exc_info, resource_type="Workload", resource_id=WORKLOAD_ID)
 
 
 # ── backup_now() ──────────────────────────────────────────────────────────
@@ -715,6 +736,96 @@ async def test_list_no_plan_omits_plan_id_param() -> None:
 
     params = mock_get.call_args[1]["params"]
     assert not any(k == "filter.planId" for k, _ in params)
+
+
+@pytest.mark.parametrize(
+    "statuses,expected",
+    [
+        ([WorkloadStatus.SUCCESS], [("filter.latestVersionResult", "VERSION_RESULT_SUCCESS")]),
+        (
+            [WorkloadStatus.FAILED, WorkloadStatus.PARTIAL],
+            [
+                ("filter.latestVersionResult", "VERSION_RESULT_FAILED"),
+                ("filter.latestVersionResult", "VERSION_RESULT_PARTIAL"),
+            ],
+        ),
+        ([WorkloadStatus.QUEUING], [("filter.jobStatus", "WAITING_TASK")]),
+        ([WorkloadStatus.BACKING_UP], [("filter.jobStatus", "RUNNING")]),
+        ([WorkloadStatus.DELETING], [("filter.jobStatus", "DELETING")]),
+        ([WorkloadStatus.NO_BACKUPS], [("filter.latestVersionResult", "VERSION_RESULT_NONE")]),
+    ],
+)
+async def test_list_status_filter_sends_expected_params(
+    statuses: list[WorkloadStatus], expected: list[tuple[str, str]]
+) -> None:
+    """status maps QUEUING/BACKING_UP/DELETING to filter.jobStatus, others to filter.latestVersionResult."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"workloads": [], "total": 0}
+        await collection.list(status=statuses)
+
+    params = mock_get.call_args[1]["params"]
+    for pair in expected:
+        assert pair in params
+
+
+async def test_list_no_status_omits_status_params() -> None:
+    """status=None must not add filter.jobStatus or filter.latestVersionResult to the request."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"workloads": [], "total": 0}
+        await collection.list()
+
+    params = mock_get.call_args[1]["params"]
+    assert not any(k in ("filter.jobStatus", "filter.latestVersionResult") for k, _ in params)
+
+
+async def test_list_status_retired_raises_value_error() -> None:
+    """status=[WorkloadStatus.RETIRED] is rejected; use is_retired=True instead."""
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+
+    with pytest.raises(ValueError, match="RETIRED"):
+        await collection.list(status=[WorkloadStatus.RETIRED])
+
+
+async def test_list_verify_status_filter_sends_repeated_verify_status() -> None:
+    """verify_status=[FAILED, NOT_ENABLED] sends one filter.verifyStatus query param per value."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"workloads": [], "total": 0}
+        await collection.list(verify_status=[VerifyStatus.FAILED, VerifyStatus.NOT_ENABLED])
+
+    params = mock_get.call_args[1]["params"]
+    verify_status_values = [v for k, v in params if k == "filter.verifyStatus"]
+    assert verify_status_values == ["VERIFY_FAILED", "VERIFY_NOT_ENABLED"]
+
+
+async def test_list_no_verify_status_omits_param() -> None:
+    """verify_status=None must not add filter.verifyStatus to the request."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"workloads": [], "total": 0}
+        await collection.list()
+
+    params = mock_get.call_args[1]["params"]
+    assert not any(k == "filter.verifyStatus" for k, _ in params)
 
 
 # ── get_by_name() — is_retired filter params ────────────────────────────────

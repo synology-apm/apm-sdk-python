@@ -41,6 +41,8 @@ For the SDK's full public interface (signatures, Attributes, Args/Returns/Raises
 - Docstrings must follow CLAUDE.md's "API Abstraction in User-Facing Text" convention (no REST API paths, HTTP methods/status codes, raw API field names, or descriptions of specific underlying-API mechanisms); `_http.py` and private helpers prefixed with an underscore are exempt and may reference raw API details in code/comments where needed.
 - When adding a new public type (class / enum / dataclass), remember to also add it to `__all__` in `synology_apm/sdk/__init__.py`.
 - All model dataclasses (`models/*.py`) are `@dataclass(frozen=True)`: API responses are parsed into immutable value objects, never mutated in place.
+- All response model dataclasses expose a `to_dict()` method returning a JSON-safe dict. Most fields are formulaic (enum → `.value`, datetime/date/time → ISO 8601, nested `to_dict()`-bearing objects → recursive call, list/tuple → element-wise) and should call `models/_shared.py`'s `auto_to_dict(self, exclude=..., extra=...)` rather than listing every field by hand: `exclude` drops a field that's being replaced, `extra` supplies computed `@property` values or restructured/renamed output (e.g. a field needing a non-formulaic conversion, such as a `timedelta` reduced to whole seconds). `dataclasses.fields()` resolves against an instance's actual runtime type, so a base class's `to_dict()` (e.g. `auto_to_dict(self)`) already serializes a subclass instance's full field set — a dataclass subclass adding only plain fields (no extra `exclude`/`extra` of its own) needs **no** `to_dict()` override at all; it inherits the base method as-is. Only define an override when the subclass needs its own `exclude`/`extra` beyond the base class's, and in that case call `auto_to_dict(self, ...)` once with the *combined* `exclude`/`extra` — never `{**super().to_dict(), **auto_to_dict(self, ...)}`, which redundantly re-serializes every subclass field (and re-invokes nested `to_dict()` calls) a second time. `*Request` input types (and other write-only helpers such as `BackupCopyConfig`) are exempt — they are never returned by the API, so there is nothing to serialize. This is the single source of truth for semantic JSON serialization; CLI and MCP both build their output from it rather than each maintaining a separate field-mapping (see "Three-Layer Responsibility Separation" in the repository `CLAUDE.md`).
+- Every `APMError` subclass also exposes a `to_dict()` method returning a JSON-safe dict of its semantic fields (this is the same "SDK owns semantic serialization" principle as response models above, extended to exceptions). Exceptions are not dataclasses (`Exception.__init__` isn't compatible with a dataclass-generated `__init__`), so `to_dict()` is hand-written per class rather than routed through `auto_to_dict()`: each override calls `{**super().to_dict(), ...}` to layer its own fields on top of the base class's, mirroring how `_ResourceError.__init__` layers its constructor args on top of `APMError.__init__`. A subclass adding no fields (e.g. most `_ResourceError` subclasses) needs no override, same as with model dataclasses. CLI and MCP each still own their own exception → user-facing error code/message mapping (which fields to expose as which label is presentation, not SDK data); only the field *contents* come from `to_dict()`.
 - When an API field name differs from the SDK dataclass field name, perform the conversion inside the collection parser (`_parse_*` functions) without changing the SDK's public interface. Magic values (such as `"-1"` / `"0"`) are always converted to `None` via `_parse_data_sizes()`.
 - The `host` parameter of the `APMClient` constructor only accepts a hostname or `host:port` (without scheme); the SDK automatically prepends `https://` internally.
 - Write operations (`backup_now`, `cancel_backup`, `change_plan`, `retire`, etc.) return `None`, not a pollable Job object — this matches how the APM API itself models long-running operations (fire-and-forget); progress and history are queried separately via `apm.activities`.
@@ -54,6 +56,13 @@ hierarchy (4 levels below `APMClient`) — deep enough to mirror APM's actual re
 relationships (a Workload has Versions, a Version has Locations), shallow enough to stay
 easy to navigate.
 
+Two naming conventions let most files go uncommented below: every `collections/*.py` file
+(except the private/entry-point ones called out explicitly) exports exactly one
+`<Noun>Collection` class named for the file, e.g. `hypervisors.py` → `HypervisorCollection`;
+a handful of `models/*.py` files each define a single, file-obvious model class with nothing
+further to say (open the file to confirm). Only multi-type files, private helpers, entry
+points, and exceptions to these conventions are annotated.
+
 ```
 synology_apm/sdk/
 ├── __init__.py              # Public API: APMClient, exceptions, enums, models, collections
@@ -61,39 +70,41 @@ synology_apm/sdk/
 ├── exceptions.py            # All custom exception classes
 ├── _http.py                 # Low-level HTTP wrapper (private)
 ├── enums.py                 # All Enum definitions
+├── config.py                # Config file read/write, keyring credential storage, resolve_connection() (shared with CLI/MCP)
 ├── models/
+│   ├── _shared.py           # Shared model serialization helpers (private): auto_to_dict()
 │   ├── workload.py          # Workload base, MachineWorkload, M365Workload + M365*Info, FileServer* config/request models
-│   ├── location.py          # LocationInfo
+│   ├── location.py
 │   ├── version.py           # WorkloadVersion, VersionLocation
 │   ├── protection_plan.py   # ProtectionPlan + its policy/schedule/retention/backup-copy/task-config models and create requests
 │   ├── retirement_plan.py   # RetirementPlan + retention policy and create request
 │   ├── tiering_plan.py      # TieringPlan, TieringStatus + create request
 │   ├── activity.py          # Activity, BackupActivity, RestoreActivity, ActivityLogEntry, M365ExportActivity
-│   ├── backup_server.py     # BackupServer
-│   ├── hypervisor.py        # Hypervisor
+│   ├── backup_server.py
+│   ├── hypervisor.py
 │   ├── log.py               # APMActivityLog, DriveLog, ConnectionLog, SystemLog
-│   ├── remote_storage.py    # RemoteStorage + the per-type *StorageAddRequest models, update request, add result
+│   ├── remote_storage.py    # RemoteStorage + per-type *StorageAddRequest/update/add-result models
 │   ├── m365_auto_backup_rule.py  # M365AutoBackupRule, M365CollabServiceSetting, M365AutoBackupRuleListResult
-│   ├── saas.py              # SaasTenant
+│   ├── saas.py
 │   └── system.py            # SiteInfo, SiteStorageStats, WorkloadTypeStat, WorkloadUsageSummary
 └── collections/
     ├── _shared.py           # Shared collection helpers (private): pagination, timestamp/status parsing, version mixin
     ├── machine.py           # MachineCollection (entry point) + MachineWorkloadCollection
     ├── m365.py              # M365Collection (entry point) + M365WorkloadCollection
-    ├── m365_auto_backup_rule.py  # M365AutoBackupRuleCollection
+    ├── m365_auto_backup_rule.py
     ├── m365_mail_export.py  # ExchangeExportCollection, GroupExportCollection, M365ExportStartResult
     ├── protection_plans.py  # ProtectionPlanCollection, MachinePlanCollection, M365PlanCollection
     ├── _protection_plan_builders.py  # Protection Plan request-body builders (private)
     ├── _protection_plan_parsers.py   # Protection Plan response parsers + API string maps (private)
-    ├── retirement_plans.py  # RetirementPlanCollection
-    ├── tiering_plans.py     # TieringPlanCollection
-    ├── saas.py              # SaasCollection
+    ├── retirement_plans.py
+    ├── tiering_plans.py
+    ├── saas.py
     ├── activities.py        # ActivityCollection, BackupActivityCollection, RestoreActivityCollection
-    ├── backup_servers.py    # BackupServerCollection
-    ├── hypervisors.py       # HypervisorCollection
-    ├── logs.py              # LogCollection
-    ├── system.py            # SystemCollection (internal helper behind APMClient.get_site_info(); not exported)
-    └── remote_storages.py   # RemoteStorageCollection
+    ├── backup_servers.py
+    ├── hypervisors.py
+    ├── logs.py
+    ├── system.py            # SystemCollection — internal helper behind get_site_info(); not exported
+    └── remote_storages.py
 ```
 
 The per-file comments name the primary types only; the authoritative list of public types is
@@ -117,6 +128,9 @@ class list itself does not convey:
 - `ResourceNotReadyError` and `RemoteStorageUnmanagedCatalogError` extend bare `APMError` —
   they have **no** `.resource_type` / `.resource_id` (`RemoteStorageUnmanagedCatalogError`
   carries `vault_name` / `catalog_count` instead).
+- `KeyringUnavailableError` extends `RuntimeError` directly, **not** `APMError` — it signals
+  a local OS-keyring failure (raised by `config.py`'s keyring helpers / `resolve_connection()`),
+  not a REST API error, and carries no `error_code` / `response_body`.
 - API errorCode → exception mappings are operation-specific and documented per collection in
   [Collection Behavior Rules](#collection-behavior-rules) (e.g. 4013 → `PlanNameConflictError`,
   4017/4019/4029 → `PlanInUseError`, 3004/3014 → the RemoteStorage conflict/in-use errors,
@@ -164,13 +178,16 @@ The SDK authenticates through the legacy Synology WebAPI login endpoint (`/webap
 | `RestoreType`, `ActivityWorkloadType`, cancel type strings | `collections/activities.py` — `_RESTORE_TYPE_MAP`, `_RAW_TO_SUBTYPE`, `_SUBTYPE_TO_CANCEL_TYPE` |
 | `M365WorkloadType` | `collections/m365.py` — `_TYPE_TO_API_TYPE` / `_API_TYPE_TO_TYPE` |
 | `MachineWorkloadType`, `VersionStatus` | `collections/_shared.py` — `_MACHINE_WORKLOAD_TYPE_MAP`, `_VERSION_STATUS_MAP` |
-| `VerifyStatus` | `enums.py` — `_VERIFY_STATUS_MAP` |
+| `VerifyStatus` (parse and filter directions) | `enums.py` — `_VERIFY_STATUS_MAP`; `collections/machine.py` — `_VERIFY_STATUS_TO_API` |
+| `WorkloadStatus` filter direction (`list()` `status` parameter; parse direction is branching logic — see "WorkloadStatus" below) | `collections/machine.py` — `_STATUS_TO_JOB_STATUS`, `_STATUS_TO_LVR`; `collections/m365.py` — `_STATUS_TO_API_BACKUP_STATUS` |
 | `VersionCopyStatus`, `CopyReason` | `enums.py` — `_VERSION_COPY_STATUS_MAP`; `collections/_shared.py` — `_COPY_REASON_MAP`, `_COPY_REASON_SKIPPED_MAP`, `_COPY_ERROR_STATUS_MAP` |
 | Plan task/db enums (`MachineOsType`, `MachineTaskScope`, `DbActionOnError`, `MssqlLogSetting`, `OracleLogSetting`) | `collections/_protection_plan_parsers.py` — `_OS_TYPE_MAP`, `_SOURCE_TYPE_MAP`, `_DB_ACTION_MAP`, `_MSSQL_LOG_MAP`, `_ORACLE_LOG_MAP` |
 | `RemoteStorageType` → plan/tiering `destinationType` | `collections/_shared.py` — `_STORAGE_TYPE_TO_DEST_TYPE` |
 | `HypervisorType` | `collections/hypervisors.py` — `_HOST_TYPE_MAP` |
 | `M365ExportStatus` | `collections/m365_mail_export.py` — `_EXPORT_STATUS_MAP` |
 | `LogLevel` | `collections/activities.py` — `_LOG_LEVEL_MAP` |
+| `FileServerType` | `collections/machine.py` — `_FS_OS_TYPE_MAP` |
+| `BackupScope` | `collections/activities.py` — `_BACKUP_SCOPE_MAP` |
 
 ### Naming decision: GWS
 
@@ -415,6 +432,20 @@ extracts each plan's `plan_id` and sends it as a separate `filter.planId` query 
 **MachineWorkloadCollection.list() workload_types parameter:**
 `workload_types: list[MachineWorkloadType] | None` — passing `None` (or omitting the argument) returns workloads of all types. The SDK always includes a fixed query parameter alongside any type filters to match APM's expected request format; callers do not need to supply this parameter.
 
+**MachineWorkloadCollection.list() status parameter:**
+`status: list[WorkloadStatus] | None` is repeatable (OR logic); reverses `WorkloadStatus`'s
+two-field derivation (see "WorkloadStatus" above) — `QUEUING`/`BACKING_UP`/`DELETING` map to
+`jobStatus`, the remaining members map to `latestVersionResult` (dicts in the index above).
+`WorkloadStatus.RETIRED` is not a valid filter value — it's governed by `is_retired`, not a raw
+status field — and raises `ValueError` if included.
+
+**MachineWorkloadCollection.list() verify_status parameter:**
+`verify_status: list[VerifyStatus] | None` is repeatable (OR logic); reverses
+`_VERIFY_STATUS_MAP` directly (single raw field, no per-field split like `status` above).
+Verified against a live APM: the raw field is not exclusively PS/VM-scoped, so
+`verify_status=[NOT_ENABLED]` can also match PC/FS workloads — those still display
+`verify_status=None` (see "VerifyStatus" above), not the value they were filtered on.
+
 ---
 
 ### M365WorkloadCollection
@@ -424,7 +455,7 @@ extracts each plan's `plan_id` and sends it as a separate `filter.planId` query 
 | Method | Notes |
 |------|------|
 | `get(workload_id, namespace, tenant_id, workload_type)` | Queries by the `(namespace, workload_id)` primary key; `tenant_id` and `workload_type` are both required |
-| `get_by_name(name, tenant_id, workload_type, is_retired=False)` | `tenant_id` and `workload_type` are both required; matches against display name / UPN / group email / workload ID (case-insensitive) |
+| `get_by_name(name, tenant_id, workload_type, is_retired=False)` | `tenant_id` and `workload_type` are both required; matches against display name / UPN / group email (case-insensitive) |
 
 **Number of API calls for list():**
 - Always 1 API request (`workload_type` is required, queries only a single service subtype)
@@ -453,6 +484,12 @@ for a `ProtectionPlan`.
 `plan: list[ProtectionPlan | RetirementPlan] | None` is repeatable (OR logic); the SDK
 extracts each plan's `plan_id` and collects them into the `planUids` array field of the
 request body filter.
+
+**M365WorkloadCollection.list() status parameter:**
+`status: list[WorkloadStatus] | None` is repeatable (OR logic); reverses `_M365_STATUS_MAP`
+directly (single raw field, unlike Machine's two-field split above). `WorkloadStatus.RETIRED`
+is not a valid filter value (governed by `is_retired`) and raises `ValueError` if included.
+M365 workloads have no verification concept, so there is no `verify_status` parameter here.
 
 **Special behavior of M365WorkloadCollection.delete():**
 - Error detection uses the `errors` array in the response body (not `failed.entries` as in `MachineWorkloadCollection`).
@@ -614,13 +651,12 @@ Callers should first confirm that status has left PREPARING, or use the polling 
 **Matching logic of get_by_name():**
 
 Iterates through the search results, applying the following conditions (OR) to each server in order, and returns the first match:
-1. `backup_server_id` exact match
-2. `name` case-insensitive match
-3. `hostname` case-insensitive match
+1. `name` case-insensitive match
+2. `hostname` case-insensitive match
 
 **Query behavior for tiering_plan_name / tiering_plan_destination:**
 
-`BackupServer.tiering_plan_name` and `tiering_plan_destination` (`LocationInfo | None`) are resolved via `TieringPlanCollection.get()` when the server has a tiering plan applied. If the query fails, both fields are silently set to `None`.
+`BackupServer.tiering_plan_name` and `tiering_plan_destination` (`LocationInfo | None`) are resolved via `TieringPlanCollection.get()` when the server has a tiering plan applied. If the referenced plan no longer exists (dangling reference), both fields are set to `None`; any other query failure propagates as an exception.
 
 - `list()`: runs `asyncio.gather` to query all unique tiering plans on the page in parallel
 - `get(backup_server_id)`: performs an on-demand query only for that server's tiering plan
@@ -641,9 +677,9 @@ To change the plan assigned to a workload, use `APMClient.machine.workloads.chan
 
 `ProtectionPlan.backup_copy_policy` (`BackupCopyPolicy | None`) is populated when Backup Copy is enabled and the destination can be resolved; otherwise `None`. The resolution method differs depending on the destination type:
 
-- **APPLIANCE (backup server)**: issues a single backup server list request to retrieve all servers, matching by **namespace**. If the query fails, the namespace is not found, or any other resolution error occurs, `backup_copy_policy` is silently set to `None` for that plan.
+- **APPLIANCE (backup server)**: issues a single backup server list request to retrieve all servers, matching by **namespace**. If the namespace is not found in the list, `backup_copy_policy` is set to `None` for that plan; a failed backup server list query propagates as an exception.
   > Note: `spec.backupCopy.destination` returned by the plan API is the backup server's **namespace**, not its `backup_server_id`, so it cannot be used to query a single server directly.
-- **Remote Storage (external storage)**: issues one query per unique destination ID, executed in parallel. If the query fails or `displayName` is empty, silently set to `None`.
+- **Remote Storage (external storage)**: issues one query per unique destination ID, executed in parallel. If the destination no longer exists (dangling reference) or `displayName` is empty, set to `None`; any other query failure propagates as an exception.
 
 `list()` performs a batch query for all unique destinations on the page; `get(plan_id)` / `get_by_name(name)` resolves the destination only for the single matched plan.
 
@@ -753,7 +789,7 @@ Same pattern as `ProtectionPlanCollection`: POST/PUT return a minimal body; both
 
 **Destination query behavior of list() / get() / get_by_name():**
 
-`TieringPlan.destination` (`LocationInfo | None`) is obtained via `GET /api/v1/external_storage/{spec.destination}`. If the query fails, silently set to `None`.
+`TieringPlan.destination` (`LocationInfo | None`) is obtained via `GET /api/v1/external_storage/{spec.destination}`. If the destination no longer exists (dangling reference), set to `None`; any other query failure propagates as an exception.
 
 - `list()`: runs `asyncio.gather` to query all unique destination UUIDs on the page in parallel
 - `get(plan_id)`: queries the destination for that plan

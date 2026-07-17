@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from ..enums import (
     FileServerType,
@@ -12,9 +13,15 @@ from ..enums import (
     WorkloadCategory,
     WorkloadStatus,
 )
+from ._shared import auto_to_dict
 from .location import LocationInfo
 from .protection_plan import ProtectionPlan
 from .retirement_plan import RetirementPlan
+
+
+def _plan_ref_to_dict(plan: ProtectionPlan | RetirementPlan) -> dict[str, Any]:
+    kind = "retirement" if isinstance(plan, RetirementPlan) else "protection"
+    return {"plan_id": plan.plan_id, "name": plan.name, "kind": kind}
 
 
 @dataclass(frozen=True)
@@ -60,6 +67,10 @@ class Workload:
         """Whether a backup job is currently running."""
         return self.backup_progress is not None or self.items_backed_up is not None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation of the fields common to all Workload subclasses."""
+        return auto_to_dict(self, exclude=frozenset({"plan"}), extra={"plan": _plan_ref_to_dict(self.plan)})
+
 
 @dataclass(frozen=True)
 class MachineWorkload(Workload):
@@ -98,6 +109,10 @@ class M365UserInfo:
         """Standard identifier for the M365 user (User Principal Name)."""
         return self.user_principal_name
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, extra={"kind": "user"})
+
 
 @dataclass(frozen=True)
 class M365SiteInfo:
@@ -109,6 +124,10 @@ class M365SiteInfo:
     def label(self) -> str:
         """Standard identifier for the SharePoint site (Site URL)."""
         return self.site_url
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, extra={"kind": "site"})
 
 
 @dataclass(frozen=True)
@@ -123,6 +142,10 @@ class M365TeamInfo:
         """Standard identifier for the Teams workload (Team Web URL)."""
         return self.web_url
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, extra={"kind": "team"})
+
 
 @dataclass(frozen=True)
 class M365GroupInfo:
@@ -135,6 +158,10 @@ class M365GroupInfo:
     def label(self) -> str:
         """Standard identifier for the M365 Group (group mail address)."""
         return self.mail
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, extra={"kind": "group"})
 
 
 M365Info = M365UserInfo | M365SiteInfo | M365TeamInfo | M365GroupInfo
@@ -168,6 +195,10 @@ class FileServerPathSelector:
     path: str
     excluded_paths: tuple[str, ...] = ()
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 @dataclass(frozen=True)
 class FileServerConfig:
@@ -191,6 +222,10 @@ class FileServerConfig:
     enable_vss: bool
     connection_timeout_seconds: int
     selectors: tuple[FileServerPathSelector, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)

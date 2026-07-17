@@ -1,0 +1,547 @@
+# mcp_coverage.toml — SDK → MCP tool coverage manifest.
+#
+# Every SDK public method must appear in exactly one [[mapping]] or [[not_exposed]] entry.
+# `make test` runs `scripts/check_mcp_coverage.py` to verify this.
+#
+# [[mapping]]   sdk_path is exposed as mcp_tool at the given mode.
+# [[not_exposed]] sdk_path is explicitly excluded with a reason.
+
+# ── System ────────────────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "get_site_info"
+mcp_tool  = "get_site_info"
+mode      = "readonly"
+
+# ── Backup Servers ────────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "backup_servers.list"
+mcp_tool  = "list_backup_servers"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "backup_servers.get"
+mcp_tool  = "get_backup_server"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "backup_servers.get_by_name"
+reason   = "internal resolution alias; covered by get_backup_server (name parameter)"
+
+[[mapping]]
+sdk_path = "backup_servers.change_tiering_plan"
+mcp_tool  = "change_backup_server_tiering_plan"
+mode      = "admin"
+
+# ── Remote Storages ───────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "remote_storages.list"
+mcp_tool  = "list_remote_storages"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "remote_storages.get"
+mcp_tool  = "get_remote_storage"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "remote_storages.get_by_name"
+reason   = "internal resolution alias; covered by get_remote_storage (name parameter)"
+
+[[mapping]]
+sdk_path = "remote_storages.add"
+mcp_tool  = "add_remote_storage"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "remote_storages.update"
+mcp_tool  = "update_remote_storage"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "remote_storages.delete"
+mcp_tool  = "delete_remote_storage"
+mode      = "admin"
+
+# ── Hypervisors ───────────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "hypervisors.list"
+mcp_tool  = "list_hypervisors"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "hypervisors.get"
+mcp_tool  = "get_hypervisor"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "hypervisors.get_by_name"
+reason   = "internal resolution alias; covered by get_hypervisor (name parameter)"
+
+# ── Machine Workloads ─────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "machine.workloads.list"
+mcp_tool  = "list_machine_workloads"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "machine.workloads.get"
+mcp_tool  = "get_machine_workload"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "machine.workloads.get_by_name"
+reason   = "internal resolution alias; covered by get_machine_workload (name parameter)"
+
+[[mapping]]
+sdk_path = "machine.workloads.backup_now"
+mcp_tool  = "backup_machine_workload"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "machine.workloads.cancel_backup"
+mcp_tool  = "cancel_machine_backup"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "machine.workloads.lock_version"
+mcp_tool  = "lock_machine_version"
+mode      = "manager"
+
+[[mapping]]
+sdk_path = "machine.workloads.unlock_version"
+mcp_tool  = "unlock_machine_version"
+mode      = "manager"
+
+[[mapping]]
+sdk_path = "machine.workloads.add_file_server"
+mcp_tool  = "add_machine_file_server"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "machine.workloads.update_file_server"
+mcp_tool  = "update_machine_file_server"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "machine.workloads.change_plan"
+mcp_tool  = "change_machine_workload_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "machine.workloads.retire"
+mcp_tool  = "retire_machine_workload"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "machine.workloads.delete"
+mcp_tool  = "delete_machine_workload"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "machine.workloads.list_versions"
+mcp_tool  = "list_machine_versions"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "machine.workloads.get_version"
+mcp_tool  = "get_machine_version"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "machine.workloads.get_latest_version"
+mcp_tool  = "get_machine_version"
+mode      = "readonly"
+note      = "get_latest_version is used when version_id is omitted"
+
+[[mapping]]
+sdk_path = "machine.workloads.get_verification_video_url"
+mcp_tool  = "get_machine_verification_video_url"
+mode      = "readonly"
+
+# ── Machine Protection Plans (create/update only; list/get/delete via cross-category) ──
+
+[[mapping]]
+sdk_path = "machine.plans.create"
+mcp_tool  = "create_machine_protection_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "machine.plans.update"
+mcp_tool  = "update_machine_protection_plan"
+mode      = "admin"
+
+[[not_exposed]]
+sdk_path = "machine.plans.list"
+reason   = "covered by list_protection_plans with category=machine filter"
+
+[[not_exposed]]
+sdk_path = "machine.plans.get"
+reason   = "covered by get_protection_plan (cross-category)"
+
+[[not_exposed]]
+sdk_path = "machine.plans.get_by_name"
+reason   = "internal resolution alias; covered by get_protection_plan (name parameter)"
+
+[[not_exposed]]
+sdk_path = "machine.plans.delete"
+reason   = "covered by delete_protection_plan (cross-category)"
+
+# ── M365 Workloads ────────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "m365.workloads.list"
+mcp_tool  = "list_m365_workloads"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "m365.workloads.get"
+mcp_tool  = "get_m365_workload"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "m365.workloads.get_by_name"
+reason   = "internal resolution alias; covered by get_m365_workload (name parameter)"
+
+[[mapping]]
+sdk_path = "m365.workloads.backup_now"
+mcp_tool  = "backup_m365_workload"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "m365.workloads.cancel_backup"
+mcp_tool  = "cancel_m365_backup"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "m365.workloads.lock_version"
+mcp_tool  = "lock_m365_version"
+mode      = "manager"
+
+[[mapping]]
+sdk_path = "m365.workloads.unlock_version"
+mcp_tool  = "unlock_m365_version"
+mode      = "manager"
+
+[[mapping]]
+sdk_path = "m365.workloads.change_plan"
+mcp_tool  = "change_m365_workload_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "m365.workloads.retire"
+mcp_tool  = "retire_m365_workload"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "m365.workloads.delete"
+mcp_tool  = "delete_m365_workload"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "m365.workloads.list_versions"
+mcp_tool  = "list_m365_versions"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "m365.workloads.get_version"
+mcp_tool  = "get_m365_version"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "m365.workloads.get_latest_version"
+mcp_tool  = "get_m365_version"
+mode      = "readonly"
+note      = "get_latest_version is used when version_id is omitted"
+
+# ── M365 Protection Plans (create/update only; list/get/delete via cross-category) ──
+
+[[mapping]]
+sdk_path = "m365.plans.create"
+mcp_tool  = "create_m365_protection_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "m365.plans.update"
+mcp_tool  = "update_m365_protection_plan"
+mode      = "admin"
+
+[[not_exposed]]
+sdk_path = "m365.plans.list"
+reason   = "covered by list_protection_plans with category=m365 filter"
+
+[[not_exposed]]
+sdk_path = "m365.plans.get"
+reason   = "covered by get_protection_plan (cross-category)"
+
+[[not_exposed]]
+sdk_path = "m365.plans.get_by_name"
+reason   = "internal resolution alias; covered by get_protection_plan (name parameter)"
+
+[[not_exposed]]
+sdk_path = "m365.plans.delete"
+reason   = "covered by delete_protection_plan (cross-category)"
+
+# ── M365 Auto Backup Rules ────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "m365.auto_backup_rules.list"
+mcp_tool  = "list_m365_auto_backup_rules"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "m365.auto_backup_rules.create"
+mcp_tool  = "create_m365_auto_backup_rule"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "m365.auto_backup_rules.update"
+mcp_tool  = "update_m365_auto_backup_rule"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "m365.auto_backup_rules.delete"
+mcp_tool  = "delete_m365_auto_backup_rule"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "m365.auto_backup_rules.update_collab_settings"
+mcp_tool  = "update_m365_collab_settings"
+mode      = "admin"
+
+# ── M365 Exchange Export ──────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "m365.exchange_export.list"
+mcp_tool  = "list_exchange_exports"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "m365.exchange_export.start"
+mcp_tool  = "start_exchange_export"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "m365.exchange_export.cancel"
+mcp_tool  = "cancel_exchange_export"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "m365.exchange_export.get_download_url_by_activity"
+mcp_tool  = "get_exchange_export_download_url"
+mode      = "operator"
+
+[[not_exposed]]
+sdk_path = "m365.exchange_export.get_download_url_by_ready_result"
+reason   = "lower-level internal method; covered by get_exchange_export_download_url (by activity)"
+
+[[not_exposed]]
+sdk_path = "m365.exchange_export.get_activity_by_result"
+reason   = "lower-level internal method used to retrieve activity status from a result object"
+
+# ── M365 Group Export ─────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "m365.group_export.list"
+mcp_tool  = "list_group_exports"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "m365.group_export.start"
+mcp_tool  = "start_group_export"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "m365.group_export.cancel"
+mcp_tool  = "cancel_group_export"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "m365.group_export.get_download_url_by_activity"
+mcp_tool  = "get_group_export_download_url"
+mode      = "operator"
+
+[[not_exposed]]
+sdk_path = "m365.group_export.get_download_url_by_ready_result"
+reason   = "lower-level internal method; covered by get_group_export_download_url (by activity)"
+
+[[not_exposed]]
+sdk_path = "m365.group_export.get_activity_by_result"
+reason   = "lower-level internal method used to retrieve activity status from a result object"
+
+# ── SaaS Tenants ──────────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "saas.list"
+mcp_tool  = "list_saas_tenants"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "saas.get_m365_tenant"
+mcp_tool  = "get_saas_tenant"
+mode      = "readonly"
+
+# ── Protection Plans (cross-category) ────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "plans.list"
+mcp_tool  = "list_protection_plans"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "plans.get"
+mcp_tool  = "get_protection_plan"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "plans.get_by_name"
+reason   = "internal resolution alias; covered by get_protection_plan (name parameter)"
+
+[[not_exposed]]
+sdk_path = "plans.create"
+reason   = "category-specific create is exposed (create_machine_protection_plan, create_m365_protection_plan)"
+
+[[mapping]]
+sdk_path = "plans.delete"
+mcp_tool  = "delete_protection_plan"
+mode      = "admin"
+
+# ── Retirement Plans ──────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "retirement_plans.list"
+mcp_tool  = "list_retirement_plans"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "retirement_plans.get"
+mcp_tool  = "get_retirement_plan"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "retirement_plans.get_by_name"
+reason   = "internal resolution alias; covered by get_retirement_plan (name parameter)"
+
+[[mapping]]
+sdk_path = "retirement_plans.create"
+mcp_tool  = "create_retirement_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "retirement_plans.update"
+mcp_tool  = "update_retirement_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "retirement_plans.delete"
+mcp_tool  = "delete_retirement_plan"
+mode      = "admin"
+
+# ── Tiering Plans ─────────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "tiering_plans.list"
+mcp_tool  = "list_tiering_plans"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "tiering_plans.get"
+mcp_tool  = "get_tiering_plan"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "tiering_plans.get_by_name"
+reason   = "internal resolution alias; covered by get_tiering_plan (name parameter)"
+
+[[mapping]]
+sdk_path = "tiering_plans.create"
+mcp_tool  = "create_tiering_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "tiering_plans.update"
+mcp_tool  = "update_tiering_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "tiering_plans.delete"
+mcp_tool  = "delete_tiering_plan"
+mode      = "admin"
+
+# ── Backup Activities ─────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "activities.backup.list"
+mcp_tool  = "list_backup_activities"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "activities.backup.get"
+mcp_tool  = "get_backup_activity"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "activities.backup.get_latest_by_workload_name"
+reason   = "use list_backup_activities with keyword filter instead"
+
+[[not_exposed]]
+sdk_path = "activities.backup.get_by_version"
+reason   = "narrow use-case; agents can use list_backup_activities to find by version"
+
+[[mapping]]
+sdk_path = "activities.backup.cancel"
+mcp_tool  = "cancel_backup_activity"
+mode      = "operator"
+
+# ── Restore Activities ────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "activities.restore.list"
+mcp_tool  = "list_restore_activities"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "activities.restore.get"
+mcp_tool  = "get_restore_activity"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "activities.restore.get_latest_by_workload_name"
+reason   = "use list_restore_activities with keyword filter instead"
+
+[[mapping]]
+sdk_path = "activities.restore.cancel"
+mcp_tool  = "cancel_restore_activity"
+mode      = "operator"
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "logs.list_activity"
+mcp_tool  = "list_activity_logs"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "logs.list_drive"
+mcp_tool  = "list_drive_logs"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "logs.list_connection"
+mcp_tool  = "list_connection_logs"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "logs.list_system"
+mcp_tool  = "list_system_logs"
+mode      = "readonly"
+
+# ── File Download ─────────────────────────────────────────────────────────────
+
+[[not_exposed]]
+sdk_path = "download_file"
+reason   = "file download to a local filesystem path is not meaningful in an MCP context"

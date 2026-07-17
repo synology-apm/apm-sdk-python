@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from ..enums import CopyReason, VerifyStatus, VersionCopyStatus, VersionStatus
+from ._shared import auto_to_dict
 from .location import LocationInfo
 
 
@@ -26,6 +28,10 @@ class VersionLocation:
     location_info: LocationInfo
     location_id: str
     connection_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -62,3 +68,7 @@ class WorkloadVersion:
     locations: list[VersionLocation] = field(default_factory=list)
     copy_status: VersionCopyStatus | None = field(default=None, kw_only=True)
     copy_reason: CopyReason | None = field(default=None, kw_only=True)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, exclude=frozenset({"execution_id"}))

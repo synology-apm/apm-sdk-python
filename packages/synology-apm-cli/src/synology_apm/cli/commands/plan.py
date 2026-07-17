@@ -41,7 +41,6 @@ from synology_apm.cli._serializers import (
     retirement_plan_to_csv_row,
     retirement_plan_to_dict,
     tiering_plan_to_csv_row,
-    tiering_plan_to_dict,
 )
 from synology_apm.cli._validate import validate_name_or_id_args
 from synology_apm.cli.errors import err_console
@@ -59,6 +58,7 @@ from synology_apm.sdk import (
     MachineTaskConfig,
     MachineTaskScope,
     ProtectionPlanPolicy,
+    TieringPlan,
     VersionCopyStatus,
     WorkloadCategory,
 )
@@ -283,7 +283,7 @@ async def tiering_list(
         result = await dispatch_paginated_list(
             lambda off, lim: apm.tiering_plans.list(name_contains=search, limit=lim, offset=off),
             limit=limit, offset=offset, page_all=page_all, output=output,
-            to_dict=tiering_plan_to_dict, to_csv_row=tiering_plan_to_csv_row,
+            to_dict=TieringPlan.to_dict, to_csv_row=tiering_plan_to_csv_row,
         )
 
     if result is None:
@@ -317,7 +317,7 @@ async def tiering_get(
             assert name is not None
             plan = await apm.tiering_plans.get_by_name(name)
 
-    if dispatch_output(plan, output, tiering_plan_to_dict):
+    if dispatch_output(plan, output, TieringPlan.to_dict):
         return
 
     dest_str = fmt_location_info(plan.destination) if plan.destination else "-"

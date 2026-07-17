@@ -109,6 +109,19 @@ def _make_exchange_start_result(*, with_copy: bool = False, ready: bool = True) 
     )
 
 
+def test_m365_export_start_result_to_dict_excludes_internal_fields() -> None:
+    result = _make_exchange_start_result()
+    d = result.to_dict()
+    assert "execution_id" not in d
+    assert "location" not in d
+    assert "workload" not in d
+    assert "version" not in d
+    assert d["ready_to_download"] is True
+    assert d["export_name"] == "alice_20260514.pst"
+    assert d["workload_id"] == EXCHANGE_WORKLOAD_UID
+    assert d["version_id"] == EXCHANGE_VERSION_ID
+
+
 # ── GroupExportCollection constants and factories ─────────────────────────────
 # (defined before parametrized tests so they are available at module load time)
 

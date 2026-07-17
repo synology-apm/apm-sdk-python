@@ -8,6 +8,7 @@ import pytest
 
 from synology_apm.sdk.collections.backup_servers import BackupServerCollection
 from synology_apm.sdk.enums import BackupServerRole, BackupServerType, ServerStatus
+from synology_apm.sdk.exceptions import APIError
 from synology_apm.sdk.models.location import LocationInfo
 from tests.unit.sdk.conftest import BASE_URL, connected_session
 
@@ -390,11 +391,11 @@ async def test_tiering_plan_fields_none_when_tiering_ref_absent() -> None:
     assert servers[0].tiering_plan_destination is None
 
 
-async def test_tiering_plan_fields_none_when_fetch_fails() -> None:
-    """When the tiering plan API call fails, tiering fields should silently fall back to None."""
+async def test_tiering_plan_fields_none_when_plan_no_longer_exists() -> None:
+    """A dangling tiering plan reference (plan deleted) falls back to None tiering fields."""
     async with connected_session() as (session, m):
         m.get(SERVERS_URL, payload={"backupServers": [_TIERING_SERVER_RAW]})
-        m.get(_TIERING_PLAN_URL, status=500, payload={"error": {"code": 500}})
+        m.get(_TIERING_PLAN_URL, status=404)
         servers, _ = await BackupServerCollection(session).list()
         await session.disconnect()
 
@@ -402,17 +403,50 @@ async def test_tiering_plan_fields_none_when_fetch_fails() -> None:
     assert servers[0].tiering_plan_destination is None
 
 
-async def test_tiering_destination_none_when_external_storage_fetch_fails() -> None:
-    """When the external storage API call fails, tiering_plan_name is populated but destination is None."""
+async def test_tiering_plan_fetch_server_error_propagates() -> None:
+    """A server error while resolving the tiering plan propagates instead of being silently dropped."""
+    async with connected_session() as (session, m):
+        m.get(SERVERS_URL, payload={"backupServers": [_TIERING_SERVER_RAW]})
+        m.get(_TIERING_PLAN_URL, status=500, payload={"error": {"code": 500}})
+        with pytest.raises(APIError):
+            await BackupServerCollection(session).list()
+        await session.disconnect()
+
+
+async def test_tiering_destination_none_when_external_storage_no_longer_exists() -> None:
+    """A dangling tiering destination reference keeps tiering_plan_name but yields destination None."""
     async with connected_session() as (session, m):
         m.get(SERVERS_URL, payload={"backupServers": [_TIERING_SERVER_RAW]})
         m.get(_TIERING_PLAN_URL, payload=_TIERING_PLAN_PAYLOAD)
-        m.get(_TIERING_STORAGE_URL, status=500, payload={"error": {"code": 500}})
+        m.get(_TIERING_STORAGE_URL, status=404)
         servers, _ = await BackupServerCollection(session).list()
         await session.disconnect()
 
     assert servers[0].tiering_plan_name == "tiering plan 1"
     assert servers[0].tiering_plan_destination is None
+
+
+def test_storage_usage_pct_computes_used_over_total() -> None:
+    """storage_usage_pct should be used/total*100 when both are non-zero."""
+    from synology_apm.sdk.models.backup_server import BackupServer
+
+    server = BackupServer(
+        backup_server_id="bs-usage-001",
+        namespace="ns-usage-001",
+        server_type=BackupServerType.DP,
+        name="apm-server-01",
+        hostname="192.0.2.1",
+        model="DP320",
+        system_version="APM 1.2-71845",
+        status=ServerStatus.HEALTHY,
+        is_updating=False,
+        serial="SN001",
+        storage_total_bytes=1000,
+        storage_used_bytes=250,
+        logical_backup_data_bytes=None,
+        physical_backup_data_bytes=None,
+    )
+    assert server.storage_usage_pct == 25.0
 
 
 def test_storage_usage_pct_zero_when_total_is_zero() -> None:

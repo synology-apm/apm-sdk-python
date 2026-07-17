@@ -183,10 +183,10 @@ async def _run_tiering_plan_roundtrip(
             DOMAIN, "infra.servers.tiering_plan[create]",
             lambda: apm.tiering_plans.create(TieringPlanCreateRequest(
                 name=f"smoke-tier-{uid}",
-                tier_after_days=9999,
+                tiering_after_days=9999,
                 destination=remote_storages[0],
             )),
-            note="Creates a disposable tiering plan (tier_after_days=9999) so it never triggers real tiering.",
+            note="Creates a disposable tiering plan (tiering_after_days=9999) so it never triggers real tiering.",
         )
 
         if disposable_plan is not None:
@@ -599,7 +599,7 @@ async def _run_one_storage_crud(ctx: SmokeContext, cred: RemoteStorageCred) -> N
                     DOMAIN, f"infra.remote_storages.tiering_plan[{label}/inuse_create]",
                     lambda: apm.tiering_plans.create(TieringPlanCreateRequest(
                         name=f"smoke-tier-inuse-{uid_inuse}",
-                        tier_after_days=9999,
+                        tiering_after_days=9999,
                         destination=_to_delete,
                     )),
                 )

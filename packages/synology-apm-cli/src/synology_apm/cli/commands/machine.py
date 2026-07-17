@@ -46,8 +46,11 @@ from synology_apm.cli._serializers import (
 )
 from synology_apm.cli._validate import (
     MACHINE_TYPE_ARGS,
+    VERIFY_STATUS_ARGS,
+    WORKLOAD_STATUS_ARGS,
     WorkloadRef,
     _resolve_plans,
+    parse_enum_list,
     parse_time_range,
     print_resolved_version,
     require_or_help,
@@ -69,6 +72,8 @@ from synology_apm.cli.output import (
 from synology_apm.sdk import (
     MachineWorkload,
     MachineWorkloadType,
+    VerifyStatus,
+    WorkloadStatus,
 )
 
 app = typer.Typer(help="Manage Machine Workloads (PC / PS / VM / FS).", no_args_is_help=True)
@@ -107,6 +112,20 @@ async def machine_list(
             "Plans if --retired is set."
         ),
     ),
+    status: list[str] | None = typer.Option(
+        None, "--status",
+        help=(
+            "Backup status filter, repeatable: queuing / backing_up / success / failed / "
+            "partial / canceled / no_backups / deleting"
+        ),
+    ),
+    verify_status: list[str] | None = typer.Option(
+        None, "--verify-status",
+        help=(
+            "Backup verification status filter, repeatable: verifying / success / failed / "
+            "canceled / not_supported / not_enabled / partial / waiting (PS/VM only)"
+        ),
+    ),
     limit: int = LIMIT_OPTION,
     offset: int = OFFSET_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
@@ -124,6 +143,8 @@ async def machine_list(
       synology-apm machine list --search corp-pc
       synology-apm machine list --namespace <ns>
       synology-apm machine list --plan "Daily Backup"
+      synology-apm machine list --status failed --status partial
+      synology-apm machine list --verify-status not_enabled
     """
     workload_types: list[MachineWorkloadType] | None = None
     if type_filter:
@@ -132,10 +153,19 @@ async def machine_list(
             err_console.print(f"[red]✗[/red] Invalid type: {invalid[0]!r} (expected: pc / ps / vm / fs)")
             raise typer.Exit(code=1)
         workload_types = [MACHINE_TYPE_ARGS[t.lower()] for t in type_filter]
+    status_enums = parse_enum_list(
+        status, WORKLOAD_STATUS_ARGS, "status",
+        "queuing / backing_up / success / failed / partial / canceled / no_backups / deleting",
+    )
+    verify_status_enums = parse_enum_list(
+        verify_status, VERIFY_STATUS_ARGS, "verify-status",
+        "verifying / success / failed / canceled / not_supported / not_enabled / partial / waiting",
+    )
     await _do_list(
         ctx=ctx,
         workload_types=workload_types,
         retired=retired, search=search, namespace=namespace, hypervisor_id=hypervisor, plan=plan,
+        status=status_enums, verify_status=verify_status_enums,
         limit=limit, offset=offset, page_all=page_all, output=output, verbose=verbose,
     )
 
@@ -148,6 +178,8 @@ async def _do_list(
     namespace: str | None,
     hypervisor_id: str | None,
     plan: list[str] | None,
+    status: list[WorkloadStatus] | None,
+    verify_status: list[VerifyStatus] | None,
     limit: int,
     offset: int,
     page_all: bool,
@@ -164,6 +196,8 @@ async def _do_list(
                 namespace=namespace,
                 hypervisor_id=hypervisor_id,
                 plan=resolved_plans,
+                status=status,
+                verify_status=verify_status,
                 limit=lim,
                 offset=off,
             ),

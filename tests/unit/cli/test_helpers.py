@@ -26,6 +26,7 @@ from synology_apm.cli._display import (
 from synology_apm.cli._helpers import enable_debug, is_debug
 from synology_apm.cli._validate import WorkloadRef, parse_time_filter
 from synology_apm.cli.errors import EXIT_ERROR
+from synology_apm.sdk import ResolvedConnection
 from synology_apm.sdk.enums import (
     ActivityWorkloadType,
     BackupActivityStatus,
@@ -486,7 +487,10 @@ async def test_get_client_no_input_missing_password_exits_error(monkeypatch: pyt
         "no_input": True, "no_verify_ssl": False,
     }
 
-    with patch("synology_apm.cli._helpers.resolve_connection", return_value=("apm.test", "admin", "", False)):
+    with patch(
+        "synology_apm.cli._helpers.resolve_connection",
+        return_value=ResolvedConnection("apm.test", "admin", "", False),
+    ):
         with pytest.raises(click.exceptions.Exit) as exc_info:
             async with _h.get_client(mock_ctx):
                 pass  # pragma: no cover
@@ -504,7 +508,10 @@ async def test_get_client_missing_host_calls_missing_config_hint(monkeypatch: py
 
     mock_hint = MagicMock(side_effect=SystemExit(2))
 
-    with patch("synology_apm.cli._helpers.resolve_connection", return_value=("", "", "", False)):
+    with patch(
+        "synology_apm.cli._helpers.resolve_connection",
+        return_value=ResolvedConnection("", "", "", False),
+    ):
         with patch("synology_apm.cli._helpers.missing_config_hint", mock_hint):
             with pytest.raises(SystemExit):
                 async with _h.get_client(mock_ctx):
@@ -530,7 +537,10 @@ async def test_get_client_debug_flag_enables_debug_mode(monkeypatch: pytest.Monk
     fake_ctx_mgr.__aenter__ = AsyncMock(return_value=mock_apm)
     fake_ctx_mgr.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("synology_apm.cli._helpers.resolve_connection", return_value=("h", "u", "p", False)):
+    with patch(
+        "synology_apm.cli._helpers.resolve_connection",
+        return_value=ResolvedConnection("h", "u", "p", False),
+    ):
         with patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr):
             with patch("synology_apm.cli._helpers.enable_debug") as mock_enable:
                 async with _h.get_client(mock_ctx):
@@ -556,7 +566,10 @@ async def test_get_client_yields_apm_client_with_connection_message(monkeypatch:
     fake_ctx_mgr.__aenter__ = AsyncMock(return_value=mock_apm)
     fake_ctx_mgr.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("synology_apm.cli._helpers.resolve_connection", return_value=("h", "u", "p", False)):
+    with patch(
+        "synology_apm.cli._helpers.resolve_connection",
+        return_value=ResolvedConnection("h", "u", "p", False),
+    ):
         with patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr):
             async with _h.get_client(mock_ctx) as apm:
                 assert apm is mock_apm
@@ -578,7 +591,10 @@ async def test_get_client_prompts_for_password_when_not_no_input(monkeypatch: py
     fake_ctx_mgr.__aenter__ = AsyncMock(return_value=mock_apm)
     fake_ctx_mgr.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("synology_apm.cli._helpers.resolve_connection", return_value=("apm.test", "admin", "", False)):
+    with patch(
+        "synology_apm.cli._helpers.resolve_connection",
+        return_value=ResolvedConnection("apm.test", "admin", "", False),
+    ):
         with patch("synology_apm.cli._helpers.typer") as mock_typer:
             mock_typer.prompt.return_value = "secret"
             with patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr):
@@ -729,7 +745,7 @@ async def test_get_client_keyring_unavailable_exits_with_error() -> None:
     from unittest.mock import MagicMock, patch
 
     from synology_apm.cli._helpers import get_client
-    from synology_apm.cli.config import KeyringUnavailableError
+    from synology_apm.sdk import KeyringUnavailableError
 
     ctx = MagicMock()
     ctx.obj = {}

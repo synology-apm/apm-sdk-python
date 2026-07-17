@@ -12,6 +12,7 @@ from synology_apm.sdk.enums import (
     MachineWorkloadType,
     RetentionType,
     ScheduleFrequency,
+    VerifyStatus,
     WorkloadCategory,
     WorkloadStatus,
 )
@@ -187,6 +188,72 @@ def test_machine_list_hypervisor_filter() -> None:
     assert result.exit_code == 0, result.output
     call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
     assert call_kwargs["hypervisor_id"] == "978eabd4-e332-459f-a8e0-35a0aa312118"
+
+
+@pytest.mark.parametrize("status_flags,expected_status", [
+    (["--status", "failed"], [WorkloadStatus.FAILED]),
+    (
+        ["--status", "failed", "--status", "partial"],
+        [WorkloadStatus.FAILED, WorkloadStatus.PARTIAL],
+    ),
+])
+def test_machine_list_status_filter(status_flags: list[str], expected_status: list[WorkloadStatus]) -> None:
+    """machine list --status <value> (repeatable) should pass status= to the SDK."""
+    mock_apm = make_mock_client()
+    result = invoke_cli(mock_apm, ["machine", "list", *status_flags])
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
+    assert call_kwargs["status"] == expected_status
+
+
+def test_machine_list_no_status_passes_none() -> None:
+    """machine list without --status should pass status=None to the SDK."""
+    mock_apm = make_mock_client()
+    result = invoke_cli(mock_apm, ["machine", "list"])
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
+    assert call_kwargs["status"] is None
+
+
+def test_machine_list_invalid_status_exits_1() -> None:
+    """machine list --status <invalid> should exit with code 1."""
+    mock_apm = make_mock_client()
+    result = invoke_cli(mock_apm, ["machine", "list", "--status", "nope"])
+    assert result.exit_code == 1
+
+
+@pytest.mark.parametrize("status_flags,expected_status", [
+    (["--verify-status", "failed"], [VerifyStatus.FAILED]),
+    (
+        ["--verify-status", "not_enabled", "--verify-status", "waiting"],
+        [VerifyStatus.NOT_ENABLED, VerifyStatus.WAITING],
+    ),
+])
+def test_machine_list_verify_status_filter(
+    status_flags: list[str], expected_status: list[VerifyStatus]
+) -> None:
+    """machine list --verify-status <value> (repeatable) should pass verify_status= to the SDK."""
+    mock_apm = make_mock_client()
+    result = invoke_cli(mock_apm, ["machine", "list", *status_flags])
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
+    assert call_kwargs["verify_status"] == expected_status
+
+
+def test_machine_list_no_verify_status_passes_none() -> None:
+    """machine list without --verify-status should pass verify_status=None to the SDK."""
+    mock_apm = make_mock_client()
+    result = invoke_cli(mock_apm, ["machine", "list"])
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
+    assert call_kwargs["verify_status"] is None
+
+
+def test_machine_list_invalid_verify_status_exits_1() -> None:
+    """machine list --verify-status <invalid> should exit with code 1."""
+    mock_apm = make_mock_client()
+    result = invoke_cli(mock_apm, ["machine", "list", "--verify-status", "nope"])
+    assert result.exit_code == 1
 
 
 @pytest.mark.parametrize("subcommand,expected_type", [

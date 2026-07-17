@@ -101,7 +101,7 @@ async def test_list_resolves_destination() -> None:
 
 
 async def test_list_destination_none_when_fetch_fails() -> None:
-    """list() should set destination=None when the external_storage fetch fails."""
+    """list() should set destination=None when the destination no longer exists (dangling reference)."""
     async with connected_session() as (session, m):
 
         m.get(PLANS_URL, payload={"plans": [SAMPLE_PLAN_RAW], "total": 1})
@@ -442,7 +442,7 @@ async def test_create_posts_body_and_returns_plan() -> None:
         col = TieringPlanCollection(session)
         plan = await col.create(TieringPlanCreateRequest(
             name="tiering plan 1",
-            tier_after_days=9876,
+            tiering_after_days=9876,
             destination=_make_fake_remote_storage(),
             daily_check_time=time(1, 17),
         ))
@@ -472,7 +472,7 @@ async def test_create_duplicate_name_raises_plan_name_conflict_error() -> None:
         with pytest.raises(PlanNameConflictError) as exc_info:
             await col.create(TieringPlanCreateRequest(
                 name="Duplicate",
-                tier_after_days=30,
+                tiering_after_days=30,
                 destination=_make_fake_remote_storage(),
             ))
         await session.disconnect()
@@ -493,7 +493,7 @@ async def test_update_puts_body_and_returns_plan() -> None:
         col = TieringPlanCollection(session)
         plan = await col.update(PLAN_ID, TieringPlanCreateRequest(
             name="tiering plan 1",
-            tier_after_days=9876,
+            tiering_after_days=9876,
             destination=_make_fake_remote_storage(),
         ))
         await session.disconnect()
@@ -519,7 +519,7 @@ async def test_update_duplicate_name_raises_plan_name_conflict_error() -> None:
         with pytest.raises(PlanNameConflictError) as exc_info:
             await col.update(PLAN_ID, TieringPlanCreateRequest(
                 name="Conflict",
-                tier_after_days=30,
+                tiering_after_days=30,
                 destination=_make_fake_remote_storage(),
             ))
         await session.disconnect()
@@ -683,7 +683,7 @@ async def test_update_reraises_non_conflict_api_error() -> None:
         with pytest.raises(APIError) as exc_info:
             await TieringPlanCollection(session).update(PLAN_ID, TieringPlanCreateRequest(
                 name="tiering plan 1",
-                tier_after_days=30,
+                tiering_after_days=30,
                 destination=_make_fake_remote_storage(),
             ))
         await session.disconnect()
@@ -726,7 +726,7 @@ async def test_create_unsupported_storage_type_raises_value_error() -> None:
         with pytest.raises(ValueError, match="Unsupported RemoteStorage"):
             await TieringPlanCollection(session).create(TieringPlanCreateRequest(
                 name="Bad Destination",
-                tier_after_days=30,
+                tiering_after_days=30,
                 destination=destination,
             ))
         await session.disconnect()

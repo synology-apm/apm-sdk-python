@@ -1,456 +1,14 @@
-"""Unit tests for synology_apm.cli.config — config file read/write and resolve_connection priority order."""
+"""Unit tests for synology_apm.cli.commands.config — the `config` Typer command group."""
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 import keyring.errors
-import pytest
 
 from synology_apm.cli.commands.config import PasswordDecision, _resolve_password_decision
-from synology_apm.cli.config import (
-    DEFAULT_PROFILE,
-    AppConfig,
-    KeyringUnavailableError,
-    PasswordStorage,
-    ProfileConfig,
-    load_config,
-    resolve_connection,
-    save_config,
-)
 from synology_apm.cli.main import app
+from synology_apm.sdk import DEFAULT_PROFILE, AppConfig, PasswordStorage, ProfileConfig
 from tests.unit.cli.conftest import runner
-
-# ── load_config / save_config ──────────────────────────────────────────────
-
-
-def test_load_config_missing_file(tmp_path: Path) -> None:
-    """Should return an empty AppConfig when the config file does not exist."""
-    with patch("synology_apm.cli.config.CONFIG_FILE", tmp_path / "config.toml"):
-        cfg = load_config()
-    assert cfg.profiles == {}
-
-
-def test_save_and_load_roundtrip(tmp_path: Path) -> None:
-    """Loaded config after save should equal the saved config."""
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile("default", ProfileConfig(host="https://10.0.0.1", username="admin"))
-    cfg.set_profile("lab", ProfileConfig(host="https://10.0.0.2", username="admin", no_verify_ssl=True))
-
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        loaded = load_config()
-
-    assert loaded.get_profile("default").host == "https://10.0.0.1"
-    assert loaded.get_profile("default").username == "admin"
-    assert loaded.get_profile("default").no_verify_ssl is False
-    assert loaded.get_profile("lab").host == "https://10.0.0.2"
-    assert loaded.get_profile("lab").no_verify_ssl is True
-
-
-def test_save_and_load_password_roundtrip(tmp_path: Path) -> None:
-    """The password field should round-trip correctly through save and load."""
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile("default", ProfileConfig(host="https://10.0.0.1", username="admin", password="s3cr3t"))
-
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        loaded = load_config()
-
-    assert loaded.get_profile("default").password == "s3cr3t"
-
-
-def test_save_omits_empty_password(tmp_path: Path) -> None:
-    """An empty password should not be written to config.toml."""
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile("default", ProfileConfig(host="https://10.0.0.1", username="admin"))
-
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        content = cfg_file.read_text()
-
-    assert "password" not in content
-
-
-def test_save_creates_directory(tmp_path: Path) -> None:
-    """save_config should automatically create a missing config directory."""
-    cfg_dir = tmp_path / "nested" / "apm"
-    cfg_file = cfg_dir / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile("default", ProfileConfig(host="https://h", username="u"))
-
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", cfg_dir),
-    ):
-        save_config(cfg)
-
-    assert cfg_file.exists()
-
-
-# ── PasswordStorage / keyring persistence ──────────────────────────────────
-
-
-def test_load_config_old_format_password_only_infers_plaintext(tmp_path: Path) -> None:
-    """A pre-existing config file with only a `password` key (no `password_storage`) should infer PLAINTEXT."""
-    cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text('[default]\nhost = "h"\nusername = "u"\npassword = "secret"\n')
-
-    with patch("synology_apm.cli.config.CONFIG_FILE", cfg_file):
-        loaded = load_config()
-
-    profile = loaded.get_profile("default")
-    assert profile.password == "secret"
-    assert profile.password_storage == PasswordStorage.PLAINTEXT
-
-
-def test_load_config_no_password_no_storage_key_infers_none(tmp_path: Path) -> None:
-    """A profile with neither `password` nor `password_storage` should infer NONE."""
-    cfg_file = tmp_path / "config.toml"
-    cfg_file.write_text('[default]\nhost = "h"\nusername = "u"\n')
-
-    with patch("synology_apm.cli.config.CONFIG_FILE", cfg_file):
-        loaded = load_config()
-
-    assert loaded.get_profile("default").password_storage == PasswordStorage.NONE
-
-
-def test_save_keyring_storage_omits_plaintext_password(tmp_path: Path) -> None:
-    """A KEYRING-storage profile should never write a plaintext password to the config file."""
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile(
-        "default",
-        ProfileConfig(host="h", username="u", password="leaked", password_storage=PasswordStorage.KEYRING),
-    )
-
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        content = cfg_file.read_text()
-        loaded = load_config()
-
-    assert "leaked" not in content
-    assert 'password_storage = "keyring"' in content
-    assert loaded.get_profile("default").password_storage == PasswordStorage.KEYRING
-    assert loaded.get_profile("default").password == ""
-
-
-# ── AppConfig helpers ──────────────────────────────────────────────────────
-
-
-def test_get_profile_missing_returns_empty() -> None:
-    cfg = AppConfig()
-    p = cfg.get_profile("nonexistent")
-    assert p.host == ""
-    assert p.username == ""
-    assert p.no_verify_ssl is False
-
-
-def test_remove_profile_existing() -> None:
-    cfg = AppConfig()
-    cfg.set_profile("lab", ProfileConfig(host="https://h", username="u"))
-    removed = cfg.remove_profile("lab")
-    assert removed is True
-    assert "lab" not in cfg.profiles
-
-
-def test_remove_profile_missing() -> None:
-    cfg = AppConfig()
-    removed = cfg.remove_profile("ghost")
-    assert removed is False
-
-
-def test_profile_config_is_complete() -> None:
-    assert ProfileConfig(host="https://h", username="u").is_complete() is True
-    assert ProfileConfig(host="https://h", username="").is_complete() is False
-    assert ProfileConfig(host="", username="u").is_complete() is False
-    assert ProfileConfig().is_complete() is False
-
-
-# ── resolve_connection priority order ──────────────────────────────────────
-
-
-def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in ("APM_HOST", "APM_USERNAME", "APM_PASSWORD", "APM_PROFILE", "APM_NO_VERIFY_SSL"):
-        monkeypatch.delenv(key, raising=False)
-
-
-def test_resolve_uses_cli_args_first(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """CLI arguments should take priority over environment variables and config file."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_HOST", "https://env-host")
-    monkeypatch.setenv("APM_USERNAME", "env-user")
-
-    cfg_file = tmp_path / "config.toml"
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        host, username, password, no_ssl = resolve_connection(
-            host="https://cli-host",
-            username="cli-user",
-            password="cli-pass",
-        )
-
-    assert host == "https://cli-host"
-    assert username == "cli-user"
-    assert password == "cli-pass"
-
-
-def test_resolve_uses_env_over_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Environment variables should take priority over the config file."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_HOST", "https://env-host")
-    monkeypatch.setenv("APM_USERNAME", "env-user")
-    monkeypatch.setenv("APM_PASSWORD", "env-pass")
-
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile("default", ProfileConfig(host="https://file-host", username="file-user"))
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        host, username, password, _ = resolve_connection()
-
-    assert host == "https://env-host"
-    assert username == "env-user"
-    assert password == "env-pass"
-
-
-def test_resolve_falls_back_to_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Should fall back to the config file (including password) when no CLI args or env vars are present."""
-    _clean_env(monkeypatch)
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile(
-        "default",
-        ProfileConfig(host="https://file-host", username="file-user", password="file-pass"),
-    )
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        host, username, password, _ = resolve_connection()
-
-    assert host == "https://file-host"
-    assert username == "file-user"
-    assert password == "file-pass"
-
-
-def test_resolve_password_env_over_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """APM_PASSWORD environment variable should take priority over the password in the config file."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_PASSWORD", "env-pass")
-
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile(
-        "default",
-        ProfileConfig(host="https://file-host", username="file-user", password="file-pass"),
-    )
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        _, _, password, _ = resolve_connection()
-
-    assert password == "env-pass"
-
-
-def test_resolve_password_cli_over_all(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """CLI password should take priority over environment variables and config file."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_PASSWORD", "env-pass")
-
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile(
-        "default",
-        ProfileConfig(host="https://file-host", username="file-user", password="file-pass"),
-    )
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        _, _, password, _ = resolve_connection(password="cli-pass")
-
-    assert password == "cli-pass"
-
-
-def test_resolve_profile_selection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """When a profile is specified, its config should be used."""
-    _clean_env(monkeypatch)
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile("default", ProfileConfig(host="https://default", username="default-user"))
-    cfg.set_profile("lab", ProfileConfig(host="https://lab-host", username="lab-user"))
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        host, username, _, _ = resolve_connection(profile="lab")
-
-    assert host == "https://lab-host"
-    assert username == "lab-user"
-
-
-def test_resolve_profile_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """APM_PROFILE environment variable should select the profile."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_PROFILE", "lab")
-
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile("lab", ProfileConfig(host="https://lab-host", username="lab-user"))
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        host, username, _, _ = resolve_connection()
-
-    assert host == "https://lab-host"
-    assert username == "lab-user"
-
-
-def test_resolve_no_verify_ssl_cli_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """CLI --no-verify-ssl should take priority over all other sources."""
-    _clean_env(monkeypatch)
-    cfg_file = tmp_path / "config.toml"
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        _, _, _, no_ssl = resolve_connection(no_verify_ssl=True)
-    assert no_ssl is True
-
-
-def test_resolve_no_verify_ssl_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """APM_NO_VERIFY_SSL=true should set no_verify_ssl."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_NO_VERIFY_SSL", "true")
-    cfg_file = tmp_path / "config.toml"
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        _, _, _, no_ssl = resolve_connection()
-    assert no_ssl is True
-
-
-def test_resolve_no_verify_ssl_from_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """no_verify_ssl=true in the config file should take effect."""
-    _clean_env(monkeypatch)
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile(
-        "default",
-        ProfileConfig(host="https://h", username="u", no_verify_ssl=True),
-    )
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        _, _, _, no_ssl = resolve_connection()
-    assert no_ssl is True
-
-
-def test_resolve_no_verify_ssl_default_false(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """no_verify_ssl should default to False when not set from any source."""
-    _clean_env(monkeypatch)
-    cfg_file = tmp_path / "config.toml"
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-    ):
-        _, _, _, no_ssl = resolve_connection()
-    assert no_ssl is False
-
-
-def test_resolve_connection_keyring_lookup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A profile with KEYRING storage should resolve its password via the OS keyring."""
-    _clean_env(monkeypatch)
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile(
-        "default",
-        ProfileConfig(host="https://h", username="u", password_storage=PasswordStorage.KEYRING),
-    )
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-        patch("synology_apm.cli.config.keyring.get_password", return_value="keyring-pass") as mock_get,
-    ):
-        save_config(cfg)
-        _, _, password, _ = resolve_connection()
-
-    assert password == "keyring-pass"
-    mock_get.assert_called_once_with("synology-apm-cli:default", "u")
-
-
-def test_resolve_connection_keyring_skipped_when_cli_password_given(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The keyring should not be queried when a higher-priority password is already given."""
-    _clean_env(monkeypatch)
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile(
-        "default",
-        ProfileConfig(host="https://h", username="u", password_storage=PasswordStorage.KEYRING),
-    )
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-        patch("synology_apm.cli.config.keyring.get_password") as mock_get,
-    ):
-        save_config(cfg)
-        _, _, password, _ = resolve_connection(password="cli-pass")
-
-    assert password == "cli-pass"
-    mock_get.assert_not_called()
-
-
-def test_resolve_connection_keyring_error_propagates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A keyring backend error should propagate as KeyringUnavailableError."""
-    _clean_env(monkeypatch)
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile(
-        "default",
-        ProfileConfig(host="https://h", username="u", password_storage=PasswordStorage.KEYRING),
-    )
-    with (
-        patch("synology_apm.cli.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.cli.config.CONFIG_DIR", tmp_path),
-        patch("synology_apm.cli.config.keyring.get_password", side_effect=keyring.errors.KeyringLocked()),
-    ):
-        save_config(cfg)
-        with pytest.raises(KeyringUnavailableError):
-            resolve_connection()
-
 
 # ── _resolve_password_decision (pure password/storage transition logic) ────
 
@@ -655,7 +213,7 @@ def test_config_set_save_password_keyring() -> None:
     cfg = AppConfig()
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
-         patch("synology_apm.cli.config.keyring.set_password") as mock_set:
+         patch("synology_apm.sdk.config.keyring.set_password") as mock_set:
         result = runner.invoke(
             app,
             ["config", "set", "--host", "h", "--username", "u", "--save-password", "keyring"],
@@ -679,7 +237,7 @@ def test_config_set_migrates_keyring_to_plaintext() -> None:
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
-         patch("synology_apm.cli.config.keyring.delete_password") as mock_delete:
+         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete:
         result = runner.invoke(
             app,
             ["config", "set", "--host", "h", "--username", "u", "--save-password", "plaintext"],
@@ -702,7 +260,7 @@ def test_config_set_migrates_plaintext_to_keyring() -> None:
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
-         patch("synology_apm.cli.config.keyring.set_password") as mock_set:
+         patch("synology_apm.sdk.config.keyring.set_password") as mock_set:
         result = runner.invoke(
             app,
             ["config", "set", "--host", "h", "--username", "u", "--save-password", "keyring"],
@@ -725,8 +283,8 @@ def test_config_set_blank_password_keeps_existing_keyring_entry() -> None:
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
-         patch("synology_apm.cli.config.keyring.set_password") as mock_set, \
-         patch("synology_apm.cli.config.keyring.delete_password") as mock_delete:
+         patch("synology_apm.sdk.config.keyring.set_password") as mock_set, \
+         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete:
         result = runner.invoke(
             app,
             ["config", "set", "--host", "newhost", "--profile", "default"],
@@ -750,8 +308,8 @@ def test_config_set_rename_keyring_profile_without_password_is_rejected() -> Non
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
-         patch("synology_apm.cli.config.keyring.set_password") as mock_set, \
-         patch("synology_apm.cli.config.keyring.delete_password") as mock_delete:
+         patch("synology_apm.sdk.config.keyring.set_password") as mock_set, \
+         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete:
         result = runner.invoke(
             app,
             ["config", "set", "--username", "new-user", "--profile", "default"],
@@ -769,7 +327,7 @@ def test_config_set_keyring_backend_unavailable_shows_error() -> None:
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
          patch(
-             "synology_apm.cli.config.keyring.set_password",
+             "synology_apm.sdk.config.keyring.set_password",
              side_effect=keyring.errors.NoKeyringError("no backend"),
          ):
         result = runner.invoke(
@@ -788,7 +346,7 @@ def test_config_show_keyring_storage_no_keyring_call() -> None:
         profiles={DEFAULT_PROFILE: ProfileConfig(host="h", username="u", password_storage=PasswordStorage.KEYRING)}
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
-         patch("synology_apm.cli.config.keyring.get_password") as mock_get:
+         patch("synology_apm.sdk.config.keyring.get_password") as mock_get:
         result = runner.invoke(app, ["config", "show"])
     assert result.exit_code == 0
     assert "OS keyring" in result.output
@@ -802,7 +360,7 @@ def test_config_clear_deletes_keyring_entry() -> None:
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config"), \
-         patch("synology_apm.cli.config.keyring.delete_password") as mock_delete:
+         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete:
         result = runner.invoke(app, ["config", "clear", "--yes"])
     assert result.exit_code == 0
     mock_delete.assert_called_once_with("synology-apm-cli:default", "u")
@@ -815,26 +373,44 @@ def test_config_clear_all_deletes_all_keyring_entries() -> None:
     cfg.set_profile("lab", ProfileConfig(host="b", username="v", password="x", password_storage=PasswordStorage.PLAINTEXT))
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config"), \
-         patch("synology_apm.cli.config.keyring.delete_password") as mock_delete:
+         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete:
         result = runner.invoke(app, ["config", "clear", "--all", "--yes"])
     assert result.exit_code == 0
     mock_delete.assert_called_once_with("synology-apm-cli:default", "u")
 
 
 def test_config_clear_swallows_keyring_delete_error() -> None:
-    """config clear should succeed even if deleting the keyring entry fails."""
+    """config clear should succeed silently when the keyring entry is already gone."""
     cfg = AppConfig(
         profiles={DEFAULT_PROFILE: ProfileConfig(host="h", username="u", password_storage=PasswordStorage.KEYRING)}
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
          patch(
-             "synology_apm.cli.config.keyring.delete_password",
+             "synology_apm.sdk.config.keyring.delete_password",
              side_effect=keyring.errors.PasswordDeleteError("not found"),
          ):
         result = runner.invoke(app, ["config", "clear", "--yes"])
     assert result.exit_code == 0
     mock_save.assert_called_once()
+    assert "may remain" not in result.output
+
+
+def test_config_clear_warns_when_keyring_backend_fails() -> None:
+    """config clear still succeeds when the keyring backend fails, but warns that the credential may remain."""
+    cfg = AppConfig(
+        profiles={DEFAULT_PROFILE: ProfileConfig(host="h", username="u", password_storage=PasswordStorage.KEYRING)}
+    )
+    with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
+         patch("synology_apm.cli.commands.config.save_config") as mock_save, \
+         patch(
+             "synology_apm.sdk.config.keyring.delete_password",
+             side_effect=keyring.errors.KeyringError("backend unavailable"),
+         ):
+        result = runner.invoke(app, ["config", "clear", "--yes"])
+    assert result.exit_code == 0
+    mock_save.assert_called_once()
+    assert "may remain" in result.output
 
 
 # ── config set --no-input ──────────────────────────────────────────────────

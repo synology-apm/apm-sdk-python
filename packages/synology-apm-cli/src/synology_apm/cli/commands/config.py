@@ -5,26 +5,35 @@ from dataclasses import dataclass
 
 import typer
 
-from synology_apm.cli.config import (
+from synology_apm.cli.errors import EXIT_ERROR, abortable, err_console, handle_keyring_error
+from synology_apm.cli.output import console
+from synology_apm.sdk import (
     CONFIG_FILE,
     DEFAULT_PROFILE,
     AppConfig,
     KeyringUnavailableError,
     PasswordStorage,
     ProfileConfig,
-    _delete_keyring_password,
-    _set_keyring_password,
+    delete_keyring_password,
     load_config,
     save_config,
+    set_keyring_password,
 )
-from synology_apm.cli.errors import EXIT_ERROR, abortable, err_console, handle_keyring_error
-from synology_apm.cli.output import console
+
+
+def _delete_keyring_password_or_warn(profile_name: str, username: str) -> None:
+    """Delete the profile's OS keyring entry; warn when a credential may remain."""
+    if not delete_keyring_password(profile_name, username):
+        err_console.print(
+            f"[yellow]⚠[/yellow] Could not remove the password for profile '{profile_name}' "
+            "from the OS keyring; the stored credential may remain."
+        )
 
 
 def _clear_keyring_password(name: str, profile: ProfileConfig) -> None:
     """Best-effort delete the profile's OS keyring entry, if it has one."""
     if profile.password_storage == PasswordStorage.KEYRING:
-        _delete_keyring_password(name, profile.username)
+        _delete_keyring_password_or_warn(name, profile.username)
 
 
 @dataclass(frozen=True)
@@ -167,13 +176,13 @@ def config_set(
     if existing.password_storage == PasswordStorage.KEYRING and (
         new_storage != PasswordStorage.KEYRING or new_username != existing.username
     ):
-        _delete_keyring_password(profile, existing.username)
+        _delete_keyring_password_or_warn(profile, existing.username)
 
     # password_changed guarantees the existing keyring entry is left untouched when the
     # user left the prompt blank to keep the previously stored password (see prompt hint above).
     if new_storage == PasswordStorage.KEYRING and password_changed:
         try:
-            _set_keyring_password(profile, new_username, new_password)
+            set_keyring_password(profile, new_username, new_password)
         except KeyringUnavailableError as exc:
             handle_keyring_error(exc)
 
@@ -192,7 +201,8 @@ def config_set(
     console.print(f"\n[green]✓[/green] Settings saved to {CONFIG_FILE} (profile: {profile})")
     if new_storage == PasswordStorage.PLAINTEXT:
         console.print(
-            "[yellow]⚠[/yellow] Password is stored in plaintext. Secure the file permissions (chmod 600)."
+            "[yellow]⚠[/yellow] Password is stored in plaintext in the config file "
+            "(file permissions are restricted to the current user)."
         )
     elif new_storage == PasswordStorage.KEYRING:
         console.print("[green]✓[/green] Password stored in the OS keyring.")

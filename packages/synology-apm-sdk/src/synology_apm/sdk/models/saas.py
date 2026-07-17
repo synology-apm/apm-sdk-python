@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ..enums import WorkloadCategory
+from ._shared import auto_to_dict
 
 
 @dataclass(frozen=True)
@@ -22,3 +24,7 @@ class SaasTenant:
     tenant_email: str
     category: WorkloadCategory
     protected_data_bytes: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)

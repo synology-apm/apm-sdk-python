@@ -76,6 +76,36 @@ async def run(ctx: SmokeContext) -> None:
         note="A workload ID must not appear in both the protected and retired lists.",
     )
 
+    status_result = await ctx.call(
+        DOMAIN, "machine.workloads.list[status]",
+        lambda: apm.machine.workloads.list(status=[WorkloadStatus.SUCCESS], limit=500),
+    )
+    if status_result is not None:
+        status_workloads, _status_total = status_result
+        ctx.check(
+            DOMAIN, "machine.workloads.check[status_filter]",
+            all(w.status == WorkloadStatus.SUCCESS for w in status_workloads),
+            note="Every workload returned by status=[SUCCESS] must report status SUCCESS.",
+        )
+
+    verify_status_result = await ctx.call(
+        DOMAIN, "machine.workloads.list[verify_status]",
+        lambda: apm.machine.workloads.list(verify_status=[VerifyStatus.NOT_ENABLED], limit=500),
+    )
+    if verify_status_result is not None:
+        verify_status_workloads, _verify_status_total = verify_status_result
+        ctx.check(
+            DOMAIN, "machine.workloads.check[verify_status_filter]",
+            all(
+                w.verify_status in (VerifyStatus.NOT_ENABLED, None)
+                for w in verify_status_workloads
+            ),
+            note=(
+                "verify_status=[NOT_ENABLED] can also match PC/FS workloads, which always "
+                "report verify_status=None (not tracked for them)."
+            ),
+        )
+
     await _run_type_block(ctx, workloads, MachineWorkloadType.PC, "pc")
     await _run_type_block(ctx, workloads, MachineWorkloadType.PS, "ps")
     await _run_type_block(ctx, workloads, MachineWorkloadType.VM, "vm")

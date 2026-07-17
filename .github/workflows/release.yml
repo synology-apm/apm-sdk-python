@@ -1,10 +1,5 @@
-# Builds and publishes synology-apm-sdk + synology-apm-cli to PyPI, and attaches pre-built CLI
-# binaries (macOS/Windows) to the GitHub Release for the pushed tag.
-#
-# Prerequisite (one-time, manual, not automatable from this repo):
-#   Register a PyPI Trusted Publisher for both the "synology-apm-sdk" and "synology-apm-cli"
-#   projects on pypi.org, pointing at this repo/workflow and the
-#   "pypi-synology-apm-sdk" / "pypi-synology-apm-cli" environments below.
+# Builds and publishes synology-apm-sdk, synology-apm-cli, and synology-apm-mcp to PyPI,
+# and attaches pre-built CLI binaries (macOS/Windows) to the GitHub Release for the pushed tag.
 
 name: Release
 
@@ -30,10 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
 
@@ -43,17 +38,26 @@ jobs:
       - name: Build synology-apm-cli
         run: uv build --package synology-apm-cli -o dist/synology-apm-cli
 
+      - name: Build synology-apm-mcp
+        run: uv build --package synology-apm-mcp -o dist/synology-apm-mcp
+
       - name: Upload synology-apm-sdk dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-synology-apm-sdk
           path: dist/synology-apm-sdk/
 
       - name: Upload synology-apm-cli dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-synology-apm-cli
           path: dist/synology-apm-cli/
+
+      - name: Upload synology-apm-mcp dist
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-synology-apm-mcp
+          path: dist/synology-apm-mcp/
 
   # The wheels are installed and exercised before anything reaches PyPI —
   # PyPI uploads are immutable, so a broken artifact would burn the version.
@@ -62,30 +66,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download synology-apm-sdk dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-synology-apm-sdk
           path: dist/synology-apm-sdk
 
       - name: Download synology-apm-cli dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-synology-apm-cli
           path: dist/synology-apm-cli
+
+      - name: Download synology-apm-mcp dist
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-synology-apm-mcp
+          path: dist/synology-apm-mcp
 
       - name: Verify wheel versions match the tag
         run: |
           V="${GITHUB_REF_NAME#v}"
           ls dist/synology-apm-sdk/synology_apm_sdk-"$V"-py3-none-any.whl
           ls dist/synology-apm-cli/synology_apm_cli-"$V"-py3-none-any.whl
+          ls dist/synology-apm-mcp/synology_apm_mcp-"$V"-py3-none-any.whl
 
       - name: Install wheels and smoke-run the CLI
         run: |
-          python3 -m venv .venv-smoke
-          .venv-smoke/bin/pip install --quiet \
+          python3 -m venv .venv-smoke-cli
+          .venv-smoke-cli/bin/pip install --quiet \
             dist/synology-apm-sdk/*.whl dist/synology-apm-cli/*.whl
-          .venv-smoke/bin/python -c "import synology_apm.sdk, synology_apm.cli"
-          .venv-smoke/bin/synology-apm --help
+          .venv-smoke-cli/bin/python -c "import synology_apm.sdk, synology_apm.cli"
+          .venv-smoke-cli/bin/synology-apm --help
+
+      - name: Install wheels and smoke-run the MCP server
+        run: |
+          python3 -m venv .venv-smoke-mcp
+          .venv-smoke-mcp/bin/pip install --quiet \
+            dist/synology-apm-sdk/*.whl dist/synology-apm-mcp/*.whl
+          .venv-smoke-mcp/bin/python -c "import synology_apm.sdk, synology_apm.mcp"
+          .venv-smoke-mcp/bin/synology-apm-mcp --help
 
   publish-sdk:
     needs: [build, verify-dist]
@@ -97,7 +116,7 @@ jobs:
       id-token: write
     steps:
       - name: Download synology-apm-sdk dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-synology-apm-sdk
           path: dist/synology-apm-sdk
@@ -117,7 +136,7 @@ jobs:
       id-token: write
     steps:
       - name: Download synology-apm-cli dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-synology-apm-cli
           path: dist/synology-apm-cli
@@ -126,6 +145,27 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/synology-apm-cli
+
+  # publish-mcp runs in parallel with publish-cli — both depend only on publish-sdk.
+  publish-mcp:
+    needs: [build, publish-sdk]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-synology-apm-mcp
+      url: https://pypi.org/p/synology-apm-mcp
+    permissions:
+      id-token: write
+    steps:
+      - name: Download synology-apm-mcp dist
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-synology-apm-mcp
+          path: dist/synology-apm-mcp
+
+      - name: Publish synology-apm-mcp to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/synology-apm-mcp
 
   build-binaries:
     needs: build
@@ -137,16 +177,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download synology-apm-sdk dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-synology-apm-sdk
           path: dist/synology-apm-sdk
 
       - name: Download synology-apm-cli dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-synology-apm-cli
           path: dist/synology-apm-cli
@@ -163,7 +203,7 @@ jobs:
           scripts/build-cli-windows.ps1 $wheel.FullName
 
       - name: Upload binary to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/binaries/**/*.zip
           make_latest: true

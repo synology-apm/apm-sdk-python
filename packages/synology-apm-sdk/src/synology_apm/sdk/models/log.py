@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from ..enums import APMActivityLogType, LogLevel
+from ._shared import auto_to_dict
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,10 @@ class APMActivityLog:
     timestamp: datetime
     username: str
     description: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,10 @@ class DriveLog:
     location: str
     serial: str
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 @dataclass(frozen=True)
 class ConnectionLog:
@@ -62,6 +72,10 @@ class ConnectionLog:
     username: str
     description: str
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)
+
 
 @dataclass(frozen=True)
 class SystemLog:
@@ -77,3 +91,7 @@ class SystemLog:
     timestamp: datetime
     username: str
     description: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)

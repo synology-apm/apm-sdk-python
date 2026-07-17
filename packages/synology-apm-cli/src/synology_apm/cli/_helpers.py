@@ -8,7 +8,6 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from synology_apm.cli.config import KeyringUnavailableError, resolve_connection
 from synology_apm.cli.errors import (
     EXIT_ERROR,
     apm_error_handler,
@@ -19,7 +18,7 @@ from synology_apm.cli.errors import (
 from synology_apm.cli.errors import (
     abortable as _abortable,
 )
-from synology_apm.sdk import APMClient
+from synology_apm.sdk import APMClient, KeyringUnavailableError, resolve_connection
 
 _spinner_console = Console(stderr=True)
 
@@ -44,12 +43,15 @@ async def get_client(ctx: typer.Context) -> AsyncIterator[APMClient]:
     if obj.get("debug"):
         enable_debug()
     try:
-        eff_host, eff_username, eff_password, eff_ssl = resolve_connection(
+        resolved = resolve_connection(
             host=obj.get("host"),
             username=obj.get("username"),
             password=obj.get("password"),
             profile=obj.get("profile"),
             no_verify_ssl=obj.get("no_verify_ssl", False),
+        )
+        eff_host, eff_username, eff_password, eff_ssl = (
+            resolved.host, resolved.username, resolved.password, resolved.no_verify_ssl
         )
     except KeyringUnavailableError as exc:
         handle_keyring_error(

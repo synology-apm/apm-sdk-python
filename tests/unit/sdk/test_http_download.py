@@ -1,8 +1,8 @@
 """Unit tests for synology_apm.sdk._http.WebAPISession: downloads and debug logging.
 
 Covers download_file(), debug-mode request/response logging, response-body
-preservation on errors, and _safe_json(). Uses aioresponses to mock all HTTP
-requests; no real APM connection required.
+preservation on errors, and non-JSON body handling. Uses aioresponses to mock
+all HTTP requests; no real APM connection required.
 """
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ async def test_download_file_total_is_none_without_content_length(tmp_path: Path
 
 
 async def test_download_file_removes_partial_file_on_error(tmp_path: Path) -> None:
-    """download_file() deletes the destination file if an exception occurs during writing."""
+    """download_file() deletes the temporary .part file if an exception occurs during writing."""
     from unittest.mock import patch
 
     session = make_session()
@@ -173,8 +173,43 @@ async def test_download_file_removes_partial_file_on_error(tmp_path: Path) -> No
                 with pytest.raises(OSError, match="disk full"):
                     await session.download_file(f"{BASE_URL}/portal/download/token3", str(dest))
 
-        mock_unlink.assert_called_once_with(str(dest))
+        mock_unlink.assert_called_once_with(str(dest) + ".part")
         await session.disconnect()
+
+
+async def test_download_file_failure_preserves_existing_dest_file(tmp_path: Path) -> None:
+    """A failed download must leave a pre-existing file at dest_path untouched."""
+    session = make_session()
+    dest = tmp_path / "out.pst"
+    dest.write_bytes(b"previous export")
+
+    with aioresponses() as m:
+        m.get("https://fake-apm.test/webapi/entry.cgi?account=testuser&api=SYNO.API.Auth&client=browser&enable_syno_token=yes&method=login&passwd=testpass&session=webui&version=6", payload=LOGIN_OK)
+        await session.connect()
+        m.get(f"{BASE_URL}/portal/download/empty2", body=b"")
+        with pytest.raises(APIError, match="empty"):
+            await session.download_file(f"{BASE_URL}/portal/download/empty2", str(dest))
+        await session.disconnect()
+
+    assert dest.read_bytes() == b"previous export"
+    assert not (tmp_path / "out.pst.part").exists()
+
+
+async def test_download_file_success_replaces_dest_and_leaves_no_part_file(tmp_path: Path) -> None:
+    """A successful download replaces an existing dest file and leaves no .part file behind."""
+    session = make_session()
+    dest = tmp_path / "out.pst"
+    dest.write_bytes(b"previous export")
+
+    with aioresponses() as m:
+        m.get("https://fake-apm.test/webapi/entry.cgi?account=testuser&api=SYNO.API.Auth&client=browser&enable_syno_token=yes&method=login&passwd=testpass&session=webui&version=6", payload=LOGIN_OK)
+        await session.connect()
+        m.get(f"{BASE_URL}/portal/download/token7", body=b"new export")
+        await session.download_file(f"{BASE_URL}/portal/download/token7", str(dest))
+        await session.disconnect()
+
+    assert dest.read_bytes() == b"new export"
+    assert not (tmp_path / "out.pst.part").exists()
 
 
 async def test_download_file_raises_api_error_on_4xx(tmp_path: Path) -> None:
@@ -260,20 +295,43 @@ async def test_download_file_timeout_raises_connection_timeout_error(tmp_path: P
         await session.disconnect()
 
 
-# ── _safe_json ────────────────────────────────────────────────────────────────
+# ── non-JSON body handling ────────────────────────────────────────────────────
 
 
-async def test_safe_json_returns_empty_dict_on_non_json_body() -> None:
-    """_safe_json() returns {} when the server returns a non-JSON body (e.g. HTML)."""
+async def test_success_status_with_non_json_body_raises_api_error() -> None:
+    """A success status whose body is not valid JSON (e.g. HTML) raises APIError instead of returning {}."""
     session = make_session()
     with aioresponses() as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload",
               body=b"<html>Service Unavailable</html>", status=200)
+        with pytest.raises(APIError, match="non-JSON"):
+            await session.get("/api/v1/workload/device_workload")
+        await disconnect_session(m, session)
+
+
+async def test_success_status_with_empty_body_returns_empty_dict() -> None:
+    """A success status with an empty body still resolves to {} (some write endpoints return no body)."""
+    session = make_session()
+    with aioresponses() as m:
+        await connect_session(m, session)
+        m.get(f"{BASE_URL}/api/v1/workload/device_workload", body=b"", status=200)
         result = await session.get("/api/v1/workload/device_workload")
         await disconnect_session(m, session)
 
     assert result == {}
+
+
+async def test_error_status_with_non_json_body_still_maps_status_exception() -> None:
+    """A 4xx/5xx with a non-JSON body raises the status-mapped exception, not the non-JSON error."""
+    session = make_session()
+    with aioresponses() as m:
+        await connect_session(m, session)
+        m.get(f"{BASE_URL}/api/v1/workload/device_workload",
+              body=b"<html>Forbidden</html>", status=403)
+        with pytest.raises(PermissionDeniedError):
+            await session.get("/api/v1/workload/device_workload")
+        await disconnect_session(m, session)
 
 
 # ── debug mode ────────────────────────────────────────────────────────────────

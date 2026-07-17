@@ -49,9 +49,11 @@ from synology_apm.cli._serializers import (
     version_to_dict,
 )
 from synology_apm.cli._validate import (
+    WORKLOAD_STATUS_ARGS,
     WorkloadRef,
     _resolve_plans,
     _resolve_tenant,
+    parse_enum_list,
     parse_time_range,
     print_resolved_tenant,
     print_resolved_version,
@@ -173,6 +175,13 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
                 "Plans if --retired is set."
             ),
         ),
+        status: list[str] | None = typer.Option(
+            None, "--status",
+            help=(
+                "Backup status filter, repeatable: queuing / backing_up / success / failed / "
+                "partial / canceled / no_backups / deleting"
+            ),
+        ),
         limit: int = LIMIT_OPTION,
         offset: int = OFFSET_OPTION,
         page_all: bool = PAGE_ALL_OPTION,
@@ -180,6 +189,10 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
     ) -> None:
         """List M365 Workloads of this type."""
+        status_enums = parse_enum_list(
+            status, WORKLOAD_STATUS_ARGS, "status",
+            "queuing / backing_up / success / failed / partial / canceled / no_backups / deleting",
+        )
         async with apm_session(ctx) as apm:
             tid = await _resolve_tenant(apm, tenant_id)
             print_resolved_tenant(tenant_id, tid)
@@ -189,6 +202,7 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
                     lambda off, lim: apm.m365.workloads.list(
                         tid, workload_type=type_val, keyword=search,
                         namespace=namespace, is_retired=retired, plan=resolved_plans,
+                        status=status_enums,
                         limit=lim, offset=off,
                     ),
                     limit=limit, offset=offset, page_all=page_all, output=output,

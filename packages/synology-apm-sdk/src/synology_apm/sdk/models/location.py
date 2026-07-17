@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
+from ._shared import auto_to_dict
 
 
 @dataclass(frozen=True)
@@ -23,3 +26,7 @@ class LocationInfo:
     name: str
     endpoint: str
     vault: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self)

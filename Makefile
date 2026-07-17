@@ -1,15 +1,18 @@
-.PHONY: build whl test record-integration-cassettes smoke-test smoke-test-cli smoke-test-sdk docs clean build-macos build-windows help
+.PHONY: build whl test check-mcp-coverage record-integration-cassettes smoke-test smoke-test-cli smoke-test-sdk docs clean build-macos build-windows help
 .DEFAULT_GOAL := help
 
 help: ## List available targets
 	@grep -E '^[a-z0-9-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-28s %s\n", $$1, $$2}'
 
-test: ## Run the pre-commit checklist (unit + integration tests, lint, mypy, coverage, skills check)
-	uv run pytest tests/unit/ --cov=synology_apm.sdk --cov=synology_apm.cli --cov=examples --cov-report=term --cov-report=html -q
+test: ## Run the pre-commit checklist (unit + integration tests, lint, mypy, coverage, MCP coverage check)
+	uv run pytest tests/unit/ --cov=synology_apm.sdk --cov=synology_apm.cli --cov=synology_apm.mcp --cov=examples --cov-report=term --cov-report=html -q
 	uv run pytest tests/integration/ --record-mode=none --import-mode=importlib -q
-	uv run ruff check packages/synology-apm-sdk/src packages/synology-apm-cli/src tests examples scripts
+	uv run ruff check packages/synology-apm-sdk/src packages/synology-apm-cli/src packages/synology-apm-mcp/src tests examples scripts
 	uv run mypy
-	uv run python scripts/generate_skills.py --check
+	uv run python scripts/check_mcp_coverage.py
+
+check-mcp-coverage: ## Verify SDK ↔ MCP tool coverage (mcp_coverage.toml vs registered tools)
+	uv run python scripts/check_mcp_coverage.py
 
 record-integration-cassettes: ## Record missing integration cassettes against a real APM (needs .env)
 	uv run pytest tests/integration/ --record-mode=new_episodes --import-mode=importlib -v
@@ -26,17 +29,22 @@ build: test whl ## Run test, then build wheel + sdist → dist/
 
 whl: ## Build wheel + sdist → dist/ (skips test)
 	@echo "Cleaning old build artifacts..."
-	rm -rf dist/synology-apm-sdk dist/synology-apm-cli
+	rm -rf dist/synology-apm-sdk dist/synology-apm-cli dist/synology-apm-mcp
 	@echo "Building synology-apm-sdk..."
 	uv build --package synology-apm-sdk -o dist/synology-apm-sdk
 	@echo "Building synology-apm-cli..."
 	uv build --package synology-apm-cli -o dist/synology-apm-cli
+	@echo "Building synology-apm-mcp..."
+	uv build --package synology-apm-mcp -o dist/synology-apm-mcp
 	@echo ""
 	@echo "dist/synology-apm-sdk contents:"
 	@ls -1 dist/synology-apm-sdk
 	@echo ""
 	@echo "dist/synology-apm-cli contents:"
 	@ls -1 dist/synology-apm-cli
+	@echo ""
+	@echo "dist/synology-apm-mcp contents:"
+	@ls -1 dist/synology-apm-mcp
 
 docs: ## Build Sphinx API docs → docs/_build/html
 	$(MAKE) -C docs html

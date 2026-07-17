@@ -499,7 +499,7 @@ async def test_m365_get_by_name_with_is_retired_true_sends_archive_plan_type() -
 
     with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
-        await collection.get_by_name(WORKLOAD_UID, TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=True)
+        await collection.get_by_name("Alice", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=True)
 
     body = mock_post.call_args[1]["json"]
     assert body["filter"]["planType"] == "ARCHIVE"
@@ -514,7 +514,7 @@ async def test_m365_get_by_name_with_is_retired_false_sends_backup_plan_type() -
 
     with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
-        await collection.get_by_name(WORKLOAD_UID, TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=False)
+        await collection.get_by_name("Alice", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=False)
 
     body = mock_post.call_args[1]["json"]
     assert body["filter"]["planType"] == "BACKUP"
