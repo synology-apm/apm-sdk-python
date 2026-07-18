@@ -1,4 +1,4 @@
-"""synology-apm log — server-scoped log commands."""
+"""synology-apm-cli log — server-scoped log commands."""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
@@ -158,7 +158,7 @@ async def _run_log_list(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# synology-apm log activity list
+# synology-apm-cli log activity list
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @_activity_app.command("list")
@@ -168,7 +168,7 @@ async def activity_list(
     name: str | None = typer.Argument(None, help="Server name keyword (search mode)"),
     server_id: str | None = typer.Option(
         None, "--id",
-        help="Backup Server ID (direct mode; from synology-apm infra server list --verbose)",
+        help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)",
     ),
     level: list[LogLevel] | None = typer.Option(
         None, "--level",
@@ -190,11 +190,11 @@ async def activity_list(
 
     \b
     Search mode (server name keyword):
-      synology-apm log activity list "apm-server-01"
+      synology-apm-cli log activity list "apm-server-01"
 
     \b
-    Direct mode (server ID from synology-apm infra server list --verbose):
-      synology-apm log activity list --id <server-id>
+    Direct mode (server ID from synology-apm-cli infra server list --verbose):
+      synology-apm-cli log activity list --id <server-id>
     """
     def _row(e: APMActivityLog) -> list[str]:
         return [
@@ -227,7 +227,7 @@ async def activity_list(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# synology-apm log drive list
+# synology-apm-cli log drive list
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @_drive_app.command("list")
@@ -237,7 +237,7 @@ async def drive_list(
     name: str | None = typer.Argument(None, help="Server name keyword (search mode)"),
     server_id: str | None = typer.Option(
         None, "--id",
-        help="Backup Server ID (direct mode; from synology-apm infra server list --verbose)",
+        help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)",
     ),
     level: list[LogLevel] | None = typer.Option(
         None, "--level",
@@ -256,11 +256,11 @@ async def drive_list(
 
     \b
     Search mode (server name keyword):
-      synology-apm log drive list "apm-server-01"
+      synology-apm-cli log drive list "apm-server-01"
 
     \b
-    Direct mode (server ID from synology-apm infra server list --verbose):
-      synology-apm log drive list --id <server-id>
+    Direct mode (server ID from synology-apm-cli infra server list --verbose):
+      synology-apm-cli log drive list --id <server-id>
     """
     def _row(e: DriveLog) -> list[str]:
         return [
@@ -297,7 +297,7 @@ async def drive_list(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# synology-apm log connection list
+# synology-apm-cli log connection list
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @_conn_app.command("list")
@@ -307,7 +307,7 @@ async def connection_list(
     name: str | None = typer.Argument(None, help="Server name keyword (search mode)"),
     server_id: str | None = typer.Option(
         None, "--id",
-        help="Backup Server ID (direct mode; from synology-apm infra server list --verbose)",
+        help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)",
     ),
     level: list[LogLevel] | None = typer.Option(
         None, "--level",
@@ -325,11 +325,11 @@ async def connection_list(
 
     \b
     Search mode (server name keyword):
-      synology-apm log connection list "apm-server-01"
+      synology-apm-cli log connection list "apm-server-01"
 
     \b
-    Direct mode (server ID from synology-apm infra server list --verbose):
-      synology-apm log connection list --id <server-id>
+    Direct mode (server ID from synology-apm-cli infra server list --verbose):
+      synology-apm-cli log connection list --id <server-id>
     """
     await _run_log_list(
         ctx, name=name, server_id=server_id, since=since, until=until,
@@ -347,7 +347,7 @@ async def connection_list(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# synology-apm log system list
+# synology-apm-cli log system list
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @_system_app.command("list")
@@ -357,7 +357,7 @@ async def system_list(
     name: str | None = typer.Argument(None, help="Server name keyword (search mode)"),
     server_id: str | None = typer.Option(
         None, "--id",
-        help="Backup Server ID (direct mode; from synology-apm infra server list --verbose)",
+        help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)",
     ),
     level: list[LogLevel] | None = typer.Option(
         None, "--level",
@@ -375,11 +375,11 @@ async def system_list(
 
     \b
     Search mode (server name keyword):
-      synology-apm log system list "apm-server-01"
+      synology-apm-cli log system list "apm-server-01"
 
     \b
-    Direct mode (server ID from synology-apm infra server list --verbose):
-      synology-apm log system list --id <server-id>
+    Direct mode (server ID from synology-apm-cli infra server list --verbose):
+      synology-apm-cli log system list --id <server-id>
     """
     await _run_log_list(
         ctx, name=name, server_id=server_id, since=since, until=until,

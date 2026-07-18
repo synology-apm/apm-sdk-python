@@ -766,7 +766,7 @@ def test_main_entry_point_invokes_app() -> None:
 
     from synology_apm.cli.main import main
 
-    with patch("sys.argv", ["synology-apm", "--help"]):
+    with patch("sys.argv", ["synology-apm-cli", "--help"]):
         with pytest.raises(SystemExit) as exc_info:
             main()
 

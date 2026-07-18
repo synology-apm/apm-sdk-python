@@ -32,7 +32,7 @@ fi
 SDK_WHEEL_DIR="$(dirname "$(dirname "$WHEEL")")/synology-apm-sdk"
 
 ARCH="$(uname -m)"
-APP_NAME="synology-apm-${VERSION}-macos-${ARCH}"
+APP_NAME="synology-apm-cli-${VERSION}-macos-${ARCH}"
 APP_DIR="${DIST_DIR}/${APP_NAME}"
 ZIP_PATH="${DIST_DIR}/${APP_NAME}.zip"
 SPEC_FILE="${APP_NAME}.spec"

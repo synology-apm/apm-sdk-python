@@ -50,7 +50,7 @@ from synology_apm.sdk import (
 
 _TENANT_ID_OPTION = typer.Option(
     None, "--tenant-id", "-t",
-    help="Tenant ID (from synology-apm saas list; omit to auto-use the first M365 tenant)",
+    help="Tenant ID (from synology-apm-cli saas list; omit to auto-use the first M365 tenant)",
 )
 
 _RETIRED_OPTION = typer.Option(False, "--retired", help="Search in retired workloads (search mode)")
@@ -319,14 +319,14 @@ async def _download_with_progress(apm: APMClient, url: str, dest_path: str) -> N
 
 
 def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
-    """Build the 'synology-apm m365 (exchange|group) export' sub-app (list / cancel / download).
+    """Build the 'synology-apm-cli m365 (exchange|group) export' sub-app (list / cancel / download).
 
     download auto-starts a new export when --id is omitted, or downloads an
     existing export when --id is provided.
     """
     is_group = type_name == "group"
     mailbox_label = "group mailbox" if is_group else "mailbox"
-    cmd_prefix = f"synology-apm m365 {type_name} export"
+    cmd_prefix = f"synology-apm-cli m365 {type_name} export"
     export_app = typer.Typer(
         help="Export Group mailbox to PST." if is_group else "Export Exchange mailbox to PST.",
         no_args_is_help=True,

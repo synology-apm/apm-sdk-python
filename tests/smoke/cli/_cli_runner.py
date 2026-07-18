@@ -1,4 +1,4 @@
-"""Subprocess wrapper that drives the real ``synology-apm`` CLI binary against a live APM.
+"""Subprocess wrapper that drives the real ``synology-apm-cli`` CLI binary against a live APM.
 
 Credentials are read from ``.env`` (same convention as ``tests/integration/conftest.py``)
 and passed to the subprocess via environment variables, never via ``--password`` on argv.
@@ -21,7 +21,7 @@ _DEFAULT_TIMEOUT = 120.0
 
 @dataclass
 class CliResult:
-    """Result of one ``synology-apm`` invocation."""
+    """Result of one ``synology-apm-cli`` invocation."""
 
     args: list[str]
     exit_code: int
@@ -67,7 +67,7 @@ def _default_repo_root() -> Path:
 
 
 class CliRunner:
-    """Runs ``synology-apm`` as a subprocess and captures its output + ``--debug`` trace."""
+    """Runs ``synology-apm-cli`` as a subprocess and captures its output + ``--debug`` trace."""
 
     def __init__(self, cli_env: CliEnv, *, repo_root: Path | None = None) -> None:
         self._cli_env = cli_env
@@ -82,12 +82,12 @@ class CliRunner:
         stdin: str | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
     ) -> CliResult:
-        """Run ``synology-apm --no-input --debug <args> [-o <output_format>]``.
+        """Run ``synology-apm-cli --no-input --debug <args> [-o <output_format>]``.
 
         Credentials are injected via environment variables; ``env_overrides`` is applied
         on top (e.g. to sandbox ``HOME`` for ``config`` commands).
         """
-        full_args = ["uv", "run", "synology-apm", "--no-input", "--debug", *args]
+        full_args = ["uv", "run", "synology-apm-cli", "--no-input", "--debug", *args]
         if output_format is not None:
             full_args += ["-o", output_format]
 

@@ -1,4 +1,4 @@
-"""synology-apm machine — device Workload management commands.
+"""synology-apm-cli machine — device Workload management commands.
 
 get / backup / cancel / retire / change-plan / version list / version get / version lock /
 version unlock support two modes:
@@ -83,7 +83,7 @@ app.add_typer(version_app, name="version")
 
 
 
-# ── synology-apm machine list --type [pc|ps|vm|fs] ───────────────────────────────────────
+# ── synology-apm-cli machine list --type [pc|ps|vm|fs] ───────────────────────────────────────
 
 @app.command("list")
 @run_async
@@ -98,12 +98,12 @@ async def machine_list(
         None, "--namespace", "-n",
         help=(
             "Show only workloads on the specified backup server "
-            "(get namespace from synology-apm infra server list --verbose)"
+            "(get namespace from synology-apm-cli infra server list --verbose)"
         ),
     ),
     hypervisor: str | None = typer.Option(
         None, "--hypervisor",
-        help="Filter VM workloads by Hypervisor ID (get ID from synology-apm infra hypervisor list --verbose)",
+        help="Filter VM workloads by Hypervisor ID (get ID from synology-apm-cli infra hypervisor list --verbose)",
     ),
     plan: list[str] | None = typer.Option(
         None, "--plan",
@@ -136,15 +136,15 @@ async def machine_list(
 
     \b
     Examples:
-      synology-apm machine list                          # list all protected workloads
-      synology-apm machine list --type vm                # list protected VMs only
-      synology-apm machine list --type vm --type fs      # list VMs and File Servers
-      synology-apm machine list --type ps --retired
-      synology-apm machine list --search corp-pc
-      synology-apm machine list --namespace <ns>
-      synology-apm machine list --plan "Daily Backup"
-      synology-apm machine list --status failed --status partial
-      synology-apm machine list --verify-status not_enabled
+      synology-apm-cli machine list                          # list all protected workloads
+      synology-apm-cli machine list --type vm                # list protected VMs only
+      synology-apm-cli machine list --type vm --type fs      # list VMs and File Servers
+      synology-apm-cli machine list --type ps --retired
+      synology-apm-cli machine list --search corp-pc
+      synology-apm-cli machine list --namespace <ns>
+      synology-apm-cli machine list --plan "Daily Backup"
+      synology-apm-cli machine list --status failed --status partial
+      synology-apm-cli machine list --verify-status not_enabled
     """
     workload_types: list[MachineWorkloadType] | None = None
     if type_filter:
@@ -212,7 +212,7 @@ async def _do_list(
     print_list_footer(console, len(workloads), total, offset)
 
 
-# ── synology-apm machine get ───────────────────────────────────────────────────────
+# ── synology-apm-cli machine get ───────────────────────────────────────────────────────
 
 @app.command("get")
 @run_async
@@ -229,12 +229,12 @@ async def machine_get(
 
     \b
     Search mode (name lookup; searches protected workloads by default):
-      synology-apm machine get "CORP-PC-001"
-      synology-apm machine get "CORP-PC-001" --retired
+      synology-apm-cli machine get "CORP-PC-001"
+      synology-apm-cli machine get "CORP-PC-001" --retired
 
     \b
     Direct mode:
-      synology-apm machine get --id <id> --namespace <ns>
+      synology-apm-cli machine get --id <id> --namespace <ns>
     """
     ref = validate_resolve_args(ctx, name, workload_id, namespace)
     async with apm_session(ctx) as apm:
@@ -245,7 +245,7 @@ async def machine_get(
     _print_workload_detail(wl)
 
 
-# ── synology-apm machine backup ────────────────────────────────────────────────────
+# ── synology-apm-cli machine backup ────────────────────────────────────────────────────
 
 @app.command("backup")
 @run_async
@@ -260,11 +260,11 @@ async def machine_backup(
 
     \b
     Search mode (name lookup):
-      synology-apm machine backup "CORP-PC-001"
+      synology-apm-cli machine backup "CORP-PC-001"
 
     \b
     Direct mode:
-      synology-apm machine backup --id <id> --namespace <ns>
+      synology-apm-cli machine backup --id <id> --namespace <ns>
     """
     ref = validate_resolve_args(ctx, name, workload_id, namespace)
     async with apm_session(ctx) as apm:
@@ -275,7 +275,7 @@ async def machine_backup(
         )
 
 
-# ── synology-apm machine cancel ────────────────────────────────────────────────────
+# ── synology-apm-cli machine cancel ────────────────────────────────────────────────────
 
 @app.command("cancel")
 @run_async
@@ -291,11 +291,11 @@ async def machine_cancel(
 
     \b
     Search mode (name lookup):
-      synology-apm machine cancel "CORP-PC-001"
+      synology-apm-cli machine cancel "CORP-PC-001"
 
     \b
     Direct mode:
-      synology-apm machine cancel --id <id> --namespace <ns>
+      synology-apm-cli machine cancel --id <id> --namespace <ns>
     """
     ref = validate_resolve_args(ctx, name, workload_id, namespace)
     async with apm_session(ctx, abortable=True) as apm:
@@ -308,7 +308,7 @@ async def machine_cancel(
         )
 
 
-# ── synology-apm machine retire ────────────────────────────────────────────────────
+# ── synology-apm-cli machine retire ────────────────────────────────────────────────────
 
 @app.command("retire")
 @run_async
@@ -327,11 +327,11 @@ async def machine_retire(
 
     \b
     Search mode (name lookup):
-      synology-apm machine retire "CORP-PC-001" --plan "Compliance Retention"
+      synology-apm-cli machine retire "CORP-PC-001" --plan "Compliance Retention"
 
     \b
     Direct mode:
-      synology-apm machine retire --id <id> --namespace <ns> --plan <plan-id>
+      synology-apm-cli machine retire --id <id> --namespace <ns> --plan <plan-id>
     """
     ref = validate_resolve_args(ctx, name, workload_id, namespace)
     plan = require_or_help(ctx, plan)
@@ -350,7 +350,7 @@ async def machine_retire(
         )
 
 
-# ── synology-apm machine change-plan ───────────────────────────────────────────────
+# ── synology-apm-cli machine change-plan ───────────────────────────────────────────────
 
 @app.command("change-plan")
 @run_async
@@ -377,12 +377,12 @@ async def machine_change_plan(
 
     \b
     Search mode (name lookup):
-      synology-apm machine change-plan "CORP-PC-001" --plan "Daily Backup"
-      synology-apm machine change-plan "CORP-PC-001" --retired --plan "Compliance Retention"
+      synology-apm-cli machine change-plan "CORP-PC-001" --plan "Daily Backup"
+      synology-apm-cli machine change-plan "CORP-PC-001" --retired --plan "Compliance Retention"
 
     \b
     Direct mode:
-      synology-apm machine change-plan --id <id> --namespace <ns> --plan <plan-id>
+      synology-apm-cli machine change-plan --id <id> --namespace <ns> --plan <plan-id>
     """
     ref = validate_resolve_args(ctx, name, workload_id, namespace)
     plan = require_or_help(ctx, plan)
@@ -398,7 +398,7 @@ async def machine_change_plan(
         )
 
 
-# ── synology-apm machine version list / get ────────────────────────────────────────
+# ── synology-apm-cli machine version list / get ────────────────────────────────────────
 
 @version_app.command("list")
 @run_async
@@ -420,12 +420,12 @@ async def machine_version_list(
 
     \b
     Search mode (name lookup; searches protected workloads by default):
-      synology-apm machine version list "CORP-PC-001"
-      synology-apm machine version list "CORP-PC-001" --retired
+      synology-apm-cli machine version list "CORP-PC-001"
+      synology-apm-cli machine version list "CORP-PC-001" --retired
 
     \b
     Direct mode:
-      synology-apm machine version list --id <id> --namespace <ns>
+      synology-apm-cli machine version list --id <id> --namespace <ns>
     """
     ref = validate_resolve_args(ctx, name, workload_id, namespace)
     since_dt, until_dt = parse_time_range(since, until)
@@ -464,14 +464,14 @@ async def machine_version_get(
 
     \b
     Search mode (by workload name; searches protected workloads by default):
-      synology-apm machine version get "CORP-PC-001"               (latest version)
-      synology-apm machine version get "CORP-PC-001" --id <ver-id>
-      synology-apm machine version get "CORP-PC-001" --id <ver-id> --retired
+      synology-apm-cli machine version get "CORP-PC-001"               (latest version)
+      synology-apm-cli machine version get "CORP-PC-001" --id <ver-id>
+      synology-apm-cli machine version get "CORP-PC-001" --id <ver-id> --retired
 
     \b
     Direct mode (Workload ID + Namespace):
-      synology-apm machine version get --workload-id <wl-id> --namespace <ns>
-      synology-apm machine version get --workload-id <wl-id> --namespace <ns> --id <ver-id>
+      synology-apm-cli machine version get --workload-id <wl-id> --namespace <ns>
+      synology-apm-cli machine version get --workload-id <wl-id> --namespace <ns> --id <ver-id>
     """
     ref = validate_version_workload_args(ctx, name, workload_id, namespace)
 
@@ -492,7 +492,7 @@ async def machine_version_get(
     print_version_detail(console, v, act)
 
 
-# ── synology-apm machine version lock / unlock ─────────────────────────────────────
+# ── synology-apm-cli machine version lock / unlock ─────────────────────────────────────
 
 
 async def _exec_version_lock(
@@ -527,11 +527,11 @@ async def machine_version_lock(
 
     \b
     Search mode:
-      synology-apm machine version lock "CORP-PC-001" --id <ver-id>
+      synology-apm-cli machine version lock "CORP-PC-001" --id <ver-id>
 
     \b
     Direct mode:
-      synology-apm machine version lock --workload-id <wl-id> --namespace <ns> --id <ver-id>
+      synology-apm-cli machine version lock --workload-id <wl-id> --namespace <ns> --id <ver-id>
     """
     ref, version_id = validate_version_lock_args(ctx, name, workload_id, namespace, version_id)
     await _exec_version_lock(ctx, ref, retired, version_id, lock=True)
@@ -554,11 +554,11 @@ async def machine_version_unlock(
 
     \b
     Search mode:
-      synology-apm machine version unlock "CORP-PC-001" --id <ver-id>
+      synology-apm-cli machine version unlock "CORP-PC-001" --id <ver-id>
 
     \b
     Direct mode:
-      synology-apm machine version unlock --workload-id <wl-id> --namespace <ns> --id <ver-id>
+      synology-apm-cli machine version unlock --workload-id <wl-id> --namespace <ns> --id <ver-id>
     """
     ref, version_id = validate_version_lock_args(ctx, name, workload_id, namespace, version_id)
     await _exec_version_lock(ctx, ref, retired, version_id, lock=False)

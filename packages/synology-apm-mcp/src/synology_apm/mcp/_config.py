@@ -9,14 +9,20 @@ from __future__ import annotations
 
 import os
 
-from synology_apm.mcp._errors import startup_error
-from synology_apm.sdk import KeyringUnavailableError, resolve_connection
+from synology_apm.mcp._errors import log_error, startup_error
+from synology_apm.sdk import AuthenticationError, KeyringUnavailableError, resolve_connection
 
 _VALID_MODES = {"readonly", "operator", "manager", "admin"}
 
 
-def _resolve_mode() -> str:
-    """Return APM_MCP_MODE (default "operator"), or exit if it's not a recognized mode."""
+def resolve_mode() -> str:
+    """Return APM_MCP_MODE (default "operator"), or exit if it's not a recognized mode.
+
+    Resolved independently of load_credentials(): an unrecognized mode is a deployment
+    misconfiguration, not a "no usable credentials" condition, and there is no sensible
+    tool set to register without knowing which mode was intended, so it still exits
+    (sys.exit(1)) rather than degrading gracefully.
+    """
     mode = os.environ.get("APM_MCP_MODE", "operator").strip()
     if mode not in _VALID_MODES:
         startup_error(
@@ -26,15 +32,19 @@ def _resolve_mode() -> str:
     return mode
 
 
-def load_credentials() -> tuple[str, str, str, bool, str]:
-    """Return (host, username, password, verify_ssl, mode).
+def load_credentials() -> tuple[str, str, str, bool]:
+    """Return (host, username, password, verify_ssl).
 
-    Calls startup_error() (sys.exit(1)) if required credentials are missing,
-    the profile's keyring-stored password cannot be read, or APM_MCP_MODE is
-    unrecognized.
+    Raises:
+        AuthenticationError: No usable connection settings could be resolved -- missing
+            host/username, missing password, or the profile's keyring-stored password
+            could not be read. The message is also printed to stderr here, so a manually-
+            launched server still surfaces it immediately. The caller (see __main__.py)
+            catches this and starts the server without attempting a real connection (see
+            _server.py's build_lifespan()), so every tool call returns this same error as
+            a structured JSON response instead of the process exiting before any MCP
+            session exists.
     """
-    mode = _resolve_mode()
-
     try:
         resolved = resolve_connection(
             host=os.environ.get("APM_HOST") or None,
@@ -43,16 +53,23 @@ def load_credentials() -> tuple[str, str, str, bool, str]:
             profile=os.environ.get("APM_PROFILE") or None,
         )
     except KeyringUnavailableError as exc:
-        startup_error(f"{exc} Set APM_PASSWORD instead, or use a plaintext-stored profile.")
+        msg = (
+            f"{exc} Set APM_PASSWORD instead, or run `synology-apm-cli config set "
+            "--save-password plaintext`."
+        )
+        log_error(msg)
+        raise AuthenticationError(msg) from exc
 
     if not resolved.host or not resolved.username:
-        startup_error(
-            "Missing credentials. Set APM_HOST, APM_USERNAME, APM_PASSWORD env vars, "
-            "or create ~/.config/synology-apm/config.toml."
+        msg = (
+            "Missing credentials. Run `synology-apm-cli config set` to configure a profile, "
+            "or set APM_HOST, APM_USERNAME, APM_PASSWORD env vars directly."
         )
+        log_error(msg)
+        raise AuthenticationError(msg)
     if not resolved.password:
-        startup_error(
-            "No password found. Set APM_PASSWORD or configure password_storage in the config file."
-        )
+        msg = "No password found. Run `synology-apm-cli config set` to store one, or set APM_PASSWORD directly."
+        log_error(msg)
+        raise AuthenticationError(msg)
 
-    return resolved.host, resolved.username, resolved.password, not resolved.no_verify_ssl, mode
+    return resolved.host, resolved.username, resolved.password, not resolved.no_verify_ssl

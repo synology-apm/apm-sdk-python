@@ -415,7 +415,7 @@ pricing_plans:
 # Either membership list may be omitted. Groups may overlap: a server/plan
 # listed in several groups puts its workloads in each of those groups.
 # Find plan IDs: python billing_report.py -o json (the plan_id field in plans).
-# Find backup server IDs: synology-apm infra server list --verbose, or
+# Find backup server IDs: synology-apm-cli infra server list --verbose, or
 # BackupServer.backup_server_id from apm.backup_servers.list().
 groups:
   - name: Contoso

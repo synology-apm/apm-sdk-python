@@ -8,9 +8,9 @@
 
 - A disposable workload you are willing to permanently retire, for each scope you want to
   test (a Machine Workload, and/or one workload per M365 scope).
-- A valid Retirement Plan name or ID: `synology-apm plan retirement list --verbose` (the
+- A valid Retirement Plan name or ID: `synology-apm-cli plan retirement list --verbose` (the
   `name` or `plan_id` column).
-- For M365 scopes, optionally a tenant ID: `synology-apm saas list --verbose` (the
+- For M365 scopes, optionally a tenant ID: `synology-apm-cli saas list --verbose` (the
   `tenant_id` column). `--tenant-id` may be omitted if there is only one M365 tenant.
 
 ## What to verify for every invocation
@@ -27,16 +27,16 @@
 Search mode (name lookup):
 
 ```bash
-synology-apm machine retire "vm-web-01" --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli machine retire "vm-web-01" --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Direct mode (ID + namespace, from `synology-apm machine list --verbose`):
+Direct mode (ID + namespace, from `synology-apm-cli machine list --verbose`):
 
 ```bash
-synology-apm machine retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli machine retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Verify: `synology-apm machine list --retired -o json` includes the workload with
+Verify: `synology-apm-cli machine list --retired -o json` includes the workload with
 `"is_retired": true`.
 
 ## 2. M365 Exchange mailbox
@@ -44,16 +44,16 @@ Verify: `synology-apm machine list --retired -o json` includes the workload with
 Search mode (UPN):
 
 ```bash
-synology-apm m365 exchange retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 exchange retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
 Direct mode:
 
 ```bash
-synology-apm m365 exchange retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 exchange retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Verify: `synology-apm m365 exchange list --retired -o json` includes the workload with
+Verify: `synology-apm-cli m365 exchange list --retired -o json` includes the workload with
 `"is_retired": true`.
 
 ## 3. M365 OneDrive
@@ -61,16 +61,16 @@ Verify: `synology-apm m365 exchange list --retired -o json` includes the workloa
 Search mode (UPN):
 
 ```bash
-synology-apm m365 onedrive retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 onedrive retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
 Direct mode:
 
 ```bash
-synology-apm m365 onedrive retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 onedrive retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Verify: `synology-apm m365 onedrive list --retired -o json` includes the workload with
+Verify: `synology-apm-cli m365 onedrive list --retired -o json` includes the workload with
 `"is_retired": true`.
 
 ## 4. M365 Teams chat (user)
@@ -78,16 +78,16 @@ Verify: `synology-apm m365 onedrive list --retired -o json` includes the workloa
 Search mode (UPN):
 
 ```bash
-synology-apm m365 chat retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 chat retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
 Direct mode:
 
 ```bash
-synology-apm m365 chat retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 chat retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Verify: `synology-apm m365 chat list --retired -o json` includes the workload with
+Verify: `synology-apm-cli m365 chat list --retired -o json` includes the workload with
 `"is_retired": true`.
 
 ## 5. M365 group / shared mailbox
@@ -95,16 +95,16 @@ Verify: `synology-apm m365 chat list --retired -o json` includes the workload wi
 Search mode (group email):
 
 ```bash
-synology-apm m365 group retire "marketing@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 group retire "marketing@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
 Direct mode:
 
 ```bash
-synology-apm m365 group retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 group retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Verify: `synology-apm m365 group list --retired -o json` includes the workload with
+Verify: `synology-apm-cli m365 group list --retired -o json` includes the workload with
 `"is_retired": true`.
 
 ## 6. M365 SharePoint site
@@ -112,16 +112,16 @@ Verify: `synology-apm m365 group list --retired -o json` includes the workload w
 Search mode (site name):
 
 ```bash
-synology-apm m365 sharepoint retire "Marketing" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 sharepoint retire "Marketing" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
 Direct mode:
 
 ```bash
-synology-apm m365 sharepoint retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 sharepoint retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Verify: `synology-apm m365 sharepoint list --retired -o json` includes the workload with
+Verify: `synology-apm-cli m365 sharepoint list --retired -o json` includes the workload with
 `"is_retired": true`.
 
 ## 7. M365 Teams team
@@ -129,14 +129,14 @@ Verify: `synology-apm m365 sharepoint list --retired -o json` includes the workl
 Search mode (team name):
 
 ```bash
-synology-apm m365 teams retire "Engineering" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 teams retire "Engineering" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
 Direct mode:
 
 ```bash
-synology-apm m365 teams retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli m365 teams retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Verify: `synology-apm m365 teams list --retired -o json` includes the workload with
+Verify: `synology-apm-cli m365 teams list --retired -o json` includes the workload with
 `"is_retired": true`.

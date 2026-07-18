@@ -1,7 +1,7 @@
 # CLI Live Smoke-Test Tool — Maintainer Guide
 
 This is the design contract for the CLI live smoke-test tool: how it is structured, the
-conventions every phase follows, and how to extend it when `synology-apm` gains new commands
+conventions every phase follows, and how to extend it when `synology-apm-cli` gains new commands
 or options. Read this before adding to or modifying anything under this directory.
 
 ---
@@ -12,7 +12,7 @@ or options. Read this before adding to or modifying anything under this director
 |---|---|---|---|
 | `tests/unit/` | In-process Typer `CliRunner` (mocked SDK) | fixtures | yes |
 | `tests/integration/` | SDK methods directly (`apm.machine.workloads.list()`) | `tests/cassettes/` | yes (replay) |
-| **This tool** | The real `synology-apm` binary, via subprocess | live, `.env`-configured APM | no |
+| **This tool** | The real `synology-apm-cli` binary, via subprocess | live, `.env`-configured APM | no |
 
 Neither `tests/unit/` nor `tests/integration/` exercises the actual CLI binary's argv
 parsing, `table`/`json` rendering, or exit codes against a live server. This tool fills that
@@ -77,7 +77,7 @@ through these methods:
 
 - **`ctx.run(domain, step, args, *, output_format=None, expect_codes=(0,), env_overrides=None,
   stdin=None, timeout=None, note="") -> CliResult`**
-  Runs `uv run synology-apm --no-input --debug <args> [-o <output_format>]` as a subprocess,
+  Runs `uv run synology-apm-cli --no-input --debug <args> [-o <output_format>]` as a subprocess,
   records every captured API call to `reports/api_trace.jsonl`, and updates
   `ctx.stats[domain]`. A `### <step>` section is written to `reports/<domain>.md` only when
   the run captured API calls or the exit code was unexpected; the PASSED/FAILED result and
@@ -252,7 +252,7 @@ Each run creates `reports/<UTC timestamp>/`:
 - **`api_trace.jsonl`** — one JSON object per API call captured via `--debug`, in the order
   issued:
   ```json
-  {"step": "machine.list[all][json]", "command": ["uv","run","synology-apm",...],
+  {"step": "machine.list[all][json]", "command": ["uv","run","synology-apm-cli",...],
    "output_format": "json", "seq": 1, "method": "GET", "url": "...",
    "headers": {...}, "params": {...}, "body": null, "status": 200,
    "duration": 0.42, "response": {...}}

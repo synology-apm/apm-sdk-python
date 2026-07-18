@@ -1,4 +1,4 @@
-"""synology-apm plan — Protection Plan and Retirement Plan management commands."""
+"""synology-apm-cli plan — Protection Plan and Retirement Plan management commands."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -75,7 +75,7 @@ _CATEGORY_MAP = {"machine": WorkloadCategory.MACHINE, "m365": WorkloadCategory.M
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# synology-apm plan protection
+# synology-apm-cli plan protection
 # ═══════════════════════════════════════════════════════════════════════════
 
 @_protection_app.command("list")
@@ -96,10 +96,10 @@ async def protection_list(
 
     \b
     Examples:
-      synology-apm plan protection list                   # list all (machine + m365)
-      synology-apm plan protection list --category machine  # Machine Plans only
-      synology-apm plan protection list --category m365     # M365 Plans only
-      synology-apm plan protection list -v                # show Description column
+      synology-apm-cli plan protection list                   # list all (machine + m365)
+      synology-apm-cli plan protection list --category machine  # Machine Plans only
+      synology-apm-cli plan protection list --category m365     # M365 Plans only
+      synology-apm-cli plan protection list -v                # show Description column
     """
     if category is not None and category.lower() not in _CATEGORY_MAP:
         err_console.print(f"[red]✗[/red] Invalid category: {category!r} (expected: machine / m365)")
@@ -137,8 +137,8 @@ async def protection_get(
 
     \b
     Examples:
-      synology-apm plan protection get "Daily Backup"                           # name search
-      synology-apm plan protection get --id 0c8f033b-fb57-4f46-9a9d-85e9d21c08ab  # exact lookup
+      synology-apm-cli plan protection get "Daily Backup"                           # name search
+      synology-apm-cli plan protection get --id 0c8f033b-fb57-4f46-9a9d-85e9d21c08ab  # exact lookup
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:
@@ -195,7 +195,7 @@ async def protection_get(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# synology-apm plan retirement
+# synology-apm-cli plan retirement
 # ═══════════════════════════════════════════════════════════════════════════
 
 @_retirement_app.command("list")
@@ -237,8 +237,8 @@ async def retirement_get(
 
     \b
     Examples:
-      synology-apm plan retirement get "Compliance Retention"                 # name search
-      synology-apm plan retirement get --id cc39711f-deb9-40fa-b6c4-27ca82958d3c  # exact lookup
+      synology-apm-cli plan retirement get "Compliance Retention"                 # name search
+      synology-apm-cli plan retirement get --id cc39711f-deb9-40fa-b6c4-27ca82958d3c  # exact lookup
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:
@@ -264,7 +264,7 @@ async def retirement_get(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# synology-apm plan tiering
+# synology-apm-cli plan tiering
 # ═══════════════════════════════════════════════════════════════════════════
 
 @_tiering_app.command("list")
@@ -306,8 +306,8 @@ async def tiering_get(
 
     \b
     Examples:
-      synology-apm plan tiering get "My Tiering Plan"                          # name search
-      synology-apm plan tiering get --id f56f8969-a831-47a6-9de0-279696dafea6  # exact lookup
+      synology-apm-cli plan tiering get "My Tiering Plan"                          # name search
+      synology-apm-cli plan tiering get --id f56f8969-a831-47a6-9de0-279696dafea6  # exact lookup
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:

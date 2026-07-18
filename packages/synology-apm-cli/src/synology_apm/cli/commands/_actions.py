@@ -40,7 +40,7 @@ async def _do_backup(
     if not quiet:
         console.print("[green]✓[/green] Backup triggered.")
         console.print(f"  Workload: {wl.name}")
-        console.print("\n  Use `synology-apm activity backup list` to check progress.")
+        console.print("\n  Use `synology-apm-cli activity backup list` to check progress.")
 
 
 async def _do_cancel(

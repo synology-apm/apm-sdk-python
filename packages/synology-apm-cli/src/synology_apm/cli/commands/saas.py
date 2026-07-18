@@ -1,4 +1,4 @@
-"""synology-apm saas — SaaS tenant (Cloud Application) management commands."""
+"""synology-apm-cli saas — SaaS tenant (Cloud Application) management commands."""
 from __future__ import annotations
 
 import typer
@@ -21,7 +21,7 @@ app = typer.Typer(
 )
 
 
-# ── synology-apm saas list ─────────────────────────────────────────────────────────
+# ── synology-apm-cli saas list ─────────────────────────────────────────────────────────
 
 @app.command("list")
 @run_async

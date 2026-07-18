@@ -1,4 +1,4 @@
-"""synology-apm activity — backup and restore activity record query commands."""
+"""synology-apm-cli activity — backup and restore activity record query commands."""
 from __future__ import annotations
 
 import typer
@@ -92,7 +92,7 @@ _M365_TYPE_MAP: dict[str, M365WorkloadType] = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# synology-apm activity backup
+# synology-apm-cli activity backup
 # ═══════════════════════════════════════════════════════════════════════════
 
 @_backup_app.command("list")
@@ -116,7 +116,7 @@ async def backup_list(
         None, "--namespace", "-n",
         help=(
             "Repeatable. Show only activities on the specified backup server(s) "
-            "(get namespace from synology-apm infra server list --verbose)"
+            "(get namespace from synology-apm-cli infra server list --verbose)"
         ),
     ),
     since: str | None = SINCE_OPTION,
@@ -210,9 +210,9 @@ async def backup_get(
 
     \b
     Search mode (by workload name, returns the latest):
-      synology-apm activity backup get <WORKLOAD_NAME>
+      synology-apm-cli activity backup get <WORKLOAD_NAME>
     Direct mode (by Activity ID):
-      synology-apm activity backup get --id <activity-id>
+      synology-apm-cli activity backup get --id <activity-id>
     """
     validate_activity_args(ctx, name, activity_id)
     async with apm_session(ctx) as apm:
@@ -258,7 +258,9 @@ async def backup_get(
 @run_async
 async def backup_cancel(
     ctx: typer.Context,
-    activity_id: str | None = typer.Option(None, "--id", help="Activity ID (from synology-apm activity backup list)"),
+    activity_id: str | None = typer.Option(
+        None, "--id", help="Activity ID (from synology-apm-cli activity backup list)"
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
 ) -> None:
@@ -266,7 +268,7 @@ async def backup_cancel(
 
     \b
     Example:
-      synology-apm activity backup cancel --id <activity-id>
+      synology-apm-cli activity backup cancel --id <activity-id>
     """
     activity_id = require_or_help(ctx, activity_id)
     async with apm_session(ctx, abortable=True) as apm:
@@ -274,7 +276,7 @@ async def backup_cancel(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# synology-apm activity restore
+# synology-apm-cli activity restore
 # ═══════════════════════════════════════════════════════════════════════════
 
 @_restore_app.command("list")
@@ -374,9 +376,9 @@ async def restore_get(
 
     \b
     Search mode (by workload name, returns the latest):
-      synology-apm activity restore get <WORKLOAD_NAME>
+      synology-apm-cli activity restore get <WORKLOAD_NAME>
     Direct mode (by Activity ID):
-      synology-apm activity restore get --id <activity-id>
+      synology-apm-cli activity restore get --id <activity-id>
     """
     validate_activity_args(ctx, name, activity_id)
     async with apm_session(ctx) as apm:
@@ -431,7 +433,9 @@ async def restore_get(
 @run_async
 async def restore_cancel(
     ctx: typer.Context,
-    activity_id: str | None = typer.Option(None, "--id", help="Activity ID (from synology-apm activity restore list)"),
+    activity_id: str | None = typer.Option(
+        None, "--id", help="Activity ID (from synology-apm-cli activity restore list)"
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
 ) -> None:
@@ -439,7 +443,7 @@ async def restore_cancel(
 
     \b
     Example:
-      synology-apm activity restore cancel --id <activity-id>
+      synology-apm-cli activity restore cancel --id <activity-id>
     """
     activity_id = require_or_help(ctx, activity_id)
 

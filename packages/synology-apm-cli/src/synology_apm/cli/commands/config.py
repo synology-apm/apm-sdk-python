@@ -1,4 +1,4 @@
-"""synology-apm config — configuration management commands."""
+"""synology-apm-cli config — configuration management commands."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -116,9 +116,9 @@ def config_set(
 
     \b
     Multi-profile examples:
-      synology-apm config set --profile lab
-      synology-apm config set --host apm.corp.com --username admin --profile prod
-      synology-apm config set --save-password keyring --profile prod
+      synology-apm-cli config set --profile lab
+      synology-apm-cli config set --host apm.corp.com --username admin --profile prod
+      synology-apm-cli config set --save-password keyring --profile prod
     """
     no_input: bool = (ctx.obj or {}).get("no_input", False)
     cfg = load_config()

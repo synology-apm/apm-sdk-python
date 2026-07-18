@@ -43,7 +43,7 @@ try {
         default { $Arch = $env:PROCESSOR_ARCHITECTURE.ToLower() }
     }
 
-    $APP_NAME = "synology-apm-$Version-windows-$Arch"
+    $APP_NAME = "synology-apm-cli-$Version-windows-$Arch"
     $APP_DIR = Join-Path $DIST_DIR $APP_NAME
     $ZIP_PATH = Join-Path $DIST_DIR "$APP_NAME.zip"
     $script:SPEC_FILE = "$APP_NAME.spec"

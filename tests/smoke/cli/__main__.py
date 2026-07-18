@@ -1,6 +1,6 @@
 """Entry point: ``uv run python -m tests.smoke.cli [options]``.
 
-Drives the real ``synology-apm`` CLI against the ``.env``-configured live APM, running each
+Drives the real ``synology-apm-cli`` CLI against the ``.env``-configured live APM, running each
 phase in dependency order and writing Markdown reports + ``api_trace.jsonl`` to
 ``tests/smoke/cli/reports/<UTC timestamp>/``.
 """
@@ -36,7 +36,7 @@ _PHASES = {
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = build_argparser(
         prog="python -m tests.smoke.cli",
-        description="Run the synology-apm CLI live smoke test against the .env-configured APM.",
+        description="Run the synology-apm-cli CLI live smoke test against the .env-configured APM.",
         group_choices=("all", "saas", *_ORDER),
         default_scopes=M365_SCOPES,
     )

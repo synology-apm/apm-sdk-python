@@ -84,7 +84,7 @@ def handle_apm_error(exc: APMError) -> NoReturn:
             "For self-signed certificates, add the --no-verify-ssl flag "
             "or choose to skip SSL verification when running config set.",
         )
-    if "cannot connect" in msg.lower() or "connect" in msg.lower() or "connection" in msg.lower():
+    if "connect" in msg.lower():
         _exit(EXIT_CONNECT, msg)
 
     _exit(EXIT_ERROR, f"API error: {msg}")
@@ -139,7 +139,7 @@ def missing_config_hint() -> NoReturn:
     err_console.print("[red]✗[/red] Connection settings not configured")
     err_console.print()
     err_console.print("  Run first:")
-    err_console.print("    synology-apm config set --host <APM_HOST> --username <USER>")
+    err_console.print("    synology-apm-cli config set --host <APM_HOST> --username <USER>")
     err_console.print()
     err_console.print("  Or set environment variables:")
     err_console.print("    export APM_HOST=apm.corp.com")

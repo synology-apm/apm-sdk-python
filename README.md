@@ -9,7 +9,7 @@
 Python SDK, command-line tool, and MCP server for [Synology ActiveProtect Manager (APM)](https://www.synology.com/products/ActiveProtectAppliance).
 
 - **synology-apm-sdk** (`synology_apm.sdk`) — async-native, fully typed Python interface to the APM REST API.
-- **synology-apm-cli** (`synology_apm.cli`) — a CLI front-end, built on `synology-apm-sdk`, for operating APM from the terminal (`synology-apm` command).
+- **synology-apm-cli** (`synology_apm.cli`) — a CLI front-end, built on `synology-apm-sdk`, for operating APM from the terminal (`synology-apm-cli` command).
 - **synology-apm-mcp** (`synology_apm.mcp`) — an MCP server, built on `synology-apm-sdk`, exposing APM operations as tools for AI agents (Claude Desktop, ChatGPT Desktop, and other MCP-compatible clients).
 
 This page is a starting point. For product background, usage guides, and command references, see [Documentation](#documentation) below.
@@ -72,7 +72,7 @@ Then open `docs/_build/html/index.html` in your browser.
 
 ```bash
 pip install synology-apm-sdk   # library only
-pip install synology-apm-cli   # CLI (depends on synology-apm-sdk), provides the `synology-apm` command
+pip install synology-apm-cli   # CLI (depends on synology-apm-sdk), provides the `synology-apm-cli` command
 ```
 
 ### Option B — Install from source (development)
@@ -87,7 +87,7 @@ cd apm-sdk-python
 uv sync
 
 # Run the CLI
-uv run synology-apm config set --host apm.corp.com --username admin
+uv run synology-apm-cli config set --host apm.corp.com --username admin
 ```
 
 ### Option C — Build and install wheels
@@ -101,7 +101,7 @@ pip install dist/synology-apm-cli/synology_apm_cli-<version>-py3-none-any.whl
 
 Replace `<version>` with the actual version number in the filenames (e.g. `0.1.0`).
 
-All three options install the `synology_apm.sdk` package and, when `synology-apm-cli` is installed, the `synology-apm` command (defined in `packages/synology-apm-cli/pyproject.toml` → `[project.scripts]`).
+All three options install the `synology_apm.sdk` package and, when `synology-apm-cli` is installed, the `synology-apm-cli` command (defined in `packages/synology-apm-cli/pyproject.toml` → `[project.scripts]`).
 
 `make whl` also builds `dist/synology-apm-mcp/*.whl`. The recommended way to run the MCP server is `uvx synology-apm-mcp` or the Claude/ChatGPT Desktop plugin (see [AI agent integration](#ai-agent-integration) below) rather than a manual `pip install`, but `pip install dist/synology-apm-mcp/synology_apm_mcp-<version>-py3-none-any.whl` also works if you want the `synology-apm-mcp` command directly.
 
@@ -120,8 +120,8 @@ See [`packages/synology-apm-mcp/README.md`](packages/synology-apm-mcp/README.md)
 ### CLI
 
 ```bash
-synology-apm config set --host apm.corp.com --username admin
-synology-apm infra info
+synology-apm-cli config set --host apm.corp.com --username admin
+synology-apm-cli infra info
 ```
 
 See [`packages/synology-apm-cli/README.md`](packages/synology-apm-cli/README.md) for authentication options, output formats, and the full command reference.

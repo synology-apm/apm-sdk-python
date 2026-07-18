@@ -96,7 +96,7 @@ jobs:
           .venv-smoke-cli/bin/pip install --quiet \
             dist/synology-apm-sdk/*.whl dist/synology-apm-cli/*.whl
           .venv-smoke-cli/bin/python -c "import synology_apm.sdk, synology_apm.cli"
-          .venv-smoke-cli/bin/synology-apm --help
+          .venv-smoke-cli/bin/synology-apm-cli --help
 
       - name: Install wheels and smoke-run the MCP server
         run: |

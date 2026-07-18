@@ -10,7 +10,28 @@ from fastmcp import FastMCP
 from synology_apm.mcp import resources
 from synology_apm.mcp._registrar import ToolRegistrar
 from synology_apm.mcp.tools import activity, infra, log, m365, machine, plans
-from synology_apm.sdk import APMClient
+from synology_apm.sdk import APMClient, APMError
+
+
+class _FailedConnectionClient:
+    """Placeholder for ctx.lifespan_context["apm"] when the initial APM connection failed.
+
+    Every attribute access returns itself, and calling it returns a coroutine that raises
+    the original connect exception when awaited. Every tool/resource body does
+    `apm.<collection>.<method>(...)` unchanged, so this lets the existing
+    run_tool/run_resource/run_audited_tool/destructive_tool error-handling wrappers
+    convert the connection failure into a structured JSON error, instead of the whole
+    server process crashing before any MCP session is established.
+    """
+
+    def __init__(self, exc: APMError) -> None:
+        self._exc = exc
+
+    def __getattr__(self, _name: str) -> _FailedConnectionClient:
+        return self
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        raise self._exc
 
 
 def _register_tools(registrar: ToolRegistrar) -> None:
@@ -51,6 +72,31 @@ def tool_required_modes() -> dict[str, str]:
     return dict(registrar.required_modes)
 
 
+def build_lifespan(
+    host: str, username: str, password: str, *, verify_ssl: bool, debug: bool, config_error: APMError | None = None
+) -> Callable[[FastMCP], Any]:
+    """Build the lifespan callable used by run(): a persistent APMClient connection, or --
+    if config_error is already known (no usable credentials were found, so a real connect
+    would only fail) or the initial connect fails (bad credentials, unreachable host, SSL
+    error, or the host is not the primary APM management server) -- a placeholder that turns
+    every subsequent tool/resource call into a structured JSON error instead of crashing the
+    server at startup.
+    """
+
+    @asynccontextmanager
+    async def lifespan(server: FastMCP):
+        if config_error is not None:
+            yield {"apm": _FailedConnectionClient(config_error)}
+            return
+        try:
+            async with APMClient(host, username, password, verify_ssl=verify_ssl, debug=debug) as apm:
+                yield {"apm": apm}
+        except APMError as exc:
+            yield {"apm": _FailedConnectionClient(exc)}
+
+    return lifespan
+
+
 def run(  # pragma: no cover
     host: str,
     username: str,
@@ -59,13 +105,11 @@ def run(  # pragma: no cover
     verify_ssl: bool,
     debug: bool,
     mode: str,
+    config_error: APMError | None = None,
 ) -> None:
     """Create a server with a persistent APMClient lifespan and run it (stdio transport)."""
-
-    @asynccontextmanager
-    async def lifespan(server: FastMCP):
-        async with APMClient(host, username, password, verify_ssl=verify_ssl, debug=debug) as apm:
-            yield {"apm": apm}
-
+    lifespan = build_lifespan(
+        host, username, password, verify_ssl=verify_ssl, debug=debug, config_error=config_error
+    )
     server = create_server(mode, lifespan=lifespan)
     server.run()

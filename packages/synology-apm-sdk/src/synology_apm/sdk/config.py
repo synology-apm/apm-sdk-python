@@ -5,7 +5,7 @@ connection settings from the same profile store and keyring entries.
 
 Priority (high → low):
   1. Caller-supplied values (CLI options / explicit arguments)
-  2. Environment variables (APM_HOST, APM_USERNAME, APM_PASSWORD, APM_PROFILE, APM_NO_VERIFY_SSL)
+  2. Environment variables (APM_PROFILE, APM_HOST, APM_USERNAME, APM_PASSWORD, APM_NO_VERIFY_SSL)
   3. Config file ($XDG_CONFIG_HOME/synology-apm/config.toml, default ~/.config/synology-apm/config.toml)
 """
 from __future__ import annotations
@@ -278,12 +278,11 @@ def resolve_connection(
     if not effective_password and file_profile.password_storage == PasswordStorage.KEYRING:
         effective_password = _get_keyring_password(effective_profile, file_profile.username) or ""
 
-    # no_verify_ssl: caller-supplied True > environment variable > config file
-    if no_verify_ssl:
-        effective_no_verify = True
-    elif os.environ.get("APM_NO_VERIFY_SSL", "").strip().lower() in ("1", "true", "yes"):
-        effective_no_verify = True
-    else:
-        effective_no_verify = file_profile.no_verify_ssl
+    env_no_verify = os.environ.get("APM_NO_VERIFY_SSL", "").strip()
+    effective_no_verify = (
+        no_verify_ssl if no_verify_ssl is not None else
+        env_no_verify.lower() in ("1", "true", "yes") if env_no_verify else
+        file_profile.no_verify_ssl
+    )
 
     return ResolvedConnection(effective_host, effective_username, effective_password, effective_no_verify)

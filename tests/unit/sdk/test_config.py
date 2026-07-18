@@ -483,9 +483,7 @@ def test_resolve_no_verify_ssl_from_env(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 def test_resolve_no_verify_ssl_from_env_with_whitespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A trailing space (common from copy-pasted .env values) must not silently
-    disable the flag and fall back to verifying SSL. no_verify_ssl=False is passed
-    explicitly (not omitted) to match the CLI's real call site (cli/_helpers.py),
-    which always passes a concrete bool, never None, when --no-verify-ssl isn't given."""
+    disable the flag and fall back to verifying SSL."""
     _clean_env(monkeypatch)
     monkeypatch.setenv("APM_NO_VERIFY_SSL", "true ")
     cfg_file = tmp_path / "config.toml"
@@ -493,7 +491,60 @@ def test_resolve_no_verify_ssl_from_env_with_whitespace(monkeypatch: pytest.Monk
         patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
         patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
     ):
+        resolved = resolve_connection()
+    assert resolved.no_verify_ssl is True
+
+
+def test_resolve_no_verify_ssl_cli_false_overrides_file_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Caller-supplied no_verify_ssl=False must force verification back on even when the
+    config file profile has it enabled -- the same "explicit value always wins" cascade
+    as host/username/password, not a one-directional "only ever turn it on" override."""
+    _clean_env(monkeypatch)
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", no_verify_ssl=True))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
         resolved = resolve_connection(no_verify_ssl=False)
+    assert resolved.no_verify_ssl is False
+
+
+def test_resolve_no_verify_ssl_env_false_overrides_file_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """APM_NO_VERIFY_SSL=false must force verification back on even when the config file
+    profile has it enabled, mirroring how APM_HOST/APM_USERNAME/APM_PASSWORD override the
+    file regardless of direction."""
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("APM_NO_VERIFY_SSL", "false")
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", no_verify_ssl=True))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        resolved = resolve_connection()
+    assert resolved.no_verify_ssl is False
+
+
+def test_resolve_no_verify_ssl_empty_env_falls_back_to_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An empty (but set) APM_NO_VERIFY_SSL must be treated as absent, not as an explicit
+    false, falling through to the file profile -- matching how an empty APM_HOST/etc. is
+    treated as absent rather than an explicit empty value."""
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("APM_NO_VERIFY_SSL", "")
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", no_verify_ssl=True))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        resolved = resolve_connection()
     assert resolved.no_verify_ssl is True
 
 

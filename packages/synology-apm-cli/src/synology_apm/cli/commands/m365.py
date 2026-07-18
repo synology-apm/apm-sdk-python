@@ -1,7 +1,7 @@
-"""synology-apm m365 — Microsoft 365 backup resource management commands.
+"""synology-apm-cli m365 — Microsoft 365 backup resource management commands.
 
 Command structure:
-  synology-apm m365 (exchange|onedrive|chat|group|sharepoint|teams)
+  synology-apm-cli m365 (exchange|onedrive|chat|group|sharepoint|teams)
     list/get/backup/cancel/retire/change-plan/version (all types)
     export list/cancel/download (exchange and group only)
 
@@ -165,7 +165,7 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
             None, "--namespace", "-n",
             help=(
                 "Show only workloads on the specified backup server "
-                "(get namespace from synology-apm infra server list --verbose)"
+                "(get namespace from synology-apm-cli infra server list --verbose)"
             ),
         ),
         plan: list[str] | None = typer.Option(
@@ -228,10 +228,10 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     @type_app.command("get", help=(
         f"Show details for an M365 Workload.\n\n"
         f"\b\nSearch mode (searches protected workloads by default):\n"
-        f"  synology-apm m365 {type_name} get {example}\n"
-        f"  synology-apm m365 {type_name} get {example} --retired\n\n"
+        f"  synology-apm-cli m365 {type_name} get {example}\n"
+        f"  synology-apm-cli m365 {type_name} get {example} --retired\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm m365 {type_name} get --id <uid> --namespace <ns>"
+        f"  synology-apm-cli m365 {type_name} get --id <uid> --namespace <ns>"
     ))
     @run_async
     async def _get(
@@ -258,9 +258,9 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     @type_app.command("backup", help=(
         f"Trigger an on-demand backup for an M365 Workload.\n\n"
         f"\b\nSearch mode:\n"
-        f"  synology-apm m365 {type_name} backup {example}\n\n"
+        f"  synology-apm-cli m365 {type_name} backup {example}\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm m365 {type_name} backup --id <uid> --namespace <ns>"
+        f"  synology-apm-cli m365 {type_name} backup --id <uid> --namespace <ns>"
     ))
     @run_async
     async def _backup(
@@ -284,9 +284,9 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     @type_app.command("cancel", help=(
         f"Cancel the running backup for an M365 Workload.\n\n"
         f"\b\nSearch mode:\n"
-        f"  synology-apm m365 {type_name} cancel {example}\n\n"
+        f"  synology-apm-cli m365 {type_name} cancel {example}\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm m365 {type_name} cancel --id <uid> --namespace <ns>"
+        f"  synology-apm-cli m365 {type_name} cancel --id <uid> --namespace <ns>"
     ))
     @run_async
     async def _cancel(
@@ -313,9 +313,9 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     @type_app.command("retire", help=(
         f"Retire an M365 Workload (irreversible; requires confirmation).\n\n"
         f"\b\nSearch mode:\n"
-        f"  synology-apm m365 {type_name} retire {example} --plan \"Compliance Retention\"\n\n"
+        f"  synology-apm-cli m365 {type_name} retire {example} --plan \"Compliance Retention\"\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm m365 {type_name} retire --id <uid> --namespace <ns> --plan <plan-id>"
+        f"  synology-apm-cli m365 {type_name} retire --id <uid> --namespace <ns> --plan <plan-id>"
     ))
     @run_async
     async def _retire(
@@ -360,10 +360,10 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         "state: a Protection Plan for an active workload, a Retirement Plan for an "
         "already-retired one.\n\n"
         f"\b\nSearch mode:\n"
-        f"  synology-apm m365 {type_name} change-plan {example} --plan \"Daily Backup\"\n"
-        f"  synology-apm m365 {type_name} change-plan {example} --retired --plan \"Compliance Retention\"\n\n"
+        f"  synology-apm-cli m365 {type_name} change-plan {example} --plan \"Daily Backup\"\n"
+        f"  synology-apm-cli m365 {type_name} change-plan {example} --retired --plan \"Compliance Retention\"\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm m365 {type_name} change-plan --id <uid> --namespace <ns> --plan <plan-id>"
+        f"  synology-apm-cli m365 {type_name} change-plan --id <uid> --namespace <ns> --plan <plan-id>"
     ))
     @run_async
     async def _change_plan(
@@ -404,10 +404,10 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     @version_app.command("list", help=(
         f"List backup version history for an M365 Workload.\n\n"
         f"\b\nSearch mode:\n"
-        f"  synology-apm m365 {type_name} version list {example}\n"
-        f"  synology-apm m365 {type_name} version list {example} --retired\n\n"
+        f"  synology-apm-cli m365 {type_name} version list {example}\n"
+        f"  synology-apm-cli m365 {type_name} version list {example} --retired\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm m365 {type_name} version list --id <workload-id> --namespace <ns>"
+        f"  synology-apm-cli m365 {type_name} version list --id <workload-id> --namespace <ns>"
     ))
     @run_async
     async def _version_list(
@@ -447,12 +447,12 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     @version_app.command("get", help=(
         f"Show activity details and logs for a backup version (omit --id to get the latest).\n\n"
         f"\b\nSearch mode (by workload name; omit --id for latest):\n"
-        f"  synology-apm m365 {type_name} version get {example}\n"
-        f"  synology-apm m365 {type_name} version get {example} --id <version-id>\n"
-        f"  synology-apm m365 {type_name} version get {example} --id <version-id> --retired\n\n"
+        f"  synology-apm-cli m365 {type_name} version get {example}\n"
+        f"  synology-apm-cli m365 {type_name} version get {example} --id <version-id>\n"
+        f"  synology-apm-cli m365 {type_name} version get {example} --id <version-id> --retired\n\n"
         f"\b\nDirect mode (--tenant-id not required; omit --id for latest):\n"
-        f"  synology-apm m365 {type_name} version get --workload-id <wl-id> --namespace <ns>\n"
-        f"  synology-apm m365 {type_name} version get --workload-id <wl-id> --namespace <ns> --id <version-id>"
+        f"  synology-apm-cli m365 {type_name} version get --workload-id <wl-id> --namespace <ns>\n"
+        f"  synology-apm-cli m365 {type_name} version get --workload-id <wl-id> --namespace <ns> --id <version-id>"
     ))
     @run_async
     async def _version_get(
@@ -504,9 +504,9 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     @version_app.command("lock", help=(
         f"Lock a backup version to prevent deletion by retention rules.\n\n"
         f"\b\nSearch mode:\n"
-        f"  synology-apm m365 {type_name} version lock {example} --id <ver-id>\n\n"
+        f"  synology-apm-cli m365 {type_name} version lock {example} --id <ver-id>\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm m365 {type_name} version lock --workload-id <wl-id> --namespace <ns> --id <ver-id>"
+        f"  synology-apm-cli m365 {type_name} version lock --workload-id <wl-id> --namespace <ns> --id <ver-id>"
     ))
     @run_async
     async def _version_lock(
@@ -527,9 +527,9 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     @version_app.command("unlock", help=(
         f"Unlock a backup version, allowing retention rules to delete it.\n\n"
         f"\b\nSearch mode:\n"
-        f"  synology-apm m365 {type_name} version unlock {example} --id <ver-id>\n\n"
+        f"  synology-apm-cli m365 {type_name} version unlock {example} --id <ver-id>\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm m365 {type_name} version unlock --workload-id <wl-id> --namespace <ns> --id <ver-id>"
+        f"  synology-apm-cli m365 {type_name} version unlock --workload-id <wl-id> --namespace <ns> --id <ver-id>"
     ))
     @run_async
     async def _version_unlock(

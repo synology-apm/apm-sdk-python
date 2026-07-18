@@ -19,7 +19,7 @@ This project develops a Python SDK and CLI tool for **Synology ActiveProtect Man
 |----------|-------------|----------|
 | `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` | **SDK design contract**: enum ↔ API string mappings, non-obvious collection behavior rules, type system notes. Full public API signatures/docstrings live in source code (→ Sphinx). | required |
 | `packages/synology-apm-cli/src/synology_apm/cli/README.md` | **CLI command spec**: command structure, output format, color/status rules, SDK call mapping. Full CLI → SDK mapping table lives at the end of the file. | implementation reference for CLI |
-| `packages/synology-apm-mcp/README.md` | **MCP server usage**: installation, client config (Claude Desktop/Code), environment variables, operation modes. See "Three-Layer Responsibility Separation" below for how MCP fits the SDK/CLI layering. | implementation reference for MCP |
+| `packages/synology-apm-mcp/src/synology_apm/mcp/README.md` | **MCP design contract**: tool/resource registration conventions, mode gating, destructive-action preview/confirm pattern, audit logging, the SDK ↔ MCP coverage manifest, testing conventions. | implementation reference for MCP |
 | `APM_PRODUCT_OVERVIEW.md` | APM product domain knowledge — backup/recovery model, workload categories, key concepts (not the SDK itself — see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` for design rationale and interface) | background reference |
 
 New details belong in the closest document, not here: implementation rationale goes in
@@ -140,17 +140,21 @@ itself.
 > reference raw API details in code/comments where needed for implementation clarity. The
 > package design-contract READMEs
 > (`packages/synology-apm-sdk/src/synology_apm/sdk/README.md`,
-> `packages/synology-apm-cli/src/synology_apm/cli/README.md`) are also exempt — their "Enum
-> Definitions and API String Mapping", "Collection Behavior Rules", and "CLI → SDK Mapping
-> Table" sections exist specifically to document these mappings for maintainers.
+> `packages/synology-apm-cli/src/synology_apm/cli/README.md`,
+> `packages/synology-apm-mcp/src/synology_apm/mcp/README.md`) are also exempt — their "Enum
+> Definitions and API String Mapping", "Collection Behavior Rules", "CLI → SDK Mapping
+> Table", and "SDK ↔ MCP Coverage Manifest" sections exist specifically to document these
+> mappings for maintainers.
 
 ### Implementation Conventions
 
 - The CLI interacts with APM only through the SDK (never raw HTTP); its command structure, output formats, and exit codes are specified in `packages/synology-apm-cli/src/synology_apm/cli/README.md` — command additions/removals must be reflected there (see Post-change Checklist).
+- The MCP server interacts with APM only through the SDK (never raw HTTP); its tool/resource registration conventions, mode gating, and the SDK ↔ MCP coverage manifest are specified in `packages/synology-apm-mcp/src/synology_apm/mcp/README.md` — tool additions/removals must be reflected there and in `scripts/mcp_coverage.toml` (see Post-change Checklist).
 - SDK-level conventions (code style, `__all__` exports, field-name mapping, `APMClient` constructor, domain separation between `apm.machine` / `apm.m365`) live in `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` → "Design Conventions".
 - CLI-level conventions (error handling, output dispatch, workload resolution, argument validation, serialization) live in `packages/synology-apm-cli/src/synology_apm/cli/README.md` → "Development Conventions".
+- MCP-level conventions (tool naming, mode gating, destructive preview/confirm, audit logging, list result shape) live in `packages/synology-apm-mcp/src/synology_apm/mcp/README.md` → "Tool and Resource Conventions"; error dict shape and other cross-tool patterns live in that README's "Shared Code Patterns".
 
-Both READMEs are part of the design contract — read them before implementing, not just when something breaks.
+All three READMEs are part of the design contract — read them before implementing, not just when something breaks.
 
 ---
 
@@ -191,7 +195,7 @@ Tests must verify **observable behavior**, not internal implementation. The rule
 | Error handling | Provide an error response; assert the exception type and attributes (e.g. `.resource_id`) |
 | Observable side effects | e.g. verify the logout endpoint was called after disconnect: `assert ("GET", URL(logout_url)) in m.requests` |
 
-Do not test: `_private` **symbols** (leading-underscore functions, constants, attributes), internal call counts or arguments between methods of the same object, or private state fields. This applies to both the SDK and the CLI.
+Do not test: `_private` **symbols** (leading-underscore functions, constants, attributes), internal call counts or arguments between methods of the same object, or private state fields. This applies to the SDK, the CLI, and the MCP server.
 
 > **Note:** isinstance-only assertions are acceptable solely for facade property wiring tests
 > (e.g. asserting `client.machine` returns `MachineCollection`) — there the returned collection
@@ -202,7 +206,24 @@ Do not test: `_private` **symbols** (leading-underscore functions, constants, at
 > exception's fields is tautological and not required — the `assert_resource_error` rule below
 > applies to exceptions raised by SDK code paths, not to pass-through fakes.
 
-> **Note:** A leading underscore on a *module* (e.g. `cli/_display.py`, `cli/_serializers.py`, `cli/_validate.py`) marks it as not-for-end-users, not as untestable — the **public-named** functions inside these shared CLI modules (`fmt_*`, `*_to_dict` / `*_to_csv_row`, validators) are the CLI's internal contract and should have direct unit tests (`tests/unit/cli/test_display.py`, `test_serializers.py`, `test_arg_validation.py`). The `_`-prefixed display dicts themselves are tested only two ways: through their public `fmt_*` wrapper, and via set-equality enum-exhaustiveness checks in `test_display.py`.
+> **Note:** A leading underscore on a *module* (e.g. `cli/_display.py`, `cli/_serializers.py`, `cli/_validate.py`; or, for MCP, `mcp/_helpers.py`, `mcp/_security.py`, `mcp/_errors.py`, `mcp/_registrar.py`) marks it as not-for-end-users, not as untestable — the **public-named** functions inside these shared modules (`fmt_*`, `*_to_dict` / `*_to_csv_row`, validators for the CLI; `list_result`/`get_tool`/`run_tool`/`sdk_error_to_dict`/`mode_allows`/`destructive_tool`/etc. for MCP) are that layer's internal contract and should have direct unit tests (`tests/unit/cli/test_display.py`, `test_serializers.py`, `test_arg_validation.py`; `tests/unit/mcp/test_helpers.py`, `test_security.py`, `test_errors.py`, `test_registrar.py`). The `_`-prefixed display dicts themselves are tested only two ways: through their public `fmt_*` wrapper, and via set-equality enum-exhaustiveness checks in `test_display.py`.
+
+### Testing purpose by layer
+
+Each layer verifies a different contract, and must not re-verify a layer beneath it:
+
+- **SDK tests** verify the REST request/response contract itself — this is the primary subject
+  of the table above (request shape, response field parsing, error mapping, observable side
+  effects). This is the foundation layer and already has the fullest coverage in the codebase.
+- **CLI tests** verify only that the command *wires into* the SDK correctly (right method,
+  right arguments) and *presents/dispatches* the result correctly (exit code, output format) —
+  see "CLI test layering" below. They must not re-assert SDK-level behavior (request bodies,
+  field parsing) already covered by SDK tests.
+- **MCP tests** verify the same wiring contract as CLI (right SDK method, right arguments), plus
+  the tool's JSON result shape, mode gating, and the destructive preview/confirm contract — see
+  "MCP test layering" below. They must not re-assert SDK-level behavior, and must not assert
+  FastMCP's own dispatch/validation machinery (that's the library's own test suite, not this
+  project's).
 
 ### CLI test layering
 
@@ -210,6 +231,21 @@ CLI tests split responsibilities across two layers — do not duplicate one laye
 
 - **Command-level tests** (`tests/unit/cli/commands/`, via `invoke_cli` + a mocked APM client) verify that the command is wired to the SDK correctly: the right SDK method is called with the right arguments, exit codes are correct, and output dispatch/confirmation flow behaves as specified.
 - **Shared-module tests** (`test_display.py`, `test_serializers.py`, `test_arg_validation.py`) verify display formatting and dict serialization field contracts directly. Command-level tests should not re-assert per-field formatting/serialization details that a shared-module test already covers.
+
+### MCP test layering
+
+MCP tool tests split responsibilities the same way — do not duplicate one layer's checks in the other:
+
+- **Tool-level tests** (`tests/unit/mcp/tools/`, via `call_tool()` + a mocked APM client) verify
+  that the tool is wired to the SDK correctly: the right SDK collection method is called with the
+  right resolved arguments, and the JSON result contains the right fields — not just that the call
+  succeeds.
+- **Shared-module tests** (`test_helpers.py`, `test_security.py`, `test_errors.py`,
+  `test_registrar.py`) verify pagination, error-dict, and mode-gating contracts directly.
+  Tool-level tests should not re-assert those shared-module contracts.
+- Shared machine/M365 tool logic (`register_workload_tools()`) is tested once in
+  `test_workload.py`, parametrized over `(kind, workload_factory, ...)` — do not hand-duplicate
+  the same assertions per category across `test_machine.py`/`test_m365.py`/`test_workload.py`.
 
 ### Output assertion conventions (CLI)
 
@@ -297,15 +333,25 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 
 | Scenario | Required action |
 |----------|----------------|
-| New SDK method added | Add a corresponding unit test in `tests/unit/sdk/collections/<module>.py` (or the relevant split file) |
+| New SDK method added | Add a corresponding unit test in `tests/unit/sdk/collections/<module>.py` (or the relevant split file); add exactly one entry (`[[mapping]]` or `[[not_exposed]]`) to `scripts/mcp_coverage.toml` — enforced by `make test` (see `packages/synology-apm-mcp/src/synology_apm/mcp/README.md` "SDK ↔ MCP Coverage Manifest") |
 | New SDK enum, model, or collection class added | Add it to `packages/synology-apm-sdk/src/synology_apm/sdk/__init__.py` and `__all__`; run `grep -r "from synology_apm\.sdk\." packages/synology-apm-cli/src examples/` and confirm no output |
-| CLI command path changed (e.g. `synology-apm infra backup-server` → `synology-apm infra server`) | Update all test `runner.invoke(app, [...])` paths |
+| New CLI command added | Add a command-level unit test in `tests/unit/cli/commands/` per "CLI test layering" — assert SDK wiring (method + arguments), exit code, and output dispatch, not just that the command runs |
+| CLI command path changed (e.g. `synology-apm-cli infra backup-server` → `synology-apm-cli infra server`) | Update all test `runner.invoke(app, [...])` paths |
 | Command moved to a different module (e.g. `backup_server.py` → `infra.py`) | Update all `patch("synology_apm.cli.commands.<old_module>.get_client", ...)` to the new module path |
+| New MCP tool or resource added | Add a tool-level unit test in `tests/unit/mcp/tools/<module>.py` (or `tests/unit/mcp/` for a non-tool module) per "MCP test layering" — assert SDK wiring and the JSON result's fields, not just that the call succeeds; add/update its `[[mapping]]` entry in `scripts/mcp_coverage.toml` with the matching mode |
+| MCP tool renamed, removed, or its required mode changed | Update all `call_tool(server, "<tool_name>", ...)` call sites in `tests/unit/mcp/tools/`; update the corresponding `scripts/mcp_coverage.toml` entry (mode mismatches and unregistered/unmapped tools both fail `make test`) |
 | Dataclass field changed (added/deleted/renamed) | Update all tests that use that dataclass as a fixture |
 | Integration test renamed or removed | Local-only, no commit impact (`tests/cassettes/` is gitignored): delete the corresponding cassette from `tests/cassettes/`; use `--record-mode=all` to re-record if the underlying API response changed |
 | Major SDK refactor changes request/response format | Local-only, no commit impact: re-record your local cassettes: `pytest tests/integration/ --record-mode=all --import-mode=importlib` |
 
 **Run before every commit:** `make test` (unit + integration tests, lint, mypy, coverage, MCP coverage check — same gate as CI).
+
+> **Note:** The `fail_under = 95` floor (`pyproject.toml`) is a shared aggregate backstop across
+> SDK/CLI/MCP/examples, not a definition of "sufficiently tested" — a small new command/tool with
+> zero direct tests can still pass it if the rest of the codebase absorbs the drop. Meet this
+> section's per-layer assertion conventions first (SDK request/response contract; CLI/MCP wiring +
+> presentation contract); let the percentage rise as a byproduct of meaningful tests, never write
+> assertion-free tests solely to move the number.
 
 ### Documentation
 
@@ -319,6 +365,8 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 | New SDK public type added (class, enum, dataclass) | Source docstring (Attributes / class-level description); `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` only if the type has non-obvious behavior or mapping that cannot go in a docstring |
 | SDK-level convention changed (code style, `__all__` exports, field-name mapping, `APMClient` constructor, domain separation) | `packages/synology-apm-sdk/src/synology_apm/sdk/README.md`: Design Conventions section |
 | CLI command/option/flag/help text added, removed, or changed | No additional sync beyond the CLI README rows above |
+| MCP tool or resource added, removed, or its required mode changed | `scripts/mcp_coverage.toml` (see Tests table above); a new/removed source file is tracked separately (see the CLAUDE.md sync table below) |
+| MCP-level convention changed (tool naming, mode gating, destructive preview/confirm, audit logging, list result shape, error dict shape) | `packages/synology-apm-mcp/src/synology_apm/mcp/README.md`: Tool and Resource Conventions / Shared Code Patterns sections |
 | Any change | Run `make docs` and fix any warnings or errors before committing (`docs/api/` RST stubs are regenerated automatically via `sphinx-apidoc -f`, but `docs/index.rst` toctree entries must be added manually for new modules) |
 
 > **Note:** When adding/changing CLI commands or options, consider adding/updating the
@@ -340,13 +388,16 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 |--------|------------------|
 | CLI command path or usage changed | `packages/synology-apm-cli/README.md`: corresponding command example blocks |
 | SDK Quick Start or Developer Guide content is outdated | `packages/synology-apm-sdk/README.md` |
+| MCP installation, client config, environment variables, or operation modes changed | `packages/synology-apm-mcp/README.md` |
+| MCP tool/resource domain list changed (once feature is complete) | `packages/synology-apm-mcp/README.md`: "Available Tools" domain overview |
 
 ### CLAUDE.md
 
 | Change | Sync required |
 |--------|--------------|
-| New source file added, or existing source file renamed/moved/deleted under `packages/synology-apm-sdk/src/synology_apm/sdk/` or `packages/synology-apm-cli/src/synology_apm/cli/` | Update the package README instead: `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` Package Structure for SDK files; `packages/synology-apm-cli/src/synology_apm/cli/README.md` Package Structure for CLI files (test file additions do **not** require this update). Always add the file to the tree; add an inline comment only if it doesn't follow that directory's stated naming convention (see each README's Package Structure intro) — a multi-type file, private helper, or entry point still needs one, but a file matching the convention (e.g. `collections/<name>.py` → `<Noun>Collection`, `commands/<name>.py` → `synology-apm <name> ...`) does not |
+| New source file added, or existing source file renamed/moved/deleted under `packages/synology-apm-sdk/src/synology_apm/sdk/`, `packages/synology-apm-cli/src/synology_apm/cli/`, or `packages/synology-apm-mcp/src/synology_apm/mcp/` | Update the package README instead: `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` Package Structure for SDK files; `packages/synology-apm-cli/src/synology_apm/cli/README.md` Package Structure for CLI files; `packages/synology-apm-mcp/src/synology_apm/mcp/README.md` Package Structure for MCP files (test file additions do **not** require this update). Always add the file to the tree; add an inline comment only if it doesn't follow that directory's stated naming convention (see each README's Package Structure intro) — a multi-type file, private helper, or entry point still needs one, but a file matching the convention (e.g. `collections/<name>.py` → `<Noun>Collection`, `commands/<name>.py` → `synology-apm-cli <name> ...`, `tools/<domain>.py` → one `register(registrar)` entry point) does not |
 | New CLI command added (once feature is complete) | Add to the "CLI → SDK Mapping Table" in `packages/synology-apm-cli/src/synology_apm/cli/README.md`. (New SDK methods need no index update — see the Documentation table above) |
+| New MCP tool added (once feature is complete) | Add its `[[mapping]]` entry to `scripts/mcp_coverage.toml` (see the Tests table above) — this manifest is the MCP equivalent of the CLI → SDK Mapping Table; no separate CLAUDE.md index update needed |
 
 ---
 
@@ -414,7 +465,7 @@ make whl                               # wheel + sdist without running tests
 ## Common Tasks
 
 End-to-end recipes for the most frequent changes. Each step points at the detailed rules
-(Testing Standards, Post-change Checklist, the two design-contract READMEs) — follow those
+(Testing Standards, Post-change Checklist, the three design-contract READMEs) — follow those
 for the specifics; the recipe only fixes the order.
 
 ### Add an SDK collection method
@@ -435,6 +486,14 @@ for the specifics; the recipe only fixes the order.
 4. Update `packages/synology-apm-cli/README.md` example blocks if user-facing usage changed.
 5. Consider a matching invocation in `tests/smoke/cli/phases/_<domain>.py`.
 6. Run `make test`.
+
+### Add an MCP tool
+
+1. Implement it in the relevant `mcp/tools/<domain>.py` — SDK calls only, never raw HTTP (see the MCP README "Tool and Resource Conventions" for naming, mode gating, list result shape, and the destructive preview/confirm pattern).
+2. Add exactly one `[[mapping]]` entry to `scripts/mcp_coverage.toml` with the matching mode (`make test` fails until this is done).
+3. Add a tool-level unit test in `tests/unit/mcp/tools/` (SDK wiring, mode gating, JSON result shape).
+4. Update `packages/synology-apm-mcp/README.md`'s "Available Tools" domain overview if the change is user-visible.
+5. Run `make test`.
 
 ### Add an enum or model field
 

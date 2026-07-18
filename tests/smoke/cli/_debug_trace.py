@@ -1,4 +1,4 @@
-"""Parse `synology-apm --debug` stderr output into structured API call records.
+"""Parse `synology-apm-cli --debug` stderr output into structured API call records.
 
 See ``_http.py``'s ``_debug_print_request``/``_debug_print_response`` for the exact
 (ANSI-colored) format this module parses. Request and response blocks carry a shared

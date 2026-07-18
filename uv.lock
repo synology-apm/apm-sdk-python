@@ -2577,7 +2577,7 @@ wheels = [
 
 [[package]]
 name = "synology-apm-cli"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/synology-apm-cli" }
 dependencies = [
     { name = "rich" },
@@ -2594,7 +2594,7 @@ requires-dist = [
 
 [[package]]
 name = "synology-apm-mcp"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/synology-apm-mcp" }
 dependencies = [
     { name = "fastmcp" },
@@ -2609,7 +2609,7 @@ requires-dist = [
 
 [[package]]
 name = "synology-apm-sdk"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "packages/synology-apm-sdk" }
 dependencies = [
     { name = "aiohttp" },

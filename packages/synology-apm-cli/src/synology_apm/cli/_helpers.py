@@ -48,7 +48,7 @@ async def get_client(ctx: typer.Context) -> AsyncIterator[APMClient]:
             username=obj.get("username"),
             password=obj.get("password"),
             profile=obj.get("profile"),
-            no_verify_ssl=obj.get("no_verify_ssl", False),
+            no_verify_ssl=obj.get("no_verify_ssl"),
         )
         eff_host, eff_username, eff_password, eff_ssl = (
             resolved.host, resolved.username, resolved.password, resolved.no_verify_ssl

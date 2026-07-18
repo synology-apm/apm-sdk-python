@@ -1,4 +1,4 @@
-"""synology-apm infra — infrastructure information commands (Management Server + Backup Server)."""
+"""synology-apm-cli infra — infrastructure information commands (Management Server + Backup Server)."""
 from __future__ import annotations
 
 import typer
@@ -81,7 +81,7 @@ _WORKLOAD_STAT_ORDER = [
     WorkloadStatType.GWS,
 ]
 
-# ── synology-apm infra info ────────────────────────────────────────────────────────
+# ── synology-apm-cli infra info ────────────────────────────────────────────────────────
 
 @app.command("info")
 @run_async
@@ -174,7 +174,7 @@ async def infra_info(
     console.print(f"{'Total':<6}  {usage.total_count:>9}  {total_size_str:>14}")
 
 
-# ── synology-apm infra server list ─────────────────────────────────────────────────
+# ── synology-apm-cli infra server list ─────────────────────────────────────────────────
 
 @_server_app.command("list")
 @run_async
@@ -262,7 +262,7 @@ async def server_list(
     print_list_footer(console, len(servers), total, offset)
 
 
-# ── synology-apm infra server get ──────────────────────────────────────────────────
+# ── synology-apm-cli infra server get ──────────────────────────────────────────────────
 
 @_server_app.command("get")
 @run_async
@@ -270,7 +270,7 @@ async def server_get(
     ctx: typer.Context,
     name: str | None = typer.Argument(None, help="Server name keyword (search mode)"),
     server_id: str | None = typer.Option(
-        None, "--id", help="Backup Server ID (direct mode; from synology-apm infra server list --verbose)"
+        None, "--id", help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)"
     ),
     output: OutputFormat = OUTPUT_OPTION,
 ) -> None:
@@ -278,11 +278,11 @@ async def server_get(
 
     \b
     Search mode (name keyword):
-      synology-apm infra server get "apm-server-01"
+      synology-apm-cli infra server get "apm-server-01"
 
     \b
     Direct mode:
-      synology-apm infra server get --id <server-id>
+      synology-apm-cli infra server get --id <server-id>
     """
     validate_name_or_id_args(ctx, name, server_id, exclusive_msg="<name> cannot be used with --id")
     async with apm_session(ctx) as apm:
@@ -360,7 +360,7 @@ async def server_change_plan(
     ctx: typer.Context,
     name: str | None = typer.Argument(None, help="Server name keyword (search mode)"),
     server_id: str | None = typer.Option(
-        None, "--id", help="Backup Server ID (direct mode; from synology-apm infra server list --verbose)"
+        None, "--id", help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)"
     ),
     plan: str | None = typer.Option(None, "--plan", help="Tiering plan name or ID to apply"),
     remove: bool = typer.Option(False, "--remove", help="Remove the current tiering plan"),
@@ -371,15 +371,15 @@ async def server_change_plan(
 
     \b
     Apply a tiering plan (search mode):
-      synology-apm infra server change-plan "apm-server-01" --plan "30-Day Tiering"
+      synology-apm-cli infra server change-plan "apm-server-01" --plan "30-Day Tiering"
 
     \b
     Apply a tiering plan (direct mode):
-      synology-apm infra server change-plan --id <server-id> --plan <plan-id>
+      synology-apm-cli infra server change-plan --id <server-id> --plan <plan-id>
 
     \b
     Remove the current tiering plan:
-      synology-apm infra server change-plan "apm-server-01" --remove
+      synology-apm-cli infra server change-plan "apm-server-01" --remove
     """
     validate_name_or_id_args(ctx, name, server_id, exclusive_msg="<name> cannot be used with --id")
     if plan and remove:
@@ -421,7 +421,7 @@ async def server_change_plan(
 # ── Serialization helpers ─────────────────────────────────────────────────
 
 
-# ── synology-apm infra storage list ────────────────────────────────────────────────
+# ── synology-apm-cli infra storage list ────────────────────────────────────────────────
 
 @_remote_storage_app.command("list")
 @run_async
@@ -464,7 +464,7 @@ async def remote_storage_list(
     print_list_footer(console, len(remote_storages), total)
 
 
-# ── synology-apm infra storage get ─────────────────────────────────────────────────
+# ── synology-apm-cli infra storage get ─────────────────────────────────────────────────
 
 @_remote_storage_app.command("get")
 @run_async
@@ -472,7 +472,7 @@ async def remote_storage_get(
     ctx: typer.Context,
     name: str | None = typer.Argument(None, help="Remote Storage display name or endpoint (search mode)"),
     storage_id: str | None = typer.Option(
-        None, "--id", help="Remote Storage UUID (direct mode; from synology-apm infra storage list --verbose)"
+        None, "--id", help="Remote Storage UUID (direct mode; from synology-apm-cli infra storage list --verbose)"
     ),
     output: OutputFormat = OUTPUT_OPTION,
 ) -> None:
@@ -480,11 +480,11 @@ async def remote_storage_get(
 
     \b
     Search mode (name or endpoint):
-      synology-apm infra storage get "DSM-Storage"
+      synology-apm-cli infra storage get "DSM-Storage"
 
     \b
     Direct mode:
-      synology-apm infra storage get --id <storage-id>
+      synology-apm-cli infra storage get --id <storage-id>
     """
     validate_name_or_id_args(ctx, name, storage_id, exclusive_msg="<name> cannot be used with --id")
     async with apm_session(ctx) as apm:
@@ -515,7 +515,7 @@ async def remote_storage_get(
     console.print(f"  Remaining: {remaining}")
 
 
-# ── synology-apm infra hypervisor list ─────────────────────────────────────────────
+# ── synology-apm-cli infra hypervisor list ─────────────────────────────────────────────
 
 @_hypervisor_app.command("list")
 @run_async
@@ -553,7 +553,7 @@ async def hypervisor_list(
     print_list_footer(console, len(hypervisors), total)
 
 
-# ── synology-apm infra hypervisor get ──────────────────────────────────────────────
+# ── synology-apm-cli infra hypervisor get ──────────────────────────────────────────────
 
 @_hypervisor_app.command("get")
 @run_async
@@ -561,7 +561,7 @@ async def hypervisor_get(
     ctx: typer.Context,
     name: str | None = typer.Argument(None, help="Hypervisor hostname or address (search mode)"),
     hypervisor_id: str | None = typer.Option(
-        None, "--id", help="Hypervisor UUID (direct mode; from synology-apm infra hypervisor list --verbose)"
+        None, "--id", help="Hypervisor UUID (direct mode; from synology-apm-cli infra hypervisor list --verbose)"
     ),
     output: OutputFormat = OUTPUT_OPTION,
 ) -> None:
@@ -569,11 +569,11 @@ async def hypervisor_get(
 
     \b
     Search mode (hostname or address):
-      synology-apm infra hypervisor get "esxi1.example.com"
+      synology-apm-cli infra hypervisor get "esxi1.example.com"
 
     \b
     Direct mode:
-      synology-apm infra hypervisor get --id <hypervisor-id>
+      synology-apm-cli infra hypervisor get --id <hypervisor-id>
     """
     validate_name_or_id_args(ctx, name, hypervisor_id, exclusive_msg="<name> cannot be used with --id")
     async with apm_session(ctx) as apm:

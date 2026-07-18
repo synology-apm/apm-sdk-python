@@ -12,7 +12,7 @@ collections or methods. Read this before adding to or modifying anything under t
 |---|---|---|---|
 | `tests/unit/` | SDK methods directly, mocked HTTP (`aioresponses`/`patch`) | fixtures | yes |
 | `tests/integration/` | SDK methods directly (`apm.machine.workloads.list()`) | `tests/cassettes/` | yes (replay) |
-| `tests/smoke/cli/` | The real `synology-apm` binary, via subprocess | live, `.env`-configured APM | no |
+| `tests/smoke/cli/` | The real `synology-apm-cli` binary, via subprocess | live, `.env`-configured APM | no |
 | **This tool** | `synology_apm.sdk`'s public async API, in-process | live, `.env`-configured APM | no |
 
 `tests/smoke/cli/` exercises the CLI's argv parsing and table/json rendering; this tool

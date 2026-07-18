@@ -83,6 +83,47 @@ class TestSdkErrorToDictCodes:
         assert result["error"] == "unexpected_error"
         assert "completely unexpected" in result["message"]
 
+    @pytest.mark.parametrize(
+        "make_exc,expected_code",
+        [
+            (lambda: _sdk("AuthenticationError")("bad credentials"), "authentication_error"),
+            (lambda: _sdk("NotManagementServerError")("not the management server"), "not_management_server"),
+            (lambda: _sdk("ConnectionTimeoutError")("timed out"), "connection_timeout"),
+        ],
+    )
+    def test_hint_present_for_reconfigure_codes(self, make_exc, expected_code):
+        exc = make_exc()
+        result = _convert(exc)
+        assert result["error"] == expected_code
+        assert "synology-apm-cli config set" in result["hint"]
+
+    def test_hint_absent_for_non_reconfigure_codes(self):
+        from synology_apm.sdk import ResourceNotFoundError
+        exc = ResourceNotFoundError("not found", "workload", "wl-001")
+        result = _convert(exc)
+        assert "hint" not in result
+
+    def test_ssl_certificate_failure_gets_ssl_error_code_and_hint(self):
+        from synology_apm.sdk import APIError
+        exc = APIError("SSL certificate verification failed for apm.corp.com")
+        result = _convert(exc)
+        assert result["error"] == "ssl_error"
+        assert "synology-apm-cli config set" in result["hint"]
+
+    def test_cannot_connect_gets_connection_error_code_and_hint(self):
+        from synology_apm.sdk import APIError
+        exc = APIError("Cannot connect to apm.corp.com: Connection refused")
+        result = _convert(exc)
+        assert result["error"] == "connection_error"
+        assert "synology-apm-cli config set" in result["hint"]
+
+    def test_unrelated_api_error_falls_back_to_apm_error_without_hint(self):
+        from synology_apm.sdk import APIError
+        exc = APIError("Backup rejected by target")
+        result = _convert(exc)
+        assert result["error"] == "apm_error"
+        assert "hint" not in result
+
     def test_message_excludes_raw_response_body(self):
         """APMError.__str__ appends the raw response body when set; the "message" field
         must use exc.message (the sanitized description) instead of str(exc), or raw API

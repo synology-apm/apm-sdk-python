@@ -16,11 +16,27 @@ def main() -> None:  # pragma: no cover
     if args.profile:
         os.environ["APM_PROFILE"] = args.profile
 
-    from synology_apm.mcp._config import load_credentials
+    from synology_apm.mcp._config import load_credentials, resolve_mode
     from synology_apm.mcp._server import run
+    from synology_apm.sdk import AuthenticationError
 
-    host, username, password, verify_ssl, mode = load_credentials()
-    run(host=host, username=username, password=password, verify_ssl=verify_ssl, debug=args.debug, mode=mode)
+    mode = resolve_mode()
+    try:
+        host, username, password, verify_ssl = load_credentials()
+        config_error = None
+    except AuthenticationError as exc:
+        host, username, password, verify_ssl = "", "", "", True
+        config_error = exc
+
+    run(
+        host=host,
+        username=username,
+        password=password,
+        verify_ssl=verify_ssl,
+        debug=args.debug,
+        mode=mode,
+        config_error=config_error,
+    )
 
 
 if __name__ == "__main__":

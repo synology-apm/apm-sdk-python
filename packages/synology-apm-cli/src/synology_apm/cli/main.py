@@ -1,4 +1,4 @@
-"""synology-apm CLI — Typer root entry point."""
+"""synology-apm-cli — Typer root entry point."""
 from __future__ import annotations
 
 import typer
@@ -13,25 +13,25 @@ from synology_apm.cli.commands import plan as plan_commands
 from synology_apm.cli.commands import saas as saas_commands
 
 app = typer.Typer(
-    name="synology-apm",
+    name="synology-apm-cli",
     help="""Synology ActiveProtect Manager CLI.
 
 \b
 Connection settings (priority: high → low):
-  1. CLI flags     --host / --username / --password / --no-verify-ssl
-  2. Env vars      APM_HOST, APM_USERNAME, APM_PASSWORD, APM_NO_VERIFY_SSL
-  3. Config file   ~/.config/synology-apm/config.toml (set with synology-apm config set)
+  1. CLI flags     --profile / --host / --username / --password / --no-verify-ssl
+  2. Env vars      APM_PROFILE, APM_HOST, APM_USERNAME, APM_PASSWORD, APM_NO_VERIFY_SSL
+  3. Config file   ~/.config/synology-apm/config.toml (set with synology-apm-cli config set)
 
 \b
 Examples:
-  synology-apm config set
-  synology-apm --host apm.corp.com --username admin machine list
-  synology-apm --host apm.corp.com:10443 --username admin machine list
+  synology-apm-cli config set
+  synology-apm-cli --host apm.corp.com --username admin machine list
+  synology-apm-cli --host apm.corp.com:10443 --username admin machine list
 
 \b
 Output format (-o / --output):
   table   Rich table (default)
-  json    JSON; pipe to jq: synology-apm machine list -o json | jq '.[].name'
+  json    JSON; pipe to jq: synology-apm-cli machine list -o json | jq '.[].name'
   yaml    YAML format
 
 \b
@@ -55,7 +55,9 @@ def _root_callback(
     username: str | None = typer.Option(None, "--username", "-u", help="Login account (env: APM_USERNAME)"),
     password: str | None = typer.Option(None, "--password", "-p", help="Password (env: APM_PASSWORD)"),
     profile: str | None = typer.Option(None, "--profile", help="Config profile name (env: APM_PROFILE)"),
-    no_verify_ssl: bool = typer.Option(False, "--no-verify-ssl", help="Skip SSL verification (env: APM_NO_VERIFY_SSL)"),
+    no_verify_ssl: bool | None = typer.Option(
+        None, "--no-verify-ssl", help="Skip SSL verification (env: APM_NO_VERIFY_SSL)"
+    ),
     no_input: bool = typer.Option(
         False, "--no-input",
         help="Disable all interactive prompts; exit with an error if required input is missing.",

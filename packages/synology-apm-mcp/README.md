@@ -4,23 +4,39 @@ MCP server for [Synology ActiveProtect Manager (APM)](https://www.synology.com/e
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) (used as the `uvx` launcher)
+- uv (used as the `uvx` launcher) — see the
+  [installation instructions](https://docs.astral.sh/uv/getting-started/installation/) for your platform
 - A running APM instance with a valid account
 - Python 3.11 or later (installed automatically by `uvx`)
 
-To install `uv`:
+## Configure APM Credentials
+
+The MCP server does not collect or store APM credentials itself — it connects using a
+`synology-apm-cli` config profile. Configure the `default` profile once, before installing
+the MCP server in any client — the config file it writes persists on disk, so there is no
+need to install the CLI permanently just for this:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+uvx synology-apm-cli config set
 ```
+
+This walks through host/username/password and writes them to
+`~/.config/synology-apm/config.toml`, with the password optionally stored in the OS keyring.
+To use a name other than `default`, pass `--profile <name>` and select it with the
+`APM_PROFILE` environment variable (see Environment Variables below) or `synology-apm-mcp
+--profile <name>`.
 
 ## Claude Desktop (Cowork)
 
 **Prerequisite:** the Claude desktop app (Cowork).
 
 1. Open **Customize → Plugins → Add marketplace → Add from a repository**, and enter the URL `synology-apm/apm-sdk-python`.
-2. In **Plugins → Personal**, find **Synology APM MCP Server** and click **+** to install.
-3. Fill in your APM host, username, password, SSL setting, and operation mode when prompted — Claude Desktop stores them securely and configures the server automatically.
+2. In **Plugins → Personal**, find **Synology APM MCP Server** and click **+** to install — this installs the MCP server and its workflow skills together.
+
+This plugin connects using the `default` `synology-apm-cli` profile and `operator` mode.
+Claude Desktop currently has no UI to change plugin settings after install — if you need a
+different profile or mode, install manually instead (see Claude Desktop (manual config)
+below).
 
 ## Claude Desktop (manual config)
 
@@ -30,35 +46,7 @@ Open **Settings → Developer**, click **Edit Config**, and add the following:
 {
   "mcpServers": {
     "synology-apm": {
-      "command": "/Users/username/.local/bin/uvx",
-      "args": ["synology-apm-mcp"],
-      "env": {
-        "APM_HOST": "apm.corp.com",
-        "APM_USERNAME": "admin",
-        "APM_PASSWORD": "your-password",
-        "APM_MCP_MODE": "operator"
-      }
-    }
-  }
-}
-```
-
-> **Note:** Claude Desktop does not inherit your shell `PATH`. Use the full path to `uvx`
-> (find it with `which uvx` on macOS/Linux). If you have not installed `uv`, see
-> [the uv install instructions](https://docs.astral.sh/uv/getting-started/installation/).
-
-For self-signed certificates, add `"APM_NO_VERIFY_SSL": "true"` to the `env` block.
-
-### Using an existing CLI config profile
-
-If you have already configured the `synology-apm` CLI (`synology-apm config set`), you can
-reuse that profile instead of providing credentials directly:
-
-```json
-{
-  "mcpServers": {
-    "synology-apm": {
-      "command": "/Users/username/.local/bin/uvx",
+      "command": "uvx",
       "args": ["synology-apm-mcp"],
       "env": {
         "APM_PROFILE": "default",
@@ -76,23 +64,43 @@ reuse that profile instead of providing credentials directly:
 1. Open **Plugins → Add marketplace**, and enter `synology-apm/apm-sdk-python` as the source.
 2. In **Plugins → Personal**, find **synology-apm-mcp** and click **Install**.
 
-Unlike Claude Desktop, ChatGPT/Codex has no install-time credential prompt — the plugin
-installs with a blank template and falls back to an existing CLI config profile
-(`APM_PROFILE`). To use it, either:
-
-- Run `synology-apm config set` beforehand so the `default` profile has credentials, or
-- Open `~/.codex/config.toml` (shared with the Codex CLI/IDE extension) after installing
-  and fill in `[mcp_servers.synology-apm.env]` directly:
+The plugin installs with a blank template and connects using the `default`
+`synology-apm-cli` profile configured above. To use a different profile, open
+`~/.codex/config.toml` (shared with the Codex CLI/IDE extension) after installing and set it
+directly:
 
 ```toml
 [mcp_servers.synology-apm.env]
-APM_HOST = "apm.corp.com"
-APM_USERNAME = "admin"
-APM_PASSWORD = "your-password"
+APM_PROFILE = "default"
 APM_MCP_MODE = "operator"
 ```
 
-For self-signed certificates, also set `APM_NO_VERIFY_SSL = "true"`.
+## Environment Variables
+
+Reference for every variable the `env` block (see the manual config examples above)
+accepts.
+
+`APM_PROFILE`/`APM_HOST`/`APM_USERNAME`/`APM_PASSWORD`/`APM_NO_VERIFY_SSL` are the same
+connection settings `synology-apm-cli` resolves:
+
+```bash
+APM_PROFILE=lab              # synology-apm-cli config profile to connect with (default: "default")
+
+# Or set connection details directly instead of using a profile:
+APM_HOST=apm.corp.com        # Override the profile's host directly (set together with USERNAME/PASSWORD)
+APM_USERNAME=admin           # Override the profile's username directly
+APM_PASSWORD=secret          # Override the profile's password directly
+APM_NO_VERIFY_SSL=true       # Skip SSL verification, overriding the profile's own setting in
+                             # either direction (also accepts "false" to force verification
+                             # back on over a profile that has it disabled)
+```
+
+MCP-specific settings, with no `synology-apm-cli` equivalent:
+
+| Variable | Purpose |
+|----------|---------|
+| `APM_MCP_MODE` | Controls which tools are registered: `readonly`, `operator` (default), `manager`, or `admin`. See Operation Modes below. |
+| `APM_MCP_AUDIT_LOG` | Path to a JSON-lines audit log file recording mutating operations. See Audit Log below. |
 
 ## Operation Modes
 
@@ -111,7 +119,8 @@ regardless of how a client learns their name.
 
 ## Audit Log
 
-To record a JSON audit trail of all mutating operations:
+To record a JSON audit trail of all mutating operations, set `APM_MCP_AUDIT_LOG` to a file
+path:
 
 ```json
 "env": {
@@ -124,6 +133,22 @@ Each line is a JSON object:
 ```json
 {"ts": "2026-07-15T10:30:00Z", "tool": "backup_machine_workload", "params": {"workload_id": "123e4567-e89b-12d3-a456-426614174001"}, "outcome": "ok"}
 ```
+
+## Troubleshooting
+
+The server always starts, whether or not it can actually reach APM: no connection settings
+found at all, an invalid or expired password, an unreachable host, a self-signed
+certificate without `APM_NO_VERIFY_SSL` set, or a target that is not the primary APM
+management server all print a diagnostic line to stderr (visible when running
+`synology-apm-mcp` directly, or in the host application's MCP server logs, e.g. Claude
+Desktop's Developer settings) but do not stop the process. Every tool call then returns a
+JSON error describing the failure together with a hint to reconfigure: re-run `uvx
+synology-apm-cli config set` (or fix the `APM_HOST`/`APM_USERNAME`/`APM_PASSWORD`/
+`APM_PROFILE` environment variables, if set directly), then restart the MCP server.
+
+The one case that does exit immediately at startup is an unrecognized `APM_MCP_MODE` value
+— that is a deployment misconfiguration, not a credentials problem, and there is no
+sensible set of tools to register without knowing which mode was intended.
 
 ## Available Tools
 
@@ -166,19 +191,6 @@ workflow skills are also available (a manually configured server does not get th
 - **reassign-or-retire-workload** — Move a workload to a different plan, or retire/delete it
 - **apm-mcp-conventions** — Shared reference (list-vs-get field completeness, pagination, permission modes, update semantics, destructive action preview pattern) the other skills point to; not a task on its own
 
-## Development
-
-```bash
-# Install dependencies
-uv sync
-
-# Run unit tests
-uv run pytest tests/unit/mcp/ -v
-
-# Check SDK ↔ MCP tool coverage: every SDK method resolves and is covered by a
-# manifest entry, and every manifest entry resolves and matches a registered tool
-uv run python scripts/check_mcp_coverage.py
-
-# Run the server locally (requires .env with APM_HOST, APM_USERNAME, APM_PASSWORD)
-source .env && synology-apm-mcp
-```
+For implementers (tool/resource conventions, mode gating, the SDK ↔ MCP coverage manifest, testing
+conventions), see the design contract at
+[`src/synology_apm/mcp/README.md`](src/synology_apm/mcp/README.md).
