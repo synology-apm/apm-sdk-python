@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 
 def main() -> None:  # pragma: no cover
@@ -27,16 +28,30 @@ def main() -> None:  # pragma: no cover
     except AuthenticationError as exc:
         host, username, password, verify_ssl = "", "", "", True
         config_error = exc
+        print(
+            "Continuing in degraded mode: the server will start and wait for an MCP "
+            "client, but every tool call will return the error above until reconfigured.",
+            file=sys.stderr,
+        )
 
-    run(
-        host=host,
-        username=username,
-        password=password,
-        verify_ssl=verify_ssl,
-        debug=args.debug,
-        mode=mode,
-        config_error=config_error,
-    )
+    try:
+        run(
+            host=host,
+            username=username,
+            password=password,
+            verify_ssl=verify_ssl,
+            debug=args.debug,
+            mode=mode,
+            config_error=config_error,
+        )
+    except KeyboardInterrupt:
+        # os._exit(), not sys.exit(): FastMCP's stdio transport keeps a background
+        # thread blocked reading stdin (there's no client to send EOF), so normal
+        # interpreter shutdown would hang joining it in threading._shutdown() -- and
+        # a second Ctrl+C landing during that hang corrupts the shutdown sequence
+        # (see the "Fatal Python error: _enter_buffered_busy" crash this replaces).
+        # os._exit() terminates the process immediately, skipping that entirely.
+        os._exit(130)
 
 
 if __name__ == "__main__":

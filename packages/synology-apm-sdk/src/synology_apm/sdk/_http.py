@@ -1,6 +1,6 @@
 """Low-level HTTP session management (private module).
 
-Handles APM authentication, _SSID cookie maintenance, and all REST API request dispatch.
+Handles APM authentication, `id` session-cookie maintenance, and all REST API request dispatch.
 APMClient holds one WebAPISession instance; all HTTP operations go through this class.
 
 Authentication flow (connect):

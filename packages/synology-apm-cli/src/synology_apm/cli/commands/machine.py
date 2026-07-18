@@ -625,6 +625,10 @@ def _print_workload_table(
 
 
 def _print_workload_detail(wl: MachineWorkload) -> None:
+    # Row visibility is driven by field presence, not wl.workload_type directly — the SDK
+    # only populates inventory_name/device_uuid for VM and agent_version/ip_address for PC/PS,
+    # so branching on the fields yields the same per-type behavior without duplicating that
+    # type-to-field mapping here.
     info_rows: list[tuple[str, str]] = []
     if wl.inventory_name:
         inv_type = f" ({wl.inventory_type})" if wl.inventory_type else ""

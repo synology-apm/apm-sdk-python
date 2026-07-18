@@ -143,8 +143,9 @@ management server all print a diagnostic line to stderr (visible when running
 `synology-apm-mcp` directly, or in the host application's MCP server logs, e.g. Claude
 Desktop's Developer settings) but do not stop the process. Every tool call then returns a
 JSON error describing the failure together with a hint to reconfigure: re-run `uvx
-synology-apm-cli config set` (or fix the `APM_HOST`/`APM_USERNAME`/`APM_PASSWORD`/
-`APM_PROFILE` environment variables, if set directly), then restart the MCP server.
+synology-apm-cli config set`, fix the `APM_HOST`/`APM_USERNAME`/`APM_PASSWORD`/
+`APM_NO_VERIFY_SSL` environment variables directly, or select a different configured profile
+via `APM_PROFILE`, then restart the MCP server.
 
 The one case that does exit immediately at startup is an unrecognized `APM_MCP_MODE` value
 — that is a deployment misconfiguration, not a credentials problem, and there is no

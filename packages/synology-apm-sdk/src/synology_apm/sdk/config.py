@@ -218,12 +218,15 @@ class ResolvedConnection:
         username: Resolved username; empty string if unresolved.
         password: Resolved password; may be an empty string (caller must handle this separately).
         no_verify_ssl: Whether to skip TLS certificate verification.
+        profile: Name of the profile consulted to resolve these settings (the caller-supplied
+            or environment-selected profile, or :data:`DEFAULT_PROFILE`).
     """
 
     host: str
     username: str
     password: str
     no_verify_ssl: bool
+    profile: str = DEFAULT_PROFILE
 
 
 def resolve_connection(
@@ -285,4 +288,6 @@ def resolve_connection(
         file_profile.no_verify_ssl
     )
 
-    return ResolvedConnection(effective_host, effective_username, effective_password, effective_no_verify)
+    return ResolvedConnection(
+        effective_host, effective_username, effective_password, effective_no_verify, effective_profile
+    )

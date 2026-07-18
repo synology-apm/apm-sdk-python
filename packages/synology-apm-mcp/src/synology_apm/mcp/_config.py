@@ -54,7 +54,7 @@ def load_credentials() -> tuple[str, str, str, bool]:
         )
     except KeyringUnavailableError as exc:
         msg = (
-            f"{exc} Set APM_PASSWORD instead, or run `synology-apm-cli config set "
+            f"{exc} Set APM_PASSWORD instead, or run `uvx synology-apm-cli config set "
             "--save-password plaintext`."
         )
         log_error(msg)
@@ -62,13 +62,17 @@ def load_credentials() -> tuple[str, str, str, bool]:
 
     if not resolved.host or not resolved.username:
         msg = (
-            "Missing credentials. Run `synology-apm-cli config set` to configure a profile, "
-            "or set APM_HOST, APM_USERNAME, APM_PASSWORD env vars directly."
+            "Missing credentials. Run `uvx synology-apm-cli config set` to configure a profile, "
+            "set APM_HOST, APM_USERNAME, APM_PASSWORD, APM_NO_VERIFY_SSL env vars directly, "
+            "or select a different configured profile via APM_PROFILE."
         )
         log_error(msg)
         raise AuthenticationError(msg)
     if not resolved.password:
-        msg = "No password found. Run `synology-apm-cli config set` to store one, or set APM_PASSWORD directly."
+        msg = (
+            "No password found. Run `uvx synology-apm-cli config set` to store one, set "
+            "APM_PASSWORD directly, or select a different configured profile via APM_PROFILE."
+        )
         log_error(msg)
         raise AuthenticationError(msg)
 

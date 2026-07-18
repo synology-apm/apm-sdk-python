@@ -28,6 +28,7 @@ For the SDK's full public interface (signatures, Attributes, Args/Returns/Raises
    - [RetirementPlanCollection](#retirementplancollection)
    - [TieringPlanCollection](#tieringplancollection)
    - [RemoteStorageCollection](#remotestoragecollection)
+   - [SaasCollection](#saascollection)
    - [APMClient.get_site_info()](#apmclientget_site_info)
 - [Collection Map](#collection-map)
 
@@ -402,10 +403,8 @@ The API fields are of string type; parser rules:
 - `FileServerPathSelector.excluded_paths`: sub-paths excluded within `path`; maps to `filtered_paths` in JSON
 - Parse-direction default for an empty `remoteSessionList`: see "`MachineWorkload.fs_config`" in [Type System Notes](#type-system-notes)
 
-**Request body for backup_now() / cancel_backup():**
-```json
-{"workloadRefs": [{"uid": "<workload_id>", "namespace": "<namespace>"}]}
-```
+**backup_now() / cancel_backup()** send a `workloadRefs: [{uid, namespace}]` body (see the
+request-building code in `machine.py`).
 
 **change_plan() dispatch (shares the same `_put_plan_change()` request with retire()):**
 `change_plan(workload, plan)` dispatches on `isinstance(plan,
@@ -459,21 +458,18 @@ Verified against a live APM: the raw field is not exclusively PS/VM-scoped, so
 
 **Number of API calls for list():**
 - Always 1 API request (`workload_type` is required, queries only a single service subtype)
-- When `namespace` is not None: 1 additional backup_server API call (namespace → backup_server_id)
+- When `namespace` is not None: 1 additional backup_server API call to resolve namespace →
+  backup_server_id (paginated 500 servers at a time; more than one call only when the target
+  namespace isn't in the first page)
 - `workload_type` has no "all subtypes" wildcard value to collapse the 6 per-subtype calls into
   one: verified against a live APM that the underlying filter's zero-value enum member returns
   the same single subtype's workloads as one of the 6 named values (not the union of all 6), so
   `list()` must still be called once per `M365WorkloadType` to enumerate every M365 workload for
   a tenant.
 
-**Request body for backup_now() / cancel_backup() (format differs from Machine):**
-```python
-# backup_now: includes tenantId
-{"tenantId": "<tenant_id>", "nsUidPairs": [{"namespace": "<namespace>", "uid": "<workload_id>"}]}
-
-# cancel_backup
-{"nsUidPairs": [{"namespace": "<namespace>", "uid": "<workload_id>"}]}
-```
+**backup_now() / cancel_backup()** use `nsUidPairs: [{namespace, uid}]` (differs from
+Machine's `workloadRefs`); `backup_now()` additionally sends a top-level `tenantId`,
+`cancel_backup()` does not.
 
 **change_plan() dispatch (shares the same `_put_plan_change()` request with retire()):**
 Same dispatch semantics as `MachineWorkloadCollection.change_plan()` (see above), with the
@@ -550,9 +546,10 @@ alone has no filtering effect, so the SDK only ever sends them as a pair.
 If no workload matching `(workload.workload_id, workload.namespace)` exists on the server,
 `BackupActivityCollection.list(workload=...)` returns `([], 0)`, while
 `RestoreActivityCollection.list(workload=...)` raises `ResourceNotFoundError`
-(`resource_type="Workload"` via `_not_found_as`; underlying HTTP 404, API `errorCode 1002` /
-`database_query_failed`). This
-difference comes from the underlying API, not the SDK.
+(`resource_type="Workload"` via `_not_found_as`, on the underlying HTTP 404). Confirmed
+against a live APM: the restore endpoint's 404 body carries `errorCode 1002` /
+`database_query_failed`, though the SDK's own 404 handling is generic and doesn't branch on
+that code. This difference comes from the underlying API, not the SDK.
 
 **RestoreActivityCollection.list() filter support:**
 Confirmed against the real `/api/v2/activity/restore/activities` API: supports `status`,
@@ -560,24 +557,14 @@ Confirmed against the real `/api/v2/activity/restore/activities` API: supports `
 `BackupActivityCollection.list()`, it does not accept `machine_types`, `m365_types`, or a
 backup-server `namespace` list.
 
-**BackupActivityCollection.cancel() request body (differs based on activity.category):**
-```python
-# MACHINE:
-{"deviceNsUidPairs": [{"namespace": ns, "uid": activity_uid}], "m365NsUidPairs": [], "gwNsUidPairs": []}
+**BackupActivityCollection.cancel()** sends `deviceNsUidPairs`/`m365NsUidPairs`/`gwNsUidPairs`,
+populating only the one matching `activity.category` (the other two empty) with
+`{namespace, uid: activity.activity_id}`.
 
-# M365:
-{"deviceNsUidPairs": [], "m365NsUidPairs": [{"namespace": ns, "uid": activity_uid}], "gwNsUidPairs": []}
-```
-`activity_uid` is `activity.activity_id` (API field `uid`).
-
-**RestoreActivityCollection.cancel() request body (format differs from backup cancel):**
-```python
-{"activities": [{"workload": {"uid": activity.workload_id, "namespace": activity.workload_namespace},
-                 "executionId": activity.execution_id,
-                 "namespace": activity.namespace,
-                 "workloadType": _SUBTYPE_TO_CANCEL_TYPE[activity.workload_type]}]}
-```
-`_SUBTYPE_TO_CANCEL_TYPE` converts `ActivityWorkloadType` to an API string, defined in `collections/activities.py`.
+**RestoreActivityCollection.cancel()** sends a differently-shaped body keyed on the
+activity's workload rather than its own ID: `activities: [{workload: {uid, namespace},
+executionId, namespace, workloadType}]`, with `workloadType` converted from
+`ActivityWorkloadType` via `_SUBTYPE_TO_CANCEL_TYPE` (`collections/activities.py`).
 
 **Endpoint used by get_by_version():**
 Calls `GET /api/v1/activity/backup/activity?executionId=...&workloadUid=...&namespace=...` (v1, not v2) with `version.execution_id`.
@@ -656,7 +643,7 @@ Iterates through the search results, applying the following conditions (OR) to e
 
 **Query behavior for tiering_plan_name / tiering_plan_destination:**
 
-`BackupServer.tiering_plan_name` and `tiering_plan_destination` (`LocationInfo | None`) are resolved via `TieringPlanCollection.get()` when the server has a tiering plan applied. If the referenced plan no longer exists (dangling reference), both fields are set to `None`; any other query failure propagates as an exception.
+`BackupServer.tiering_plan_name` and `tiering_plan_destination` (`LocationInfo | None`) are resolved when the server has a tiering plan applied, via an internal bulk-fetch helper (`_get_plans_bulk()` in `collections/tiering_plans.py`) — **not** the public `TieringPlanCollection.get()`, so it doesn't get that method's detail-code-based 404 mapping; it relies on the SDK's generic 404 handling instead, with the same net effect (dangling reference → `None`; any other query failure propagates).
 
 - `list()`: runs `asyncio.gather` to query all unique tiering plans on the page in parallel
 - `get(backup_server_id)`: performs an on-demand query only for that server's tiering plan
@@ -691,7 +678,13 @@ When `MachinePlanCreateRequest.tasks` is `None`, `create()` and `update()` auto-
 
 **MANUAL schedule encoding:**
 
-`ScheduleFrequency.MANUAL` maps to `scheduleType: "NONE"` in both `mainSchedule` and each task's `schedule` dict. The `logOff`, `screenLock`, and `startup` event triggers are always `false` for MANUAL tasks.
+`ScheduleFrequency.MANUAL` maps to `scheduleType: "NONE"` in both `mainSchedule` and each
+task's `schedule` dict. For an explicit custom task schedule (`use_main_schedule=False`)
+with no `event_trigger`, the `logOff`/`screenLock`/`startup` flags are `false` — but a PC
+task inheriting the main schedule (`use_main_schedule=True`, including the 6 auto-generated
+default tasks) always sends these three flags as `true`, regardless of the main schedule's
+frequency (see the "inherit main schedule" comment in `_build_task_schedule_dict()`,
+`_protection_plan_builders.py`).
 
 **PC task backup mode (`MachineTaskSchedule`):**
 
@@ -722,6 +715,8 @@ When `MachinePlanCreateRequest.tasks` is `None`, `create()` and `update()` auto-
 - VM and FS tasks must have `scope=None`.
 - `custom_volumes` must be empty when `scope != CUSTOM_VOLUME`.
 - Tasks with `use_main_schedule=False` must provide a `schedule`.
+- A task `schedule` with `frequency == WEEKLY` must also specify at least one weekday (same
+  rule as the main schedule, enforced separately per task).
 - `event_trigger` in a task schedule is only valid for PC tasks.
 - Task schedules must not use `AFTER_BACKUP` frequency.
 - Duplicate `MachineTaskConfig` entries (identical field values) are rejected.
@@ -859,6 +854,22 @@ Before creating any storage, `add()` calls the catalog check endpoint for all ty
 **add() and update() — GET after write:**
 
 Both `add()` and `update()` issue a `get()` after the write to return the refreshed model state.
+
+---
+
+### SaasCollection
+
+Accessed via `APMClient.saas`.
+
+**M365 vs. GWS tenant parsing asymmetry:** `list()`'s raw response uses different field names
+per tenant category — M365 entries use `tenantId`/`tenantName`/`tenantMail`; GWS entries use
+`domainId`/`domainName`/`domain`, falling back to the M365 field names when present (`saas.py`).
+`get_m365_tenant()` only ever parses the M365 shape (M365-only lookup) and always sets
+`protected_data_bytes=0` (already documented in its own docstring — usage data isn't available
+for this specific lookup).
+
+**`list()`'s `total` field:** the underlying `cloudapp` endpoint returns `total` as a string
+(a server-side quirk); the SDK coerces it to `int` (see the comment in `saas.py`).
 
 ---
 

@@ -8,7 +8,14 @@ from typing import NoReturn, cast
 import typer
 from rich.console import Console
 
-from synology_apm.sdk import APMError, KeyringUnavailableError, ResourceNotFoundError, classify_error
+from synology_apm.sdk import (
+    DEFAULT_PROFILE,
+    APMError,
+    KeyringUnavailableError,
+    ResourceNotFoundError,
+    classify_error,
+    load_config,
+)
 
 err_console = Console(stderr=True)
 
@@ -134,15 +141,24 @@ def abortable() -> Iterator[None]:
         raise typer.Exit(code=EXIT_CANCEL)
 
 
-def missing_config_hint() -> NoReturn:
+def missing_config_hint(profile: str = DEFAULT_PROFILE) -> NoReturn:
     """Display a hint when connection settings are missing and exit."""
-    err_console.print("[red]✗[/red] Connection settings not configured")
+    err_console.print(f"[red]✗[/red] Connection settings not configured for profile '{profile}'")
     err_console.print()
-    err_console.print("  Run first:")
-    err_console.print("    synology-apm-cli config set --host <APM_HOST> --username <USER>")
+
+    other_profiles = sorted(name for name in load_config().profiles if name != profile)
+    if other_profiles:
+        err_console.print(f"  Configured profiles found: {', '.join(other_profiles)}")
+        err_console.print("  Select one with --profile <name> or APM_PROFILE=<name>, or configure this one:")
+        err_console.print()
+
+    profile_flag = "" if profile == DEFAULT_PROFILE else f" --profile {profile}"
+    err_console.print("  Run first (interactive wizard):")
+    err_console.print(f"    synology-apm-cli config set{profile_flag}")
     err_console.print()
     err_console.print("  Or set environment variables:")
     err_console.print("    export APM_HOST=apm.corp.com")
     err_console.print("    export APM_USERNAME=admin")
     err_console.print("    export APM_PASSWORD=...")
+    err_console.print("    export APM_NO_VERIFY_SSL=true   # only needed for self-signed certificates")
     raise typer.Exit(code=EXIT_ERROR)

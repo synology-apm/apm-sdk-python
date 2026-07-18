@@ -510,14 +510,14 @@ async def test_get_client_missing_host_calls_missing_config_hint(monkeypatch: py
 
     with patch(
         "synology_apm.cli._helpers.resolve_connection",
-        return_value=ResolvedConnection("", "", "", False),
+        return_value=ResolvedConnection("", "", "", False, "prod"),
     ):
         with patch("synology_apm.cli._helpers.missing_config_hint", mock_hint):
             with pytest.raises(SystemExit):
                 async with _h.get_client(mock_ctx):
                     pass  # pragma: no cover
 
-    mock_hint.assert_called_once()
+    mock_hint.assert_called_once_with("prod")
 
 
 async def test_get_client_debug_flag_enables_debug_mode(monkeypatch: pytest.MonkeyPatch) -> None:

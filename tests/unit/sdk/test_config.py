@@ -332,6 +332,7 @@ def test_resolve_uses_cli_args_first(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert resolved.host == "https://cli-host"
     assert resolved.username == "cli-user"
     assert resolved.password == "cli-pass"
+    assert resolved.profile == "default"
 
 
 def test_resolve_uses_env_over_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -435,6 +436,7 @@ def test_resolve_profile_selection(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
     assert resolved.host == "https://lab-host"
     assert resolved.username == "lab-user"
+    assert resolved.profile == "lab"
 
 
 def test_resolve_profile_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -454,6 +456,7 @@ def test_resolve_profile_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
     assert resolved.host == "https://lab-host"
     assert resolved.username == "lab-user"
+    assert resolved.profile == "lab"
 
 
 def test_resolve_no_verify_ssl_cli_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

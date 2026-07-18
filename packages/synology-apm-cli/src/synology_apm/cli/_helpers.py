@@ -58,7 +58,7 @@ async def get_client(ctx: typer.Context) -> AsyncIterator[APMClient]:
             exc, "Set the APM_PASSWORD environment variable instead, or use a plaintext-stored profile."
         )
     if not eff_host or not eff_username:
-        missing_config_hint()  # NoReturn
+        missing_config_hint(resolved.profile)  # NoReturn
     if not eff_password:
         if obj.get("no_input"):
             err_console.print("[red]✗[/red] Password is required. Set APM_PASSWORD or use a config profile.")

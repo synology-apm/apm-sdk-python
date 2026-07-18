@@ -11,9 +11,10 @@ from synology_apm.sdk import APMError, classify_error
 _T = TypeVar("_T")
 
 RECONFIGURE_HINT = (
-    "Run `synology-apm-cli config set` to update the connection settings (or the "
-    "APM_HOST/APM_USERNAME/APM_PASSWORD/APM_PROFILE environment variables, if the server "
-    "was configured directly), then restart the MCP server."
+    "Run `uvx synology-apm-cli config set` to update the connection settings, or if "
+    "configured directly via environment variables, fix APM_HOST/APM_USERNAME/"
+    "APM_PASSWORD/APM_NO_VERIFY_SSL (or select a different configured profile via "
+    "APM_PROFILE), then restart the MCP server."
 )
 """Hint appended to error dicts whose failure mode is "the currently configured
 credentials/connection settings don't work" -- lets the calling agent relay concrete

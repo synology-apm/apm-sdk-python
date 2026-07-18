@@ -13,11 +13,7 @@
       "command": "uvx",
       "args": ["synology-apm-mcp"],
       "env": {
-        "APM_HOST": "",
-        "APM_USERNAME": "",
-        "APM_PASSWORD": "",
         "APM_PROFILE": "default",
-        "APM_NO_VERIFY_SSL": "false",
         "APM_MCP_MODE": "operator"
       }
     }
