@@ -23,8 +23,8 @@ relies on (list vs. get field completeness, pagination, permission modes).
    - If investigating a specific workload, add `keyword=<workload_name>`.
 
 3. For each failed activity (up to 10 most recent), call `get_backup_activity` and read its
-   `log_entries` array — each entry's `message` field holds the detail text (there is no
-   separate `error_message` field).
+   `log_entries` array (see [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#list-vs-get-field-completeness)
+   for the `message`-field detail).
 
 4. Identify patterns:
    - **Same error across many workloads on one server**: server-level issue. An activity only
@@ -49,7 +49,3 @@ relies on (list vs. get field completeness, pagination, permission modes).
 
 6. If the user asks to re-trigger a failed backup, use `backup_machine_workload` or
    `backup_m365_workload`. These require `operator` mode or higher.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

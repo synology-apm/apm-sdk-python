@@ -63,6 +63,7 @@ class TestToolRegistrar:
 
         tool = await server.get_tool("backup_machine_workload")
         assert tool is not None
+        assert tool.name == "backup_machine_workload"
 
     @pytest.mark.asyncio
     async def test_direct_call_form_registers_under_given_name(self):
@@ -121,7 +122,7 @@ class TestToolRequiredModes:
 
         assert table["list_machine_workloads"] == "readonly"
         assert table["backup_machine_workload"] == "operator"
-        assert table["lock_machine_version"] == "manager"
+        assert table["lock_machine_version"] == "admin"
         assert table["delete_machine_workload"] == "admin"
 
     @pytest.mark.asyncio

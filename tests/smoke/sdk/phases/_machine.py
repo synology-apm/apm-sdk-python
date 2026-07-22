@@ -6,6 +6,7 @@ ctx.data["machine_versions"] for use by later phases.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 from collections.abc import Awaitable, Callable
 from datetime import time
@@ -58,6 +59,7 @@ async def run(ctx: SmokeContext) -> None:
         DOMAIN, "machine.workloads.list[all]", lambda: apm.machine.workloads.list(limit=500)
     )
     workloads, total = all_result if all_result is not None else ([], 0)
+    assert total is not None  # MachineWorkloadCollection.list() always reports a real total
     ctx.data["machine_workloads"] = workloads
 
     retired_result = await ctx.call(
@@ -321,16 +323,12 @@ async def _run_type_block(
                     lambda: apm.machine.workloads.change_plan(_w0, _orig),
                 )
             finally:
-                try:
-                    # Ensure workload is back on original plan before deleting the disposable one.
-                    # If restore already succeeded this is a no-op (server ignores same plan re-apply).
+                # Ensure workload is back on original plan before deleting the disposable one.
+                # If restore already succeeded this is a no-op (server ignores same plan re-apply).
+                with contextlib.suppress(Exception):
                     await apm.machine.workloads.change_plan(_w0, _orig)
-                except Exception:
-                    pass
-                try:
+                with contextlib.suppress(Exception):
                     await apm.machine.plans.delete(_sw)
-                except Exception:
-                    pass
 
     # ── versions ──────────────────────────────────────────────────────────────
 
@@ -599,10 +597,8 @@ async def _cleanup_orphan_fs(apm: APMClient, namespace: str, host_ip: str) -> No
             )
             for wl in result[0]:
                 if wl.fs_config and wl.fs_config.host_ip == host_ip:
-                    try:
+                    with contextlib.suppress(Exception):
                         await apm.machine.workloads.delete(wl)
-                    except Exception:
-                        pass
         except Exception:
             pass
 

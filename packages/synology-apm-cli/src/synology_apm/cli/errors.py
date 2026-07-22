@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable, Iterator
-from typing import NoReturn, cast
+from typing import Any, NoReturn, cast
 
 import typer
 from rich.console import Console
@@ -17,7 +17,23 @@ from synology_apm.sdk import (
     load_config,
 )
 
-err_console = Console(stderr=True)
+
+def _dynamic_console(**kwargs: Any) -> Console:
+    """Construct a Console that keeps reading live COLUMNS/LINES instead of caching them at import time.
+
+    Rich bakes a fixed width/height into the Console at construction time if COLUMNS/LINES
+    happen to already be set in os.environ, and never re-reads them afterward — freezing
+    every subsequent render at that value regardless of the real terminal size or a
+    caller's env override. Resetting _width/_height to None keeps the console dynamic
+    for the life of the process.
+    """
+    console = Console(**kwargs)
+    console._width = None
+    console._height = None
+    return console
+
+
+err_console = _dynamic_console(stderr=True)
 
 # Exit code table (see src/synology_apm/cli/README.md — Status and Color Conventions)
 EXIT_OK = 0
@@ -138,7 +154,7 @@ def abortable() -> Iterator[None]:
         yield
     except typer.Abort:
         err_console.print("\n[bright_black]Cancelled.[/bright_black]")
-        raise typer.Exit(code=EXIT_CANCEL)
+        raise typer.Exit(code=EXIT_CANCEL) from None
 
 
 def missing_config_hint(profile: str = DEFAULT_PROFILE) -> NoReturn:

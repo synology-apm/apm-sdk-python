@@ -45,7 +45,7 @@ Usage:
     python billing_report.py --dump-config-template > pricing.yaml
     python billing_report.py -o xlsx --output-file billing.xlsx
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -72,6 +72,7 @@ import openpyxl.styles
 import yaml
 from _common import (
     WORKLOAD_TYPE_ORDER,
+    add_profile_arg,
     collect_backup_servers,
     list_m365_tenants,
     make_client,
@@ -546,8 +547,8 @@ _WorkloadT = TypeVar("_WorkloadT", MachineWorkload, M365Workload)
 
 async def _bounded_paginate(
     sem: asyncio.Semaphore,
-    list_call: Callable[[int, int], Awaitable[tuple[list[_WorkloadT], int]]],
-) -> tuple[list[_WorkloadT], int]:
+    list_call: Callable[[int, int], Awaitable[tuple[list[_WorkloadT], int | None]]],
+) -> tuple[list[_WorkloadT], int | None]:
     """Run one paginate() call under *sem*, so --concurrency bounds concurrent API calls directly."""
     async with sem:
         return await paginate(list_call)
@@ -571,12 +572,12 @@ async def _scan_billing(
     tenants = await list_m365_tenants(apm)
 
     # (is_retired, paginate coroutine) pairs; the flag classifies each result's plan kind.
-    tasks: list[tuple[bool, Awaitable[tuple[list[MachineWorkload] | list[M365Workload], int]]]] = []
+    tasks: list[tuple[bool, Awaitable[tuple[list[MachineWorkload] | list[M365Workload], int | None]]]] = []
 
     for is_retired in (False, True):
         async def _machine(
             limit: int, offset: int, r: bool = is_retired
-        ) -> tuple[list[MachineWorkload], int]:
+        ) -> tuple[list[MachineWorkload], int | None]:
             return await apm.machine.workloads.list(is_retired=r, limit=limit, offset=offset)
         tasks.append((is_retired, _bounded_paginate(sem, _machine)))
 
@@ -586,7 +587,7 @@ async def _scan_billing(
                 async def _m365(
                     limit: int, offset: int,
                     t: SaasTenant = tenant, s: M365WorkloadType = service, r: bool = is_retired,
-                ) -> tuple[list[M365Workload], int]:
+                ) -> tuple[list[M365Workload], int | None]:
                     return await apm.m365.workloads.list(
                         tenant_id=t.tenant_id, workload_type=s, is_retired=r, limit=limit, offset=offset,
                     )
@@ -596,7 +597,7 @@ async def _scan_billing(
     server_stats: dict[tuple[str, str, tuple[str, ...], str], _ServerTypeStat] = {}
 
     results = await asyncio.gather(*(coro for _, coro in tasks))
-    for (is_retired, _), (items, _) in zip(tasks, results):
+    for (is_retired, _), (items, _) in zip(tasks, results, strict=True):
         for wl in items:
             pid = wl.plan.plan_id
             if pid not in plan_meta:
@@ -1047,7 +1048,7 @@ def _print_billing_table(
     (name, kind label or None) display cells, in charge order."""
     print(_billing_table_header(name_header, name_width, kind_header, pricing_width))
     print(_billing_table_rule(name_width, kind_header is not None, pricing_width).replace("-", "═"))
-    for c, (name, kind) in zip(charges, rows):
+    for c, (name, kind) in zip(charges, rows, strict=True):
         print(_billing_row(
             name, kind, c.pricing_plan_name,
             c.instances, c.storage_gb, c.instance_charge, c.storage_charge,
@@ -1118,12 +1119,12 @@ def _print_detail_table(
 
     widths comes precomputed from _print_details_tables so all detail tables align.
     """
-    text_header = "  ".join(f"{h:<{w}}" for h, w in zip(headers, widths))
+    text_header = "  ".join(f"{h:<{w}}" for h, w in zip(headers, widths, strict=True))
     print(f"{indent}{text_header}  {_DETAIL_NUM_HEADER}")
     text_rule = "  ".join("═" * w for w in widths)
     print(f"{indent}{text_rule}  {_DETAIL_NUM_RULE}")
     for cells, instances, storage_gb, instance_charge, storage_charge in rows:
-        text = "  ".join(f"{c:<{w}}" for c, w in zip(cells, widths))
+        text = "  ".join(f"{c:<{w}}" for c, w in zip(cells, widths, strict=True))
         print(
             f"{indent}{text}  {instances:>9}  {storage_gb:>12.4f}"
             f"  {fmt_money(instance_charge):>13}  {fmt_money(storage_charge):>12}"
@@ -1139,12 +1140,12 @@ def _print_dist_table(
     widths: list[int],
 ) -> None:
     """Render one distribution table: left-aligned text columns + instances/storage only."""
-    text_header = "  ".join(f"{h:<{w}}" for h, w in zip(headers, widths))
+    text_header = "  ".join(f"{h:<{w}}" for h, w in zip(headers, widths, strict=True))
     print(f"{indent}{text_header}  {_DIST_NUM_HEADER}")
     text_rule = "  ".join("═" * w for w in widths)
     print(f"{indent}{text_rule}  {_DIST_NUM_RULE}")
     for cells, instances, storage_gb in rows:
-        text = "  ".join(f"{c:<{w}}" for c, w in zip(cells, widths))
+        text = "  ".join(f"{c:<{w}}" for c, w in zip(cells, widths, strict=True))
         print(f"{indent}{text}  {instances:>9}  {storage_gb:>12.2f}")
 
 
@@ -1254,10 +1255,10 @@ def _print_details_tables(
         for headers, cell_rows, _ in tables
     ]
     target = max(
-        (_detail_text_width(ws) + num for (_, _, num), ws in zip(tables, width_sets) if ws is not None),
+        (_detail_text_width(ws) + num for (_, _, num), ws in zip(tables, width_sets, strict=True) if ws is not None),
         default=0,
     )
-    for (_, _, num), ws in zip(tables, width_sets):
+    for (_, _, num), ws in zip(tables, width_sets, strict=True):
         if ws is not None:
             ws[0] += target - (_detail_text_width(ws) + num)
     gs_widths, gp_widths, gw_widths, st_widths, pt_widths = width_sets
@@ -1571,7 +1572,7 @@ def _print_json(
 
     if details is not None:
         if show_groups:
-            for group_dict, g in zip(out["groups"], group_charges):
+            for group_dict, g in zip(out["groups"], group_charges, strict=True):
                 group_dict["backup_servers"] = [
                     {
                         "server_name": r.server_name,
@@ -1598,13 +1599,13 @@ def _print_json(
             rows_by_ns: dict[str, list[_ServerDetailRow]] = {}
             for sr in details.server_type_rows:
                 rows_by_ns.setdefault(sr.namespace, []).append(sr)
-            for server_dict, sc in zip(out["backup_servers"], server_charges):
+            for server_dict, sc in zip(out["backup_servers"], server_charges, strict=True):
                 server_dict["by_type"] = [_type_obj(r) for r in rows_by_ns.get(sc.namespace, [])]
         if show_plans:
             rows_by_plan: dict[str, list[_DetailRow]] = {}
             for pr in details.plan_type_rows:
                 rows_by_plan.setdefault(pr.plan_id, []).append(pr)
-            for plan_dict, pc in zip(out["plans"], plan_charges):
+            for plan_dict, pc in zip(out["plans"], plan_charges, strict=True):
                 plan_dict["by_type"] = [_type_obj(r) for r in rows_by_plan.get(pc.plan_id, [])]
 
     print(json.dumps(out, indent=2))
@@ -1744,9 +1745,10 @@ async def run(
     output_file: str | None,
     only: str,
     configured_only: bool,
+    profile: str | None = None,
 ) -> None:
     print("Collecting data...", file=sys.stderr)
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         servers = await collect_backup_servers(apm)
         ns_by_server_id = {s.backup_server_id: s.namespace for s in servers}
         server_names = {s.namespace: s.name for s in servers}
@@ -1860,6 +1862,7 @@ def main() -> None:
         "--output-file", dest="output_file", metavar="FILE",
         help="Path for the output .xlsx file. Required when -o xlsx.",
     )
+    add_profile_arg(parser)
     args = parser.parse_args()
 
     if args.output == "xlsx" and not args.output_file:
@@ -1901,6 +1904,7 @@ def main() -> None:
         output_file=args.output_file,
         only=args.only,
         configured_only=bool(args.config) and not args.show_not_configured,
+        profile=args.profile,
     ))
 
 

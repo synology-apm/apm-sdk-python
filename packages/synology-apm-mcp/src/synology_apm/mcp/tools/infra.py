@@ -33,50 +33,10 @@ from synology_apm.sdk import (
 )
 
 # ── Business logic helpers ────────────────────────────────────────────────────
-
-async def _get_site_info(apm: APMClient) -> str:
-    return await get_tool(apm.get_site_info(), lambda x: x.to_dict())
-
-
-async def _list_backup_servers(
-    apm: APMClient,
-    name_contains: str | None,
-    status_filter: list[ServerStatus] | None,
-    type_filter: list[BackupServerType] | None,
-    limit: int,
-    offset: int,
-) -> str:
-    return await list_tool(
-        apm.backup_servers.list(
-            name_contains=name_contains,
-            status_filter=status_filter,
-            type_filter=type_filter,
-            limit=clamp_limit(limit),
-            offset=offset,
-        ),
-        lambda x: x.to_dict(),
-        offset=offset,
-    )
-
-
-async def _get_backup_server(apm: APMClient, server_id: str) -> str:
-    return await get_tool(apm.backup_servers.get(server_id), lambda x: x.to_dict())
-
-
-async def _list_remote_storages(apm: APMClient) -> str:
-    return await list_tool(apm.remote_storages.list(), lambda x: x.to_dict())
-
-
-async def _get_remote_storage(apm: APMClient, storage_id: str) -> str:
-    return await get_tool(apm.remote_storages.get(storage_id), lambda x: x.to_dict())
-
-
-async def _list_hypervisors(apm: APMClient) -> str:
-    return await list_tool(apm.hypervisors.list(), lambda x: x.to_dict())
-
-
-async def _get_hypervisor(apm: APMClient, hypervisor_id: str) -> str:
-    return await get_tool(apm.hypervisors.get(hypervisor_id), lambda x: x.to_dict())
+#
+# Only multi-step logic and request builders live here as named functions — trivial
+# single-call get/list wrappers are inlined directly in their tool body below,
+# matching the convention in tools/activity.py and tools/log.py.
 
 
 async def _change_backup_server_tiering_plan(
@@ -186,7 +146,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     @registrar.tool(description="Get APM site overview: site UUID, external address, management servers, storage usage, and workload counts by type.")
     async def get_site_info(ctx: Context) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await _get_site_info(apm)
+        return await get_tool(apm.get_site_info(), lambda x: x.to_dict())
 
     @registrar.tool(description=(
         f"List backup servers. {LIST_RESULT_SUFFIX} Filter by name, status "
@@ -201,9 +161,17 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         offset: int = 0,
     ) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-        status_filter = to_enum_list(ServerStatus, status)
-        type_filter = to_enum_list(BackupServerType, server_type)
-        return await _list_backup_servers(apm, name_contains, status_filter, type_filter, limit, offset)
+        return await list_tool(
+            apm.backup_servers.list(
+                name_contains=name_contains,
+                status_filter=to_enum_list(ServerStatus, status),
+                type_filter=to_enum_list(BackupServerType, server_type),
+                limit=clamp_limit(limit),
+                offset=offset,
+            ),
+            lambda x: x.to_dict(),
+            offset=offset,
+        )
 
     @registrar.tool(description="Get a single backup server by ID. Use list_backup_servers (optionally with name_contains) to find the ID.")
     async def get_backup_server(
@@ -211,12 +179,12 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         server_id: str,
     ) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await _get_backup_server(apm, server_id)
+        return await get_tool(apm.backup_servers.get(server_id), lambda x: x.to_dict())
 
     @registrar.tool(description=f"List all remote storage destinations. {LIST_RESULT_SUFFIX}")
     async def list_remote_storages(ctx: Context) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await _list_remote_storages(apm)
+        return await list_tool(apm.remote_storages.list(), lambda x: x.to_dict())
 
     @registrar.tool(description="Get a single remote storage destination by ID. Use list_remote_storages to find the ID.")
     async def get_remote_storage(
@@ -224,12 +192,12 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         storage_id: str,
     ) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await _get_remote_storage(apm, storage_id)
+        return await get_tool(apm.remote_storages.get(storage_id), lambda x: x.to_dict())
 
     @registrar.tool(description=f"List all registered hypervisors (vSphere, Hyper-V). {LIST_RESULT_SUFFIX}")
     async def list_hypervisors(ctx: Context) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await _list_hypervisors(apm)
+        return await list_tool(apm.hypervisors.list(), lambda x: x.to_dict())
 
     @registrar.tool(description="Get a single hypervisor by ID. Use list_hypervisors to find the ID.")
     async def get_hypervisor(
@@ -237,7 +205,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         hypervisor_id: str,
     ) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await _get_hypervisor(apm, hypervisor_id)
+        return await get_tool(apm.hypervisors.get(hypervisor_id), lambda x: x.to_dict())
 
     @registrar.tool("admin", description="Assign or remove a tiering plan for a backup server. Fails if the backup server is not DP-type. Omit tiering_plan_id to remove the current tiering plan.")
     async def change_backup_server_tiering_plan(
@@ -274,16 +242,12 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         retirement_plan_id: str | None = None,
     ) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-
-        async def _do() -> dict[str, Any]:
-            return await _add_remote_storage(
+        return await run_audited_tool(
+            _add_remote_storage(
                 apm, storage_type, access_key, secret_key, vault_name, endpoint,
                 encryption_enabled, relink_encryption_key, trust_self_signed,
                 retirement_plan_id,
-            )
-
-        return await run_audited_tool(
-            _do(),
+            ),
             action="add_remote_storage",
             params={"storage_type": storage_type},
         )

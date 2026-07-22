@@ -12,7 +12,7 @@ from ..models._shared import auto_to_dict
 from ..models.activity import M365ExportActivity
 from ..models.version import VersionLocation, WorkloadVersion
 from ..models.workload import M365GroupInfo, M365UserInfo, M365Workload
-from ._shared import _parse_ts_optional, _tunnel_headers
+from ._shared import ListResult, _parse_ts_optional, _tunnel_headers
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,7 @@ class _BaseM365ExportCollection:
         workload: M365Workload,
         limit: int = 500,
         offset: int = 0,
-    ) -> tuple[list[M365ExportActivity], int]:
+    ) -> ListResult[M365ExportActivity]:
         """List export tasks for a workload.
 
         Args:
@@ -154,7 +154,7 @@ class _BaseM365ExportCollection:
             headers=_tunnel_headers(workload.namespace),
         )
         activities = [_parse_export_activity(a) for a in raw.get("activities", [])]
-        return activities, raw.get("total", 0)
+        return ListResult(activities, raw.get("total"))
 
     async def cancel(self, activity: M365ExportActivity) -> None:
         """Cancel an in-progress export task.

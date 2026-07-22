@@ -84,7 +84,7 @@ class TestPerToolModeGating:
         assert admin_names == set(_EXPECTED_TOOL_MODES)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("mode", ["readonly", "operator", "manager", "admin"])
+    @pytest.mark.parametrize("mode", ["readonly", "operator", "admin"])
     async def test_registered_tools_match_expected_modes(self, mode):
         from synology_apm.mcp._security import mode_allows
         from synology_apm.mcp._server import create_server
@@ -134,26 +134,29 @@ class TestBuildLifespan:
     @pytest.mark.asyncio
     async def test_yields_apm_client_on_successful_connect(self):
         from synology_apm.mcp._server import build_lifespan
+        from synology_apm.sdk import ResolvedConnection
 
         mock_client = AsyncMock()
         mock_client.__aenter__.return_value = mock_client
 
         with patch("synology_apm.mcp._server.APMClient", return_value=mock_client):
-            lifespan = build_lifespan("apm.corp.com", "admin", "secret", verify_ssl=True, debug=False)
+            resolved = ResolvedConnection("apm.corp.com", "admin", "secret", True)
+            lifespan = build_lifespan(resolved, debug=False)
             async with lifespan(None) as ctx:
                 assert ctx["apm"] is mock_client
 
     @pytest.mark.asyncio
     async def test_yields_failed_connection_client_on_authentication_error(self):
         from synology_apm.mcp._server import _FailedConnectionClient, build_lifespan
-        from synology_apm.sdk import AuthenticationError
+        from synology_apm.sdk import AuthenticationError, ResolvedConnection
 
         exc = AuthenticationError("bad credentials")
         mock_client = AsyncMock()
         mock_client.__aenter__.side_effect = exc
 
         with patch("synology_apm.mcp._server.APMClient", return_value=mock_client):
-            lifespan = build_lifespan("apm.corp.com", "admin", "wrong", verify_ssl=True, debug=False)
+            resolved = ResolvedConnection("apm.corp.com", "admin", "wrong", True)
+            lifespan = build_lifespan(resolved, debug=False)
             async with lifespan(None) as ctx:
                 assert isinstance(ctx["apm"], _FailedConnectionClient)
                 with pytest.raises(AuthenticationError):
@@ -162,14 +165,15 @@ class TestBuildLifespan:
     @pytest.mark.asyncio
     async def test_yields_failed_connection_client_on_unreachable_host(self):
         from synology_apm.mcp._server import _FailedConnectionClient, build_lifespan
-        from synology_apm.sdk import APIError
+        from synology_apm.sdk import APIError, ResolvedConnection
 
         exc = APIError("Cannot connect to apm.corp.com: Connection refused")
         mock_client = AsyncMock()
         mock_client.__aenter__.side_effect = exc
 
         with patch("synology_apm.mcp._server.APMClient", return_value=mock_client):
-            lifespan = build_lifespan("apm.corp.com", "admin", "secret", verify_ssl=True, debug=False)
+            resolved = ResolvedConnection("apm.corp.com", "admin", "secret", True)
+            lifespan = build_lifespan(resolved, debug=False)
             async with lifespan(None) as ctx:
                 assert isinstance(ctx["apm"], _FailedConnectionClient)
                 with pytest.raises(APIError):
@@ -181,12 +185,13 @@ class TestBuildLifespan:
         build_lifespan() must skip the real connection attempt entirely -- there's nothing
         usable to connect with -- and go straight to the same degraded-mode placeholder."""
         from synology_apm.mcp._server import _FailedConnectionClient, build_lifespan
-        from synology_apm.sdk import AuthenticationError
+        from synology_apm.sdk import AuthenticationError, ResolvedConnection
 
         exc = AuthenticationError("Missing credentials. Run `synology-apm-cli config set` ...")
 
         with patch("synology_apm.mcp._server.APMClient") as mock_apm_client_cls:
-            lifespan = build_lifespan("", "", "", verify_ssl=True, debug=False, config_error=exc)
+            resolved = ResolvedConnection("", "", "", True)
+            lifespan = build_lifespan(resolved, debug=False, config_error=exc)
             async with lifespan(None) as ctx:
                 assert isinstance(ctx["apm"], _FailedConnectionClient)
                 with pytest.raises(AuthenticationError, match="Missing credentials"):

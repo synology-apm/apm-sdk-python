@@ -59,35 +59,34 @@ class TestListResult:
         assert "truncated" not in result
 
     @pytest.mark.asyncio
-    async def test_reliable_total_false_infers_truncated_from_full_page(self, mock_apm):
-        """Some endpoints (e.g. log listing) never report a real total; reliable_total=False
-        reports total as None and falls back to inferring truncation from a full page."""
+    async def test_none_total_infers_truncated_from_full_page(self, mock_apm):
+        """Some endpoints (e.g. log listing) never report a real total; when the
+        coroutine's total is None, list_result() falls back to inferring truncation
+        from a full page."""
         from synology_apm.mcp._helpers import list_result
 
         bs = make_backup_server()
-        mock_apm.backup_servers.list.return_value = ([bs] * 25, 0)
+        mock_apm.backup_servers.list.return_value = ([bs] * 25, None)
 
         result = await list_result(
             mock_apm.backup_servers.list(limit=25),
             lambda x: x.to_dict(),
             limit=25,
-            reliable_total=False,
         )
         assert result["total"] is None
         assert result["truncated"] is True
 
     @pytest.mark.asyncio
-    async def test_reliable_total_false_no_truncated_when_page_not_full(self, mock_apm):
+    async def test_none_total_no_truncated_when_page_not_full(self, mock_apm):
         from synology_apm.mcp._helpers import list_result
 
         bs = make_backup_server()
-        mock_apm.backup_servers.list.return_value = ([bs], 0)
+        mock_apm.backup_servers.list.return_value = ([bs], None)
 
         result = await list_result(
             mock_apm.backup_servers.list(limit=25),
             lambda x: x.to_dict(),
             limit=25,
-            reliable_total=False,
         )
         assert result["total"] is None
         assert "truncated" not in result

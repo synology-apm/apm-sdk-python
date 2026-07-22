@@ -40,7 +40,3 @@ relies on (list vs. get field completeness, pagination, permission modes).
    sort — page through with `offset` until `total` is fully collected (see
    `apm-mcp-conventions`) before sorting, otherwise the "largest" result is only the largest
    within whichever single page happened to be returned.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

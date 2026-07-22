@@ -10,7 +10,7 @@ collections or methods. Read this before adding to or modifying anything under t
 
 | Layer | Drives | Data source | Offline? |
 |---|---|---|---|
-| `tests/unit/` | SDK methods directly, mocked HTTP (`aioresponses`/`patch`) | fixtures | yes |
+| `tests/unit/` | SDK methods directly, mocked HTTP (`aiointercept`/`patch`) | fixtures | yes |
 | `tests/integration/` | SDK methods directly (`apm.machine.workloads.list()`) | `tests/cassettes/` | yes (replay) |
 | `tests/smoke/cli/` | The real `synology-apm-cli` binary, via subprocess | live, `.env`-configured APM | no |
 | **This tool** | `synology_apm.sdk`'s public async API, in-process | live, `.env`-configured APM | no |
@@ -216,7 +216,7 @@ All operations this tool can run fall into three categories:
 
 | Category | Behavior | Examples |
 |---|---|---|
-| **Read-only / round-trip** | Always run; round trips fully restore state | all `list`/`get`/`get_by_name`/`get_site_info`; `lock_version()`→`unlock_version()` (or vice versa, detecting current state first); `backup_now()`→`cancel_backup()`; `apm.machine.workloads.change_plan(...)` / `apm.m365.workloads.change_plan(...)` switch→restore; `apm.machine.workloads.change_plan(...)` / `apm.m365.workloads.change_plan(...)` no-op re-apply; m365 export `start`→`list`→`download_url.get`→`cancel` |
+| **Read-only / round-trip** | Always run; round trips fully restore state | all `list`/`get`/`get_by_name`/`get_site_info`; `lock_version()`→`unlock_version()` (or vice versa, detecting current state first); `backup_now()`→`cancel_backup()`; `apm.machine.workloads.change_plan(...)` / `apm.m365.workloads.change_plan(...)` switch→restore; `apm.machine.workloads.change_plan(...)` / `apm.m365.workloads.change_plan(...)` no-op re-apply; m365 export `start`→`list`→`download_url.get`→`cancel`; remote storage `add`→`update`→`delete` (per `[[remote_storage]]` entry in `smoke_creds.toml`, see `TEST_DATA.md`) |
 | **Consumes prepared test data** | Runs only when the tester prepared disposable data (see `TEST_DATA.md`); skipped otherwise | `activities.restore.cancel(...)` on an in-progress restore the tester started |
 | **Excluded — never automated** | Irreversible on real data. M365 `retire()` is checked manually through the CLI (`tests/smoke/cli/MANUAL_TESTS.md` — the CLI drives the same SDK method); M365 `delete()` has unit-test coverage only | M365 `retire()`, `delete()` |
 
@@ -253,6 +253,26 @@ four export steps are skipped.
 The `download_url.get` step polls up to 5 times (2s apart) for the export to leave
 `M365ExportStatus.PREPARING`, using `expect_error=ResourceNotReadyError` if it never does.
 
+**Remote storage `add`→`update`→`delete`** (`phases/_infra.py`, one full roundtrip per
+`[[remote_storage]]` entry in `smoke_creds.toml`; skipped entirely when that file is absent):
+each entry runs `retirement_plan[name/create]` (a temporary 9999-day retirement plan, needed to
+satisfy APM's catalog-relinking requirement) → `add[name]` → `add[name/duplicate]` (expects
+`RemoteStorageConflictError`) → `get[name]` → `check[name/fields]` → `update[name]` →
+`check[name/post_update]` → an in-use delete check via a temporary tiering plan (expects
+`RemoteStorageInUseError`; skipped without a DP backup server) → `delete[name]` →
+`get[name/post_delete]` (expects `ResourceNotFoundError`) → `retirement_plan[name/delete]`
+(always runs, regardless of intermediate failures, to avoid leaking the temporary plan).
+
+The unmanaged-catalog check runs for every entry: `add[name/unmanaged_raises]` first adds the
+vault **without** a retirement plan. On a vault already holding catalogs from a previous
+registration this must raise `RemoteStorageUnmanagedCatalogError` (`vault_name`/`catalog_count`
+are checked), and the `add[name]` step that follows adopts those catalogs; on a vault with no
+pre-existing catalogs the probe registration succeeds instead — it is rolled back and the three
+steps are recorded as skipped. Deleting the storage at the end of the roundtrip leaves adopted
+catalogs unmanaged again, so a vault used this way stays reusable across runs. When
+`relink_encryption_key` is set on an entry, two more steps run: `add[name/no_key]` (expects
+`RemoteStorageEncryptionMismatchError`) and `check[name/encryption_key]`.
+
 See `TEST_DATA.md` for the data that makes each round trip exercised rather than skipped.
 
 ---
@@ -273,9 +293,10 @@ order reflects `ctx.data` dependencies: `infra` populates `dp_servers`/`remote_s
 (reads `ctx.data["servers"]` for the backup server namespace) and `m365` (same tenant dependency,
 consistent ordering) and creates its own test M365 plans rather than consuming from `ctx.data`.
 
-> **Note:** Running a single `--group <domain>` is useful for fast iteration, but any step that
-> depends on a `ctx.data` key from an earlier phase will find it empty and `ctx.skip(...)`
-> gracefully. To exercise the full cross-phase data flow, use `--group all`.
+> **Note:** same `--group` semantics as the CLI smoke tool (see its README) — running a single
+> `--group <domain>` is useful for fast iteration, but any step depending on a `ctx.data` key
+> from an earlier phase will find it empty and `ctx.skip(...)` gracefully; use `--group all` to
+> exercise the full cross-phase data flow.
 
 `--m365-scopes` (default: all of `M365_SCOPES`) limits which scopes `phases/_m365.py` loops
 over — useful for iterating on one scope.
@@ -330,12 +351,9 @@ call (and any `ctx.check(...)`s on its result) in the relevant `_run_<subcommand
 new helper called from `run`), following the `step` naming convention above. If the result is
 needed by a later phase, add it to the `ctx.data` registry table above.
 
-**Add a new phase** —
-1. Create `phases/_<domain>.py` following the phase-file pattern above.
-2. Add `"<domain>"` to `DOMAINS` in `_context.py`.
-3. Import it and add it to `_PHASES`/`_ORDER` in `__main__.py`, positioned according to its
-   `ctx.data` dependencies.
-4. Add the new key(s) it produces/consumes to the `ctx.data` registry table above.
+**Add a new phase** — same 4 steps as the CLI smoke tool's README (create the phase file,
+register it in `DOMAINS`, wire it into `_PHASES`/`_ORDER`, add its `ctx.data` keys to the
+registry table above).
 
 **New prerequisite data** — if a new or changed step's `ctx.skip(...)` depends on a kind of APM
 resource (a new plan type, workload category, scope, version state, ...) not yet covered by
@@ -352,9 +370,8 @@ unit-test coverage and record the exclusion in the "Round-trip operations" table
    review the regenerated `reports/<ts>/<domain>.md` and `index.md` for `unexpected` calls or
    `checks_failed`.
 2. For changes that touch `ctx.data` threading across phases, also run `--group all`.
-3. `uv run ruff check packages/synology-apm-sdk/src packages/synology-apm-cli/src tests examples
-   scripts` and `uv run mypy examples/ scripts/ tests/` must both pass — see root `CLAUDE.md`
-   Post-change Checklist.
+3. Same lint/type-check gate as the CLI smoke tool (see its README step 3) — see root
+   `CLAUDE.md` Post-change Checklist.
 
 ---
 

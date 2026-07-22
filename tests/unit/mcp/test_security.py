@@ -12,19 +12,12 @@ class TestModeAllows:
     @pytest.mark.parametrize("required,current,expected", [
         ("readonly",  "readonly",  True),
         ("readonly",  "operator",  True),
-        ("readonly",  "manager",   True),
         ("readonly",  "admin",     True),
         ("operator",  "readonly",  False),
         ("operator",  "operator",  True),
-        ("operator",  "manager",   True),
         ("operator",  "admin",     True),
-        ("manager",   "readonly",  False),
-        ("manager",   "operator",  False),
-        ("manager",   "manager",   True),
-        ("manager",   "admin",     True),
         ("admin",     "readonly",  False),
         ("admin",     "operator",  False),
-        ("admin",     "manager",   False),
         ("admin",     "admin",     True),
     ])
     def test_all_mode_pairs(self, required, current, expected):

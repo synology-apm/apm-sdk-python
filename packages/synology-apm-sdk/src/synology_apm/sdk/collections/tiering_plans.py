@@ -11,6 +11,7 @@ from ..models.location import LocationInfo
 from ..models.tiering_plan import TieringPlan, TieringPlanCreateRequest
 from ._shared import (
     _STORAGE_TYPE_TO_DEST_TYPE,
+    ListResult,
     _build_remote_location_cache,
     _create_plan_and_fetch,
     _delete_plan_checked,
@@ -40,7 +41,7 @@ class TieringPlanCollection:
         name_contains: str | None = None,
         limit: int = 500,
         offset: int = 0,
-    ) -> tuple[list[TieringPlan], int]:
+    ) -> ListResult[TieringPlan]:
         """List all Tiering Plans.
 
         Destination details are resolved concurrently for all plans in the page.
@@ -60,7 +61,7 @@ class TieringPlanCollection:
         raw = await self._session.get("/api/v1/plan/tiering_plan", params=params)
         plans_raw = raw.get("plans", [])
         cache = await _build_destination_cache(self._session, plans_raw)
-        return [_parse_tiering_plan(p, cache) for p in plans_raw], raw.get("total", 0)
+        return ListResult([_parse_tiering_plan(p, cache) for p in plans_raw], raw.get("total"))
 
     async def get(self, plan_id: str) -> TieringPlan:
         """Fetch a Tiering Plan by UUID.
@@ -98,7 +99,7 @@ class TieringPlanCollection:
                 "offset": offset,
             }
             raw = await self._session.get("/api/v1/plan/tiering_plan", params=params)
-            return raw.get("plans", []), raw.get("total", 0)
+            return raw.get("plans", []), raw.get("total")
 
         async for p in _paginate(fetch):
             if p.get("spec", {}).get("name", "").lower() == q:
@@ -225,7 +226,7 @@ async def _get_plans_bulk(
             return None
 
     raws = await asyncio.gather(*[fetch_raw(p) for p in plan_ids])
-    plan_raws = [(pid, raw) for pid, raw in zip(plan_ids, raws) if raw is not None]
+    plan_raws = [(pid, raw) for pid, raw in zip(plan_ids, raws, strict=True) if raw is not None]
     dest_cache = await _build_destination_cache(session, [raw for _, raw in plan_raws])
     return {pid: _parse_tiering_plan(raw, dest_cache) for pid, raw in plan_raws}
 

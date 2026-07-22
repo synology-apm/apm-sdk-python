@@ -19,8 +19,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import typer
-from click.testing import Result
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 # Must be set before importing any synology_apm.cli module so that every Rich
 # Console — including the module-level Console in output.py and the temporary

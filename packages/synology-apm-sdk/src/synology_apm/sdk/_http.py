@@ -10,6 +10,7 @@ Authentication flow (connect):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 import json
 import os
@@ -53,6 +54,13 @@ _DISCONNECTED_SERVER_CODE = 2003
 _BACKUP_SERVER_NOT_FOUND_CODE = 1402
 
 
+# connect(), _request(), and download_file() each catch this exact tuple and
+# dispatch through _map_connection_error() below — the test suite exercises
+# each named exception type genuinely at only one or two of these three call
+# sites (not all three), relying on this being one shared tuple/function
+# rather than per-call-site logic. If this ever gets split into
+# connect-specific vs. request-specific handling, re-check tests/unit/sdk/
+# test_http_errors.py's coverage of each exception type across call sites.
 _CONNECTION_ERRORS = (
     aiohttp.ClientConnectorCertificateError,
     aiohttp.ClientConnectorError,
@@ -61,6 +69,10 @@ _CONNECTION_ERRORS = (
     aiohttp.ServerTimeoutError,
     TimeoutError,
 )
+
+# download_file() batches network chunks up to this size before each threaded disk
+# write, so a large download doesn't pay a thread-pool dispatch per 64KB network chunk.
+_DOWNLOAD_WRITE_BUFFER_SIZE = 4 * 1024 * 1024
 
 
 def _map_connection_error(exc: BaseException, base_url: str, *, context: str = "") -> APMError:
@@ -158,10 +170,9 @@ class WebAPISession:
             return
 
         if self._connected:
-            try:
+            # best-effort: logout failure does not affect cleanup
+            with contextlib.suppress(Exception):
                 await self._request("GET", "/api/v1/preference/logout", _reauth=False)
-            except Exception:
-                pass  # best-effort: logout failure does not affect cleanup
 
         await self._session.close()
         self._session = None
@@ -256,7 +267,9 @@ class WebAPISession:
         Args:
             url:         Full download URL (as returned by the entries:download endpoint).
             dest_path:   Local filesystem path to write the file to.
-            on_progress: Optional callback invoked after each chunk is written.
+            on_progress: Optional callback invoked after each chunk is received (disk writes
+                         may be buffered and deferred, so this does not imply the bytes are
+                         yet durable on disk).
                          Signature: on_progress(bytes_downloaded, total_bytes_or_none).
                          total_bytes_or_none is None when the server omits Content-Length.
 
@@ -295,25 +308,32 @@ class WebAPISession:
                 total: int | None = int(resp.headers["Content-Length"]) if "Content-Length" in resp.headers else None
                 downloaded = 0
                 try:
-                    with open(part_path, "wb") as f:
+                    f = await asyncio.to_thread(open, part_path, "wb")
+                    try:
+                        buffer = bytearray()
                         async for chunk in resp.content.iter_chunked(65536):
-                            f.write(chunk)
+                            buffer.extend(chunk)
                             downloaded += len(chunk)
                             if on_progress is not None:
                                 on_progress(downloaded, total)
+                            if len(buffer) >= _DOWNLOAD_WRITE_BUFFER_SIZE:
+                                await asyncio.to_thread(f.write, buffer)
+                                buffer.clear()
+                        if buffer:
+                            await asyncio.to_thread(f.write, buffer)
                         if downloaded == 0:
                             raise APIError(
                                 "Downloaded file is empty; the export may not be ready for download yet."
                             )
-                        f.flush()
-                        os.fsync(f.fileno())
+                        await asyncio.to_thread(f.flush)
+                        await asyncio.to_thread(os.fsync, f.fileno())
+                    finally:
+                        await asyncio.to_thread(f.close)
                     os.replace(part_path, dest_path)
                 except BaseException:
                     # Remove the partial file so a subsequent attempt starts clean.
-                    try:
+                    with contextlib.suppress(OSError):
                         os.unlink(part_path)
-                    except OSError:
-                        pass
                     raise
         except _CONNECTION_ERRORS as exc:
             raise _map_connection_error(exc, self._base_url, context="Download") from exc

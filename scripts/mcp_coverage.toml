@@ -110,12 +110,12 @@ mode      = "operator"
 [[mapping]]
 sdk_path = "machine.workloads.lock_version"
 mcp_tool  = "lock_machine_version"
-mode      = "manager"
+mode      = "admin"
 
 [[mapping]]
 sdk_path = "machine.workloads.unlock_version"
 mcp_tool  = "unlock_machine_version"
-mode      = "manager"
+mode      = "admin"
 
 [[mapping]]
 sdk_path = "machine.workloads.add_file_server"
@@ -220,12 +220,12 @@ mode      = "operator"
 [[mapping]]
 sdk_path = "m365.workloads.lock_version"
 mcp_tool  = "lock_m365_version"
-mode      = "manager"
+mode      = "admin"
 
 [[mapping]]
 sdk_path = "m365.workloads.unlock_version"
 mcp_tool  = "unlock_m365_version"
-mode      = "manager"
+mode      = "admin"
 
 [[mapping]]
 sdk_path = "m365.workloads.change_plan"

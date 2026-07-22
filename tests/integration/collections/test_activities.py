@@ -268,7 +268,7 @@ async def test_restore_activities_workload_filter_matches_workload(apm: APMClien
     pytest.skip("No restore activity matches a current machine workload")
 
 
-async def test_restore_activities_workload_filter_nonexistent_raises_not_found(apm: APMClient) -> None:
-    with pytest.raises(ResourceNotFoundError) as exc_info:
-        await apm.activities.restore.list(workload=_NONEXISTENT_WORKLOAD)
-    assert_resource_error(exc_info, resource_type="Workload", resource_id=_NONEXISTENT_WORKLOAD.workload_id)
+async def test_restore_activities_workload_filter_nonexistent_returns_empty(apm: APMClient) -> None:
+    acts, total = await apm.activities.restore.list(workload=_NONEXISTENT_WORKLOAD)
+    assert acts == []
+    assert total == 0

@@ -586,28 +586,18 @@ def render_version_table(
     console.print(t)
 
 
-def print_version_detail(console: Console, v: WorkloadVersion, act: BackupActivity) -> None:
-    """Render the version + activity detail view for TABLE output mode."""
+def print_activity_detail(console: Console, act: BackupActivity, *, show_workload: bool = False) -> None:
+    """Render a backup activity's Status/Plan/timing/data/log body.
+
+    Shared by print_version_detail() (as the "Activity Detail" section of `machine
+    version get` / `m365 version get`) and `activity backup get`, which prints its own
+    header before calling this and passes show_workload=True for its extra Workload: line
+    (print_version_detail's own header already names the workload, so it omits that line).
+    """
     status_label = fmt_backup_activity_status(act)
-    console.print("[bold]── Version[/bold]")
-    console.print(f"Version ID:      {v.version_id}")
-    console.print(f"Workload ID:     {v.workload_id}")
-    console.print(f"Namespace:       {v.namespace}")
-    if v.locked:
-        console.print("Locked:          🔒")
-    if v.locations:
-        loc_lines = [fmt_location_name(loc) for loc in v.locations]
-        console.print(f"Locations:       {loc_lines[0]}")
-        for line in loc_lines[1:]:
-            console.print(f"                 {line}")
-    if v.copy_status is not None:
-        console.print(f"Copy Status:     {fmt_version_copy_status(v.copy_status)}", markup=True)
-        reason_str = fmt_copy_reason(v.copy_reason)
-        if reason_str:
-            console.print(f"                 {reason_str}")
-    console.print()
-    console.print(f"[bold]── Activity Detail — {act.workload_name}[/bold]")
     console.print(f"Status:          {status_label}")
+    if show_workload:
+        console.print(f"Workload:        {act.workload_name}")
     console.print(f"Plan:            {act.plan_name or '-'}")
     if act.backup_scope:
         scope_label = BACKUP_SCOPE_LABELS.get(act.backup_scope, act.backup_scope.value)
@@ -630,6 +620,29 @@ def print_version_detail(console: Console, v: WorkloadVersion, act: BackupActivi
             f"{act.processed_error_count} error"
         )
     render_log_table(console, act.log_entries)
+
+
+def print_version_detail(console: Console, v: WorkloadVersion, act: BackupActivity) -> None:
+    """Render the version + activity detail view for TABLE output mode."""
+    console.print("[bold]── Version[/bold]")
+    console.print(f"Version ID:      {v.version_id}")
+    console.print(f"Workload ID:     {v.workload_id}")
+    console.print(f"Namespace:       {v.namespace}")
+    if v.locked:
+        console.print("Locked:          🔒")
+    if v.locations:
+        loc_lines = [fmt_location_name(loc) for loc in v.locations]
+        console.print(f"Locations:       {loc_lines[0]}")
+        for line in loc_lines[1:]:
+            console.print(f"                 {line}")
+    if v.copy_status is not None:
+        console.print(f"Copy Status:     {fmt_version_copy_status(v.copy_status)}", markup=True)
+        reason_str = fmt_copy_reason(v.copy_reason)
+        if reason_str:
+            console.print(f"                 {reason_str}")
+    console.print()
+    console.print(f"[bold]── Activity Detail — {act.workload_name}[/bold]")
+    print_activity_detail(console, act)
 
 
 # ── M365 export status ────────────────────────────────────────────────────────

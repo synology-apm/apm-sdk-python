@@ -844,6 +844,7 @@ def test_main_passes_arguments_to_run(monkeypatch: pytest.MonkeyPatch) -> None:
         "--yes",
         "--concurrency", "5",
         "--csv", "/videos/report.csv",
+        "--profile", "lab",
     ]
     with patch.object(sys, "argv", argv):
         evv.main()
@@ -857,6 +858,7 @@ def test_main_passes_arguments_to_run(monkeypatch: pytest.MonkeyPatch) -> None:
         "yes": True,
         "concurrency": 5,
         "csv_path": "/videos/report.csv",
+        "profile": "lab",
     }
 
 
@@ -874,6 +876,7 @@ def test_main_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "yes": False,
         "concurrency": 3,
         "csv_path": None,
+        "profile": None,
     }
 
 
@@ -881,8 +884,10 @@ def test_main_rejects_invalid_workload_type(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _capture_main_run(monkeypatch)
-    with patch.object(sys, "argv", ["export_verification_videos.py", "--workload-type", "pc"]):
-        with pytest.raises(SystemExit) as exc:
-            evv.main()
+    with (
+        patch.object(sys, "argv", ["export_verification_videos.py", "--workload-type", "pc"]),
+        pytest.raises(SystemExit) as exc,
+    ):
+        evv.main()
     assert exc.value.code == 2
     assert "invalid choice: 'pc'" in capsys.readouterr().err

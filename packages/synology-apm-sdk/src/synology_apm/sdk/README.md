@@ -89,7 +89,7 @@ synology_apm/sdk/
 │   ├── saas.py
 │   └── system.py            # SiteInfo, SiteStorageStats, WorkloadTypeStat, WorkloadUsageSummary
 └── collections/
-    ├── _shared.py           # Shared collection helpers (private): pagination, timestamp/status parsing, version mixin
+    ├── _shared.py           # Shared collection helpers (private): pagination, timestamp/status parsing, version mixin; also defines the public ListResult pagination envelope
     ├── machine.py           # MachineCollection (entry point) + MachineWorkloadCollection
     ├── m365.py              # M365Collection (entry point) + M365WorkloadCollection
     ├── m365_auto_backup_rule.py
@@ -101,6 +101,7 @@ synology_apm/sdk/
     ├── tiering_plans.py
     ├── saas.py
     ├── activities.py        # ActivityCollection, BackupActivityCollection, RestoreActivityCollection
+    ├── _activity_parsers.py # Activity response parsers + API string maps (private)
     ├── backup_servers.py
     ├── hypervisors.py
     ├── logs.py
@@ -175,8 +176,8 @@ The SDK authenticates through the legacy Synology WebAPI login endpoint (`/webap
 |---|---|
 | `ServerStatus`, `BackupServerRole`, server status/type filters | `collections/backup_servers.py` — `_SERVER_STATUS_MAP`, `_SYNC_DISCONNECTED`, `_ROLE_MAP`, `_STATUS_FILTER_MAP`, `_TYPE_FILTER_MAP` |
 | `RemoteStorageStatus` / `RemoteStorageType` (API `connectionStatus` / `storageType`) | `collections/remote_storages.py` — `_REMOTE_STORAGE_STATUS_MAP`, `_REMOTE_STORAGE_TYPE_MAP` |
-| `BackupActivityStatus` / `RestoreActivityStatus` (parse and filter directions) | `collections/activities.py` — `_BACKUP_STATUS_MAP`, `_RESTORE_STATUS_MAP`, `_BACKUP_STATUS_TO_API`, `_RESTORE_STATUS_TO_API` |
-| `RestoreType`, `ActivityWorkloadType`, cancel type strings | `collections/activities.py` — `_RESTORE_TYPE_MAP`, `_RAW_TO_SUBTYPE`, `_SUBTYPE_TO_CANCEL_TYPE` |
+| `BackupActivityStatus` / `RestoreActivityStatus` (parse and filter directions) | `collections/_activity_parsers.py` — `_BACKUP_STATUS_MAP`, `_RESTORE_STATUS_MAP`, `_BACKUP_STATUS_TO_API`, `_RESTORE_STATUS_TO_API` |
+| `RestoreType`, `ActivityWorkloadType`, cancel type strings | `collections/_activity_parsers.py` — `_RESTORE_TYPE_MAP`, `_RAW_TO_SUBTYPE`, `_SUBTYPE_TO_CANCEL_TYPE` |
 | `M365WorkloadType` | `collections/m365.py` — `_TYPE_TO_API_TYPE` / `_API_TYPE_TO_TYPE` |
 | `MachineWorkloadType`, `VersionStatus` | `collections/_shared.py` — `_MACHINE_WORKLOAD_TYPE_MAP`, `_VERSION_STATUS_MAP` |
 | `VerifyStatus` (parse and filter directions) | `enums.py` — `_VERIFY_STATUS_MAP`; `collections/machine.py` — `_VERIFY_STATUS_TO_API` |
@@ -186,9 +187,9 @@ The SDK authenticates through the legacy Synology WebAPI login endpoint (`/webap
 | `RemoteStorageType` → plan/tiering `destinationType` | `collections/_shared.py` — `_STORAGE_TYPE_TO_DEST_TYPE` |
 | `HypervisorType` | `collections/hypervisors.py` — `_HOST_TYPE_MAP` |
 | `M365ExportStatus` | `collections/m365_mail_export.py` — `_EXPORT_STATUS_MAP` |
-| `LogLevel` | `collections/activities.py` — `_LOG_LEVEL_MAP` |
+| `LogLevel` | `collections/_activity_parsers.py` — `_LOG_LEVEL_MAP` |
 | `FileServerType` | `collections/machine.py` — `_FS_OS_TYPE_MAP` |
-| `BackupScope` | `collections/activities.py` — `_BACKUP_SCOPE_MAP` |
+| `BackupScope` | `collections/_activity_parsers.py` — `_BACKUP_SCOPE_MAP` |
 
 ### Naming decision: GWS
 
@@ -258,9 +259,8 @@ strings.
 `CopyReason` is set only when the outer `VersionCopyStatus` is `SKIPPED`, `RETRY`, or
 `FAILED`; it is `None` for all other outer statuses. `NO_VERSIONS_TO_COPY` is the one
 non-error value: the outer status is `COMPLETED`, but this reason distinguishes "no versions
-eligible for copy" from a true completion. The CLI checks
-`bcs.reason == CopyReason.NO_VERSIONS_TO_COPY` to show an informational override rather than
-a success message. The neutral name suits both backup copy and future tiering contexts.
+eligible for copy" from a true completion. The neutral name suits both backup copy and
+future tiering contexts.
 
 ---
 
@@ -283,7 +283,7 @@ The top-level `workloadType` field received by the M365WorkloadCollection parser
 service subtype directly (`"USER_EXCHANGE"`, `"USER_DRIVE"`, `"USER_CHAT"`, `"SITE"`,
 `"TEAMS"`, `"GROUP_EXCHANGE"` — mapped via `_API_TYPE_TO_TYPE` in `collections/m365.py`).
 The value `"APPLICATION_M365"` appears only in the **activity** API's `spec.workloadType`
-(parsed by `collections/activities.py`), where it identifies the M365 category as a whole.
+(parsed by `collections/_activity_parsers.py`), where it identifies the M365 category as a whole.
 
 ### M365Info Union Type
 
@@ -371,7 +371,7 @@ The API fields are of string type; parser rules:
 
 ## Collection Behavior Rules
 
-> All `list()` methods return a `(items, total)` tuple; callers (including tests) must unpack both: `items, _ = await collection.list()`. The one exception is `M365AutoBackupRuleCollection.list()`, which returns an `M365AutoBackupRuleListResult` (see its section below).
+> All `list()` methods return a `ListResult[T]` (a `NamedTuple` with `items` and `total` fields); callers (including tests) can unpack it positionally like a plain `(items, total)` tuple: `items, _ = await collection.list()`. `total` is `None` when the underlying data source cannot report a reliable count (see each collection method's docstring for which case applies). The one exception is `M365AutoBackupRuleCollection.list()`, which returns an `M365AutoBackupRuleListResult` (see its section below).
 
 ### MachineWorkloadCollection
 
@@ -503,7 +503,7 @@ Accessed via `APMClient.m365.auto_backup_rules`.
 **Two independently managed sections per tenant:**
 
 **User Services rules (Exchange / OneDrive / Chat):**
-- `list(tenant_id)` — GET `/{tenant_id}`. Returns `M365AutoBackupRuleListResult` with `rules` (tuple of `M365AutoBackupRule`) and four `M365CollabServiceSetting` fields.
+- `list(tenant_id)` — GET `/{tenant_id}`.
 - `create(tenant_id, namespace, plan_id, ...)` — POST with body `{ namespace, ruleSpec: { tenantId, backupPlanId }, exchangeGroupIds, onedriveGroupIds, chatGroupIds }`.
 - `update(rule, ...)` — PUT `/{uid}` with body `{ namespace, backupPlanId, exchangeGroupIds, onedriveGroupIds, chatGroupIds }`. Note: the PUT body uses `backupPlanId` at top level (no `ruleSpec` wrapper), unlike the POST.
 - `delete(rule)` — DELETE `/{uid}?namespace={namespace}`.
@@ -511,7 +511,6 @@ Accessed via `APMClient.m365.auto_backup_rules`.
 **Collaboration Services settings (M365 Groups / SharePoint Personal Sites / SharePoint Sites / Teams):**
 - `update_collab_settings(tenant_id, group_exchange, mysite, sharepoint, teams)` — PUT `/collab_service`. All four service types are sent together. Disabled types (or `None`) serialize to `{ "planId": "", "namespace": "" }`.
 - API field names: `groupExchangeSetting`, `mySiteSetting`, `generalSiteSetting` (SharePoint Sites), `teamsSetting`.
-- `M365CollabServiceSetting.enabled` is `True` iff `plan_id` is non-empty.
 
 **`list()` excludes rules pending deletion** — after `delete()` is called, the rule may still appear in the raw API response for up to ~2 minutes while the finalizer runs. `list()` filters these out so the result reflects only active rules.
 
@@ -525,7 +524,7 @@ Accessed via `APMClient.m365.auto_backup_rules`.
 
 **The status parameter of list() is a one-to-many filter:**
 A single SDK status enum value can expand to multiple API filter values (OR logic),
-per `_BACKUP_STATUS_TO_API` / `_RESTORE_STATUS_TO_API` in `collections/activities.py`.
+per `_BACKUP_STATUS_TO_API` / `_RESTORE_STATUS_TO_API` in `collections/_activity_parsers.py`.
 For example, `BackupActivityStatus.FAILED` sends `backupStatus=ERROR&backupStatus=UNKNOWN`,
 and `RestoreActivityStatus.FAILED` sends
 `restoreStatus=FAILED&restoreStatus=DEVICE_MISSING&restoreStatus=MIGRATE_FAILED`.
@@ -540,16 +539,15 @@ workload-level scoping) and the two compose via AND logic.
 `workload: Workload | None` restricts results to a single workload's activities, sent as
 the query param pair `workload.uid=<workload.workload_id>&workload.namespace=<workload.namespace>`.
 Confirmed against the real API: both params are required together — supplying either one
-alone has no filtering effect, so the SDK only ever sends them as a pair.
-
-**Asymmetric not-found behavior for the workload parameter:**
-If no workload matching `(workload.workload_id, workload.namespace)` exists on the server,
-`BackupActivityCollection.list(workload=...)` returns `([], 0)`, while
-`RestoreActivityCollection.list(workload=...)` raises `ResourceNotFoundError`
-(`resource_type="Workload"` via `_not_found_as`, on the underlying HTTP 404). Confirmed
-against a live APM: the restore endpoint's 404 body carries `errorCode 1002` /
-`database_query_failed`, though the SDK's own 404 handling is generic and doesn't branch on
-that code. This difference comes from the underlying API, not the SDK.
+alone has no filtering effect, so the SDK only ever sends them as a pair. If no workload
+matching this reference exists on the server, both `BackupActivityCollection.list()` and
+`RestoreActivityCollection.list()` return `([], 0)` — the underlying restore-activities
+endpoint responds with an HTTP 404 carrying `error.details[0].errorCode: 1002`
+(`errorString.key: "database_query_failed"`, confirmed against a live APM) in that case
+(unlike the backup-activities endpoint, which responds with an empty page), so
+`RestoreActivityCollection.list()` catches a 404 carrying that specific detail code and
+returns an empty result to match its sibling's behavior; a 404 without that code (or any
+other error) still propagates normally.
 
 **RestoreActivityCollection.list() filter support:**
 Confirmed against the real `/api/v2/activity/restore/activities` API: supports `status`,
@@ -564,7 +562,7 @@ populating only the one matching `activity.category` (the other two empty) with
 **RestoreActivityCollection.cancel()** sends a differently-shaped body keyed on the
 activity's workload rather than its own ID: `activities: [{workload: {uid, namespace},
 executionId, namespace, workloadType}]`, with `workloadType` converted from
-`ActivityWorkloadType` via `_SUBTYPE_TO_CANCEL_TYPE` (`collections/activities.py`).
+`ActivityWorkloadType` via `_SUBTYPE_TO_CANCEL_TYPE` (`collections/_activity_parsers.py`).
 
 **Endpoint used by get_by_version():**
 Calls `GET /api/v1/activity/backup/activity?executionId=...&workloadUid=...&namespace=...` (v1, not v2) with `version.execution_id`.
@@ -605,9 +603,9 @@ routing the request to the specified backup server via the gateway tunnel. **Onl
 | Method | total |
 |------|-------|
 | `list_drive()` | The actual total returned by the API |
-| `list_activity()` | Always `0` (not returned by the API) |
-| `list_connection()` | Always `0` |
-| `list_system()` | Always `0` |
+| `list_activity()` | Always `None` (not returned by the API) |
+| `list_connection()` | Always `None` |
+| `list_system()` | Always `None` |
 
 ---
 
@@ -617,13 +615,8 @@ routing the request to the specified backup server via the gateway tunnel. **Onl
 1. `GET …/folders?isGroup={bool}` — get the mailbox root folder ID
 2. `POST …/start_export?isGroup={bool}` — submit the export request
 
-**The ready_to_download flag determines the subsequent download flow:**
-- `True` → the export is immediately ready; calls `get_download_url_by_ready_result(result)`
-- `False` → polls `get_activity_by_result(result)` until `status == M365ExportStatus.READY_TO_DOWNLOAD`, then calls `get_download_url_by_activity(activity)`
-
-**Preliminary state check in get_download_url_by_activity():**
-If the passed-in `activity.status == M365ExportStatus.PREPARING`, raises `ResourceNotReadyError`.
-Callers should first confirm that status has left PREPARING, or use the polling flow instead.
+The `ready_to_download`/download-flow branching and the `PREPARING`-state check are documented
+on `start()` and `get_download_url_by_activity()` respectively — see their docstrings.
 
 **Special field behavior of M365ExportActivity:**
 - `finished_at`: always `None` when status is `PREPARING` (regardless of the API's returned value).
@@ -701,27 +694,7 @@ frequency (see the "inherit main schedule" comment in `_build_task_schedule_dict
 
 **Request object validation (`MachinePlanCreateRequest`, `M365PlanCreateRequest`):**
 
-`MachinePlanCreateRequest` and `M365PlanCreateRequest` validate field invariants in `__post_init__`, so `ValueError` is raised at construction time — before any API call. Validated conditions include:
-
-- `schedule.frequency == ScheduleFrequency.AFTER_BACKUP` — invalid for main plan schedules.
-- `schedule.frequency == ScheduleFrequency.WEEKLY and not schedule.weekdays` — WEEKLY requires at least one weekday.
-- `is_immutable=True and retention.retention_type != RetentionType.KEEP_DAYS` — immutable plans require `KEEP_DAYS` retention.
-
-`MachinePlanCreateRequest` additionally validates the `tasks` list when `tasks is not None`:
-
-- All six mandatory `(workload_type, os_type)` pairs must be present (PC/Windows, PC/Mac, PS/Windows, PS/Linux, FS/None, VM/None).
-- VM/None and FS/None entries must each appear exactly once.
-- Each task's `os_type` must be valid for its `workload_type`.
-- VM and FS tasks must have `scope=None`.
-- `custom_volumes` must be empty when `scope != CUSTOM_VOLUME`.
-- Tasks with `use_main_schedule=False` must provide a `schedule`.
-- A task `schedule` with `frequency == WEEKLY` must also specify at least one weekday (same
-  rule as the main schedule, enforced separately per task).
-- `event_trigger` in a task schedule is only valid for PC tasks.
-- Task schedules must not use `AFTER_BACKUP` frequency.
-- Duplicate `MachineTaskConfig` entries (identical field values) are rejected.
-
-When `tasks is None`, APM generates default tasks; all cross-task validations above are skipped.
+`MachinePlanCreateRequest` and `M365PlanCreateRequest` validate field invariants in `__post_init__`, so `ValueError` is raised at construction time — before any API call. The full set of validated conditions is listed in `MachinePlanCreateRequest`'s `Raises:` docstring; when `tasks is None`, APM generates default tasks and all of the `tasks`-specific cross-task validations are skipped.
 
 **`create()` / `update()` always return via `get()`:**
 
@@ -730,10 +703,6 @@ POST and PUT responses for protection plans return a minimal body (just the plan
 **`get()` vs `list()` — config fields:**
 
 `get(plan_id)` returns the full plan spec including `configDevice` (tasks, vm_config, pc_config, ps_config, db_config, backup_window). `list()` does not include `configDevice` in its response; the config fields are always `None` on plans returned by `list()`. Always call `get(plan_id)` when config field values are needed.
-
-**`delete()` accepting a plan object or string:**
-
-`_BasePlanCollection.delete(plan)` accepts either a `ProtectionPlan` object or a raw `plan_id` string. When a `ProtectionPlan` object is passed, its `.plan_id` is used.
 
 **`delete()` error codes:**
 

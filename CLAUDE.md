@@ -8,7 +8,7 @@
 
 This project develops a Python SDK and CLI tool for **Synology ActiveProtect Manager (APM)**.
 
-- **synology-apm-sdk**: Wraps the APM REST API (`/api/v1/`, `/api/v2/`) so developers can interact with APM using a Pythonic interface, without dealing with raw HTTP details.
+- **synology-apm-sdk**: Wraps the APM REST API so developers can interact with APM using a Pythonic interface, without dealing with raw HTTP details.
 - **synology-apm-cli**: A CLI front-end that uses the SDK as its sole dependency, allowing end users to operate APM from the terminal.
 
 ---
@@ -18,7 +18,7 @@ This project develops a Python SDK and CLI tool for **Synology ActiveProtect Man
 | Document | Description | Priority |
 |----------|-------------|----------|
 | `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` | **SDK design contract**: enum ↔ API string mappings, non-obvious collection behavior rules, type system notes. Full public API signatures/docstrings live in source code (→ Sphinx). | required |
-| `packages/synology-apm-cli/src/synology_apm/cli/README.md` | **CLI command spec**: command structure, output format, color/status rules, SDK call mapping. Full CLI → SDK mapping table lives at the end of the file. | implementation reference for CLI |
+| `packages/synology-apm-cli/src/synology_apm/cli/README.md` | **CLI command spec**: command structure, output format, color/status rules. Per-command SDK wiring is not duplicated here — read the command's module under `cli/commands/`. | implementation reference for CLI |
 | `packages/synology-apm-mcp/src/synology_apm/mcp/README.md` | **MCP design contract**: tool/resource registration conventions, mode gating, destructive-action preview/confirm pattern, audit logging, the SDK ↔ MCP coverage manifest, testing conventions. | implementation reference for MCP |
 | `APM_PRODUCT_OVERVIEW.md` | APM product domain knowledge — backup/recovery model, workload categories, key concepts (not the SDK itself — see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` for design rationale and interface) | background reference |
 
@@ -142,9 +142,8 @@ itself.
 > (`packages/synology-apm-sdk/src/synology_apm/sdk/README.md`,
 > `packages/synology-apm-cli/src/synology_apm/cli/README.md`,
 > `packages/synology-apm-mcp/src/synology_apm/mcp/README.md`) are also exempt — their "Enum
-> Definitions and API String Mapping", "Collection Behavior Rules", "CLI → SDK Mapping
-> Table", and "SDK ↔ MCP Coverage Manifest" sections exist specifically to document these
-> mappings for maintainers.
+> Definitions and API String Mapping", "Collection Behavior Rules", and "SDK ↔ MCP Coverage
+> Manifest" sections exist specifically to document these mappings for maintainers.
 
 ### Implementation Conventions
 
@@ -177,7 +176,7 @@ synology-apm-sdk-python/
 ├── skills/              ← MCP workflow skills (SKILL.md per task), hand-authored; see packages/synology-apm-mcp/README.md
 ├── examples/            ← runnable SDK usage examples; see examples/README.md and examples/CLAUDE.md
 ├── docs/                ← Sphinx API reference
-└── scripts/             ← build, release, and MCP-SDK coverage-check scripts (check_mcp_coverage.py, mcp_coverage.toml)
+└── scripts/             ← build, release, and consistency-check scripts
 ```
 
 ---
@@ -190,7 +189,7 @@ Tests must verify **observable behavior**, not internal implementation. The rule
 
 | What to test | How |
 |---|---|
-| SDK → REST API request contract (URL, method, body, params, headers) | `aioresponses` URL interception; or `patch.object(session, "get/post")` + `call_args` inspection |
+| SDK → REST API request contract (URL, method, body, params, headers) | `aiointercept` URL interception; or `patch.object(session, "get/post")` + `call_args` inspection |
 | API response → SDK model field parsing | Provide a complete raw API response fixture; assert model attribute values |
 | Error handling | Provide an error response; assert the exception type and attributes (e.g. `.resource_id`) |
 | Observable side effects | e.g. verify the logout endpoint was called after disconnect: `assert ("GET", URL(logout_url)) in m.requests` |
@@ -341,10 +340,11 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 | New MCP tool or resource added | Add a tool-level unit test in `tests/unit/mcp/tools/<module>.py` (or `tests/unit/mcp/` for a non-tool module) per "MCP test layering" — assert SDK wiring and the JSON result's fields, not just that the call succeeds; add/update its `[[mapping]]` entry in `scripts/mcp_coverage.toml` with the matching mode |
 | MCP tool renamed, removed, or its required mode changed | Update all `call_tool(server, "<tool_name>", ...)` call sites in `tests/unit/mcp/tools/`; update the corresponding `scripts/mcp_coverage.toml` entry (mode mismatches and unregistered/unmapped tools both fail `make test`) |
 | Dataclass field changed (added/deleted/renamed) | Update all tests that use that dataclass as a fixture |
+| Package version bumped (see "Release / Version Bump") | Run `make check-version-consistency` — the `version` field in all three `packages/*/pyproject.toml` files, and the `synology-apm-sdk==X.Y.Z` dependency pin in `synology-apm-cli`'s and `synology-apm-mcp`'s `dependencies`, must all match; enforced by `make test` |
 | Integration test renamed or removed | Local-only, no commit impact (`tests/cassettes/` is gitignored): delete the corresponding cassette from `tests/cassettes/`; use `--record-mode=all` to re-record if the underlying API response changed |
 | Major SDK refactor changes request/response format | Local-only, no commit impact: re-record your local cassettes: `pytest tests/integration/ --record-mode=all --import-mode=importlib` |
 
-**Run before every commit:** `make test` (unit + integration tests, lint, mypy, coverage, MCP coverage check — same gate as CI).
+**Run before every commit:** `make test` (see "Common Commands" for what it runs — same gate as CI).
 
 > **Note:** The `fail_under = 95` floor (`pyproject.toml`) is a shared aggregate backstop across
 > SDK/CLI/MCP/examples, not a definition of "sufficiently tested" — a small new command/tool with
@@ -357,7 +357,7 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 
 | Change | Documents to sync |
 |--------|------------------|
-| CLI command path or structure adjusted | `packages/synology-apm-cli/src/synology_apm/cli/README.md`: command overview, command detailed spec, CLI → SDK mapping table |
+| CLI command path or structure adjusted | `packages/synology-apm-cli/src/synology_apm/cli/README.md`: command overview, command detailed spec |
 | CLI-level convention changed (error handling, output dispatch, workload resolution, argument validation, serialization, enum display mapping) | `packages/synology-apm-cli/src/synology_apm/cli/README.md`: Development Conventions section |
 | New SDK public method added | No README update needed (docstrings publish via Sphinx). Update `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` only if the method has non-obvious behavior (Collection Behavior Rules) or introduces a new collection/access path (Collection Map) |
 | New enum added, or enum value / API string mapping changed | The mapping dict next to the parser is the source of truth. Update `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` (Enum Definitions and API String Mapping) only when the mapping's *semantics* are non-obvious (computed from multiple fields, one-to-many, magic values), or to add a new dict to its location index |
@@ -396,8 +396,8 @@ After any feature addition, refactor, or deletion, **complete all four categorie
 | Change | Sync required |
 |--------|--------------|
 | New source file added, or existing source file renamed/moved/deleted under `packages/synology-apm-sdk/src/synology_apm/sdk/`, `packages/synology-apm-cli/src/synology_apm/cli/`, or `packages/synology-apm-mcp/src/synology_apm/mcp/` | Update the package README instead: `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` Package Structure for SDK files; `packages/synology-apm-cli/src/synology_apm/cli/README.md` Package Structure for CLI files; `packages/synology-apm-mcp/src/synology_apm/mcp/README.md` Package Structure for MCP files (test file additions do **not** require this update). Always add the file to the tree; add an inline comment only if it doesn't follow that directory's stated naming convention (see each README's Package Structure intro) — a multi-type file, private helper, or entry point still needs one, but a file matching the convention (e.g. `collections/<name>.py` → `<Noun>Collection`, `commands/<name>.py` → `synology-apm-cli <name> ...`, `tools/<domain>.py` → one `register(registrar)` entry point) does not |
-| New CLI command added (once feature is complete) | Add to the "CLI → SDK Mapping Table" in `packages/synology-apm-cli/src/synology_apm/cli/README.md`. (New SDK methods need no index update — see the Documentation table above) |
-| New MCP tool added (once feature is complete) | Add its `[[mapping]]` entry to `scripts/mcp_coverage.toml` (see the Tests table above) — this manifest is the MCP equivalent of the CLI → SDK Mapping Table; no separate CLAUDE.md index update needed |
+| New CLI command added (once feature is complete) | No CLAUDE.md index update needed — see the Documentation table above for the CLI README sections to update |
+| New MCP tool added (once feature is complete) | Add its `[[mapping]]` entry to `scripts/mcp_coverage.toml` (see the Tests table above); no separate CLAUDE.md index update needed |
 
 ---
 
@@ -420,9 +420,63 @@ behavior/feature.
 
 ---
 
+## GitHub Actions Security Conventions
+
+Every `uses:` in `.github/workflows/*.yml` must reference a full commit SHA with a trailing
+`# vX.Y.Z` comment (e.g. `uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 #
+v7`), never a mutable version tag or branch. Pin a new action to its commit SHA in the same
+commit that adds it — resolve the SHA via `git ls-remote <repo-url> refs/tags/<tag>` (for an
+annotated tag, use the dereferenced `<tag>^{}` commit SHA, not the tag object SHA). A local
+reusable-workflow reference (`uses: ./.github/workflows/ci.yml`) is not an external action and
+is exempt from this rule.
+
+There is no `.github/dependabot.yml` in this repo — pins are kept current only reactively, by
+a Dependabot security-update PR (enabled via repo Settings → Code security: Dependabot alerts +
+Dependabot security updates; no config file involved) when a CVE/advisory is filed against the
+currently-pinned version. There is no proactive/scheduled freshness pass; a maintainer wanting
+one can run `make bump-external-versions` manually (rewrites outdated GH Actions pins and
+upgrades `uv.lock` within existing constraints — review `git diff` before committing), or add
+`dependabot.yml` version-updates later. This is not scheduled or proactive; a human still
+decides when to run it.
+
+> **Warning:** `make github-act-simulation` (see "Common Commands") is scoped to the
+> `verify-dist` job only and must never be pointed at `publish-sdk`/`publish-cli`/
+> `publish-mcp` — those rely on PyPI Trusted Publishing (OIDC), which a local `act` run
+> can not and should not exercise.
+
+`.github/workflows/dependabot-auto-merge.yml` auto-merges every PR authored by `dependabot[bot]`
+(via `gh pr merge --auto --squash`, which only enables GitHub's native auto-merge — the actual
+merge still waits on the `test` required status check from `ci.yml`). Gating on the author
+alone (no label check) is sufficient because this repo has no `dependabot.yml`: with no
+version-updates configured for any ecosystem, "Dependabot security updates" is the only
+mechanism that can make `dependabot[bot]` open a PR here, so every such PR is a security
+update. This applies uniformly regardless of semver bump size, including to
+`pypa/gh-action-pypi-publish` and `softprops/action-gh-release`.
+
+> **Warning:** `pypa/gh-action-pypi-publish` and `softprops/action-gh-release` are exercised
+> only by `release.yml` on a tag push, never by a PR — so the `test` check passing does not
+> mean a security bump to either of these two has actually been run with its new pin. That gap
+> is accepted for simplicity rather than special-cased.
+
+> **Warning:** If `dependabot.yml` version-updates are ever added for any ecosystem, this
+> workflow must be revisited (e.g. reintroduce a security-only filter) — otherwise it will
+> start auto-merging routine, non-security dependency bumps too.
+
+This depends on manual, non-committable repo Settings: Code security (Dependabot alerts +
+security updates), General → Pull Requests (Allow auto-merge, Allow squash merging), and a
+branch protection rule on `main` requiring the `test` status check.
+
+---
+
 ## Release / Version Bump
 
 All three packages (`synology-apm-sdk`, `synology-apm-cli`, `synology-apm-mcp`) share a single **lockstep version number** — bump them together, never independently. Releases are cut by the maintainers and published to PyPI and GitHub automatically via `.github/workflows/release.yml`.
+
+Consistency across the three packages is checked at two points: `make check-version-consistency`
+(part of `make test`, so it runs on every commit/PR) statically compares the `version` field of
+all three `packages/*/pyproject.toml` files and the `synology-apm-sdk==X.Y.Z` dependency pin in
+`synology-apm-cli`/`synology-apm-mcp`; `.github/workflows/release.yml`'s `verify-dist` job
+separately confirms the built wheel filenames match the pushed tag before publishing to PyPI.
 
 External contributors do not need to manage version numbers — include your changes in a PR
 and the maintainers will handle versioning and publishing.
@@ -438,6 +492,9 @@ uv sync
 # Run unit tests during development
 uv run pytest tests/unit/ -v
 
+# Run unit tests in parallel across CPU cores (pytest-xdist) — same command `make test` uses
+uv run pytest tests/unit/ -n auto -v
+
 # Record new integration cassettes against a live APM (only records missing ones)
 uv run pytest tests/integration/ --record-mode=new_episodes --import-mode=importlib -v
 # (= make record-integration-cassettes)
@@ -452,12 +509,16 @@ uv run python -m tests.smoke.sdk --group machine
 # Build API reference docs (first-time: uv sync --group docs)
 make docs
 
-# Makefile shortcuts (make test = unit + integration tests, lint, mypy, coverage, MCP coverage check)
+# Makefile shortcuts (make test = unit + integration tests, lint, mypy, coverage, MCP coverage check, version consistency check)
 make test
 make record-integration-cassettes
 make smoke-test                        # runs both CLI and SDK smoke tests
 make build                             # wheel + sdist (runs make test first)
 make whl                               # wheel + sdist without running tests
+
+# Maintenance — none of these run as part of `make test`; each needs a human to run and review
+make bump-external-versions            # rewrite outdated GH Actions pins + upgrade uv.lock (needs network; review git diff, then make test)
+make github-act-simulation             # locally test release.yml's build+verify-dist via act (needs act + Docker)
 ```
 
 ---
@@ -482,7 +543,7 @@ for the specifics; the recipe only fixes the order.
 
 1. Implement it in `cli/commands/<module>` — SDK calls only, never raw HTTP (see the CLI README "Development Conventions").
 2. Add a command-level unit test in `tests/unit/cli/commands/` (SDK wiring, exit codes, output dispatch).
-3. Update the CLI README: command spec + CLI → SDK mapping table.
+3. Update the CLI README command spec (command overview + detailed spec) if the command surface changed.
 4. Update `packages/synology-apm-cli/README.md` example blocks if user-facing usage changed.
 5. Consider a matching invocation in `tests/smoke/cli/phases/_<domain>.py`.
 6. Run `make test`.

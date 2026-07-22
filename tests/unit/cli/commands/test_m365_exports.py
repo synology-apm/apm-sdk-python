@@ -4,6 +4,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,7 +22,7 @@ from tests.unit.cli.commands._m365_fixtures import (
     WORKLOAD_ID,
     make_mock_apm,
 )
-from tests.unit.cli.conftest import invoke_cli, runner
+from tests.unit.cli.conftest import invoke_cli
 
 GROUP_WL_ID = "fd53ac91-392a-4abc-af42-1afc9df367a9"
 
@@ -145,18 +146,17 @@ def test_m365_group_export_cancel_calls_group_export_collection() -> None:
     assert call_arg.activity_id == "act-uuid-001"
     mock_apm.m365.exchange_export.cancel.assert_not_called()
 
-def test_m365_group_export_download_direct_mode_calls_group_export() -> None:
+def test_m365_group_export_download_direct_mode_calls_group_export(tmp_path: Path) -> None:
     """apm m365 group export download --id should look up activity and call get_download_url_by_activity()."""
     mock_apm = make_mock_apm_with_export(group=True)
     mock_apm.m365.group_export.get_download_url_by_activity.return_value = "https://apm.example/download/token"
     mock_apm.download_file.return_value = None
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "group", "export", "download",
-            "--workload-id", GROUP_WL_ID, "--namespace", GROUP_NAMESPACE,
-            "--id", "act-uuid-001", "--filename", "out.pst",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "group", "export", "download",
+        "--workload-id", GROUP_WL_ID, "--namespace", GROUP_NAMESPACE,
+        "--id", "act-uuid-001", "--filename", str(tmp_path / "out.pst"),
+    ])
 
     assert result.exit_code == 0, result.output
     mock_apm.m365.group_export.get_download_url_by_activity.assert_called_once()
@@ -286,26 +286,25 @@ def test_m365_exchange_export_cancel_search_mode_resolves_by_name() -> None:
     mock_apm.m365.exchange_export.cancel.assert_called_once()
     assert mock_apm.m365.exchange_export.cancel.call_args[0][0].activity_id == "act-uuid-001"
 
-def test_m365_exchange_export_download_search_mode_resolves_by_name() -> None:
+def test_m365_exchange_export_download_search_mode_resolves_by_name(tmp_path: Path) -> None:
     """export download <name> --id should resolve workload by name and call get_download_url_by_activity()."""
     mock_apm = make_mock_apm_with_export(group=False)
     mock_apm.m365.exchange_export.get_download_url_by_activity.return_value = "https://apm.example/dl/token"
     mock_apm.download_file.return_value = None
     mock_apm.saas.list.return_value = ([SAMPLE_TENANT], 1)
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "alice@contoso.com", "-t", TENANT_ID,
-            "--id", "act-uuid-001", "--filename", "out.pst",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "alice@contoso.com", "-t", TENANT_ID,
+        "--id", "act-uuid-001", "--filename", str(tmp_path / "out.pst"),
+    ])
 
     assert result.exit_code == 0, result.output
     mock_apm.m365.workloads.get_by_name.assert_called_once_with(
         "alice@contoso.com", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=False
     )
 
-def test_m365_exchange_export_download_autostart_ready_to_download() -> None:
+def test_m365_exchange_export_download_autostart_ready_to_download(tmp_path: Path) -> None:
     """export download without --id: when start returns ready_to_download=True, downloads immediately."""
     mock_apm = make_mock_apm_with_export(group=False)
     mock_version = MagicMock()
@@ -324,19 +323,18 @@ def test_m365_exchange_export_download_autostart_ready_to_download() -> None:
     )
     mock_apm.download_file.return_value = None
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-            "--filename", "out.pst", "--yes",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--filename", str(tmp_path / "out.pst"), "--yes",
+    ])
 
     assert result.exit_code == 0, result.output
     assert "(Using version:" in result.output
     mock_apm.m365.exchange_export.start.assert_called_once()
     mock_apm.download_file.assert_called_once()
 
-def test_m365_exchange_export_download_autostart_with_version_id_skips_resolved_message() -> None:
+def test_m365_exchange_export_download_autostart_with_version_id_skips_resolved_message(tmp_path: Path) -> None:
     """export download --version-id: calls get_version() and does not print '(Using version: ...)'."""
     mock_apm = make_mock_apm_with_export(group=False)
     mock_version = MagicMock()
@@ -355,12 +353,11 @@ def test_m365_exchange_export_download_autostart_with_version_id_skips_resolved_
     )
     mock_apm.download_file.return_value = None
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-            "--filename", "out.pst", "--yes", "--version-id", "ver-m365-001",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--filename", str(tmp_path / "out.pst"), "--yes", "--version-id", "ver-m365-001",
+    ])
 
     assert result.exit_code == 0, result.output
     assert "(Using version:" not in result.output
@@ -392,38 +389,37 @@ def test_m365_exchange_export_download_autostart_no_wait_exits_0() -> None:
     assert result.exit_code == 0, result.output
     assert "to get the Activity ID" in result.output  # fallback hint when no activity id is available
 
-def test_m365_exchange_export_download_existing_file_overwrite_declined_exits_4() -> None:
-    """export download: when file exists and user declines overwrite, exits 4."""
-    from pathlib import Path
+def test_m365_exchange_export_download_existing_file_overwrite_declined_exits_4(tmp_path: Path) -> None:
+    """export download: when file exists and user declines overwrite, prints Cancelled. and exits 4."""
     mock_apm = make_mock_apm_with_export(group=False)
+    dest = tmp_path / "out.pst"
+    dest.write_bytes(b"existing content")
 
-    with runner.isolated_filesystem():
-        Path("out.pst").write_bytes(b"existing content")
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-            "--id", "act-uuid-001", "--filename", "out.pst",
-        ], input="n\n")
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--id", "act-uuid-001", "--filename", str(dest),
+    ], input="n\n")
 
     assert result.exit_code == 4
+    assert "Cancelled." in result.output
 
-def test_m365_exchange_export_download_oserror_exits_1() -> None:
+def test_m365_exchange_export_download_oserror_exits_1(tmp_path: Path) -> None:
     """export download: when download_file raises OSError, exits 1 with error message."""
     mock_apm = make_mock_apm_with_export(group=False)
     mock_apm.m365.exchange_export.get_download_url_by_activity.return_value = "https://apm.example/dl/token"
     mock_apm.download_file.side_effect = OSError("disk full")
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-            "--id", "act-uuid-001", "--filename", "out.pst",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--id", "act-uuid-001", "--filename", str(tmp_path / "out.pst"),
+    ])
 
     assert result.exit_code == 1
     assert "Download failed" in result.output or "disk full" in result.output
 
-def test_m365_exchange_export_download_autostart_poll_ready_downloads() -> None:
+def test_m365_exchange_export_download_autostart_poll_ready_downloads(tmp_path: Path) -> None:
     """export download: when polling finds READY_TO_DOWNLOAD, downloads the file immediately."""
     from synology_apm.sdk.enums import M365ExportStatus
     from synology_apm.sdk.models.activity import M365ExportActivity
@@ -459,12 +455,11 @@ def test_m365_exchange_export_download_autostart_poll_ready_downloads() -> None:
     )
     mock_apm.download_file.return_value = None
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-            "--filename", "out.pst", "--yes",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--filename", str(tmp_path / "out.pst"), "--yes",
+    ])
 
     assert result.exit_code == 0, result.output
     mock_apm.m365.exchange_export.start.assert_called_once()
@@ -565,7 +560,7 @@ def test_m365_exchange_export_cancel_unknown_id_exits_1() -> None:
     assert "not found" in result.output
     mock_apm.m365.exchange_export.cancel.assert_not_called()
 
-def test_m365_group_export_download_autostart_uses_group_collection() -> None:
+def test_m365_group_export_download_autostart_uses_group_collection(tmp_path: Path) -> None:
     """group export download without --id starts the export via group_export, not exchange_export."""
     mock_apm = make_mock_apm_with_export(group=True)
     mock_version = MagicMock()
@@ -584,12 +579,11 @@ def test_m365_group_export_download_autostart_uses_group_collection() -> None:
     )
     mock_apm.download_file.return_value = None
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "group", "export", "download",
-            "--workload-id", GROUP_WL_ID, "--namespace", GROUP_NAMESPACE,
-            "--filename", "out.pst", "--yes",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "group", "export", "download",
+        "--workload-id", GROUP_WL_ID, "--namespace", GROUP_NAMESPACE,
+        "--filename", str(tmp_path / "out.pst"), "--yes",
+    ])
 
     assert result.exit_code == 0, result.output
     mock_apm.m365.group_export.start.assert_called_once()
@@ -623,22 +617,21 @@ def test_m365_exchange_export_download_no_wait_shows_activity_id_when_found() ->
     assert result.exit_code == 0, result.output
     assert "Activity ID: act-uuid-777" in result.output
 
-def test_m365_exchange_export_download_direct_mode_unknown_id_exits_1() -> None:
+def test_m365_exchange_export_download_direct_mode_unknown_id_exits_1(tmp_path: Path) -> None:
     """export download --id with an unknown activity id exits 1 before requesting a URL."""
     mock_apm = make_mock_apm_with_export(group=False)
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-            "--id", "no-such-id", "--filename", "out.pst",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--id", "no-such-id", "--filename", str(tmp_path / "out.pst"),
+    ])
 
     assert result.exit_code == 1
     assert "not found" in result.output
     mock_apm.m365.exchange_export.get_download_url_by_activity.assert_not_called()
 
-def test_m365_exchange_export_download_reports_progress() -> None:
+def test_m365_exchange_export_download_reports_progress(tmp_path: Path) -> None:
     """export download forwards download progress callbacks without error."""
     mock_apm = make_mock_apm_with_export(group=False)
     mock_apm.m365.exchange_export.get_download_url_by_activity.return_value = "https://apm.example/dl/token"
@@ -650,20 +643,17 @@ def test_m365_exchange_export_download_reports_progress() -> None:
 
     mock_apm.download_file = AsyncMock(side_effect=_fake_download)
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-            "--id", "act-uuid-001", "--filename", "out.pst",
-        ])
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--id", "act-uuid-001", "--filename", str(tmp_path / "out.pst"),
+    ])
 
     assert result.exit_code == 0, result.output
     assert "Saved to" in result.output
 
-def test_m365_exchange_export_download_oserror_removes_partial_file() -> None:
+def test_m365_exchange_export_download_oserror_removes_partial_file(tmp_path: Path) -> None:
     """export download removes the partially written file when the download fails."""
-    from pathlib import Path
-
     mock_apm = make_mock_apm_with_export(group=False)
     mock_apm.m365.exchange_export.get_download_url_by_activity.return_value = "https://apm.example/dl/token"
 
@@ -672,15 +662,14 @@ def test_m365_exchange_export_download_oserror_removes_partial_file() -> None:
         raise OSError("disk full")
 
     mock_apm.download_file = AsyncMock(side_effect=_fail_download)
+    dest = tmp_path / "out.pst"
 
-    with runner.isolated_filesystem():
-        result = invoke_cli(mock_apm, [
-            "m365", "exchange", "export", "download",
-            "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-            "--id", "act-uuid-001", "--filename", "out.pst", "--yes",
-        ])
-        partial_removed = not Path("out.pst").exists()
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--id", "act-uuid-001", "--filename", str(dest), "--yes",
+    ])
 
     assert result.exit_code == 1
     assert "Download failed" in result.output
-    assert partial_removed
+    assert not dest.exists()

@@ -50,7 +50,3 @@ relies on (list vs. get field completeness, pagination, permission modes).
    `list_m365_workloads(status=["failed"])` directly (add `verify_status=[...]` for a Machine
    verification-status query) — the client-side grouping in steps 4-5 is only needed for the
    "everything, broken down by status" overview case.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

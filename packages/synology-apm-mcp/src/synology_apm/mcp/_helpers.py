@@ -6,7 +6,7 @@ import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any, Generic, NamedTuple, TypeVar
 
 from pydantic import BeforeValidator
 
@@ -26,14 +26,16 @@ from synology_apm.sdk import (
 )
 
 _T = TypeVar("_T")
+_WorkloadT = TypeVar("_WorkloadT", MachineWorkload, M365Workload)
 _U = TypeVar("_U")
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
 MAX_LIST_LIMIT = 500
 
 # Append to a list tool's description= so the documented result shape always matches
-# the reliable_total mode it actually passes to list_result()/list_tool(), instead of
-# each call site retyping (and risking drift from) this sentence.
+# whether the wrapped SDK method reports a reliable total (see each SDK method's
+# docstring for which case applies), instead of each call site retyping (and
+# risking drift from) this sentence.
 LIST_RESULT_SUFFIX = (
     "Returns {items, total, truncated?} (truncated appears only when more results exist beyond this page)."
 )
@@ -76,33 +78,28 @@ JSON_LIST_VALIDATOR = BeforeValidator(coerce_json_encoded_list)
 
 
 async def list_result(
-    coro: Awaitable[tuple[list[_T], int]],
+    coro: Awaitable[tuple[list[_T], int | None]],
     serializer: Callable[[_T], Any],
     *,
     limit: int | None = None,
     offset: int = 0,
-    reliable_total: bool = True,
 ) -> dict[str, Any]:
     """Await a paginated list coroutine and return {items, total, truncated?}.
 
-    When reliable_total is True (the default), total reflects the endpoint's real
-    count and truncated is included and set to True only when offset + the returned
-    item count is less than total, signalling that the caller should use pagination
-    to retrieve the rest. Some endpoints never report a real total; pass
-    reliable_total=False and the effective limit used for the call, and total is
-    reported as None while truncated is instead inferred from the page being full
+    When the coroutine's total is not None, it reflects the endpoint's real count
+    and truncated is included and set to True only when offset + the returned item
+    count is less than total, signalling that the caller should use pagination to
+    retrieve the rest. Some endpoints never report a real total, in which case
+    total is None and truncated is instead inferred from the page being full
     (len(items) == limit), which signals there may be more results beyond this page.
     """
     items, total = await coro
-    result: dict[str, Any] = {"items": [serializer(x) for x in items]}
-    if reliable_total:
-        result["total"] = total
+    result: dict[str, Any] = {"items": [serializer(x) for x in items], "total": total}
+    if total is not None:
         if offset + len(items) < total:
             result["truncated"] = True
-    else:
-        result["total"] = None
-        if limit is not None and len(items) == limit:
-            result["truncated"] = True
+    elif limit is not None and len(items) == limit:
+        result["truncated"] = True
     return result
 
 
@@ -112,15 +109,14 @@ async def get_result(coro: Awaitable[_T], serializer: Callable[[_T], Any]) -> An
 
 
 async def list_tool(
-    coro: Awaitable[tuple[list[_T], int]],
+    coro: Awaitable[tuple[list[_T], int | None]],
     serializer: Callable[[_T], Any],
     *,
     limit: int | None = None,
     offset: int = 0,
-    reliable_total: bool = True,
 ) -> str:
     """Combine list_result() + run_tool() for the common paginated-list tool body."""
-    return await run_tool(list_result(coro, serializer, limit=limit, offset=offset, reliable_total=reliable_total))
+    return await run_tool(list_result(coro, serializer, limit=limit, offset=offset))
 
 
 async def get_tool(coro: Awaitable[_T], serializer: Callable[[_T], Any]) -> str:
@@ -148,7 +144,7 @@ async def resolve_export_activity(
         if activity is not None:
             return activity
         offset += len(activities)
-        if not activities or offset >= total:
+        if not activities or (total is not None and offset >= total):
             break
     raise ResourceNotFoundError(
         f"Export activity {activity_id!r} not found for this workload.",
@@ -187,17 +183,24 @@ async def _resolve_version_for_workload(collection: Any, workload: Any, version_
     return await collection.get_latest_version(workload)
 
 
+class VersionResolution(NamedTuple, Generic[_WorkloadT]):
+    """A resolved workload and one of its versions; unpacks as `(workload, version)`."""
+
+    workload: _WorkloadT
+    version: WorkloadVersion
+
+
 async def resolve_machine_version(
     apm: APMClient,
     *,
     workload_id: str,
     namespace: str,
     version_id: str | None,
-) -> tuple[MachineWorkload, WorkloadVersion]:
+) -> VersionResolution[MachineWorkload]:
     """Resolve a machine workload and then one of its versions, or the latest if version_id is None."""
     workload = await apm.machine.workloads.get(workload_id, namespace)
     version = await _resolve_version_for_workload(apm.machine.workloads, workload, version_id)
-    return workload, version
+    return VersionResolution(workload, version)
 
 
 async def resolve_m365_version(
@@ -208,10 +211,10 @@ async def resolve_m365_version(
     tenant_id: str,
     workload_type: str,
     version_id: str | None,
-) -> tuple[M365Workload, WorkloadVersion]:
+) -> VersionResolution[M365Workload]:
     """Resolve an M365 workload and then one of its versions, or the latest if version_id is None."""
     workload = await apm.m365.workloads.get(
         workload_id, namespace, tenant_id=tenant_id, workload_type=M365WorkloadType(workload_type)
     )
     version = await _resolve_version_for_workload(apm.m365.workloads, workload, version_id)
-    return workload, version
+    return VersionResolution(workload, version)

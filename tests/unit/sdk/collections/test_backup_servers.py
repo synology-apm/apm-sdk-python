@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from aioresponses import aioresponses
+from aiointercept import aiointercept
 from yarl import URL
 
 from synology_apm.sdk.collections.backup_servers import BackupServerCollection
@@ -313,7 +313,7 @@ async def test_get_by_name_returns_server_by_display_name() -> None:
     """get_by_name() should do a case-insensitive exact match on name (hostName)."""
     session = make_session()
     page_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=100&keyword=apm-server-01"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(page_url, payload={"backupServers": [SAMPLE_SERVER_RAW]})
@@ -328,7 +328,7 @@ async def test_get_by_name_returns_server_by_hostname() -> None:
     """get_by_name() should do a case-insensitive exact match on hostname."""
     session = make_session()
     page_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=100&keyword=192.0.2.1"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(page_url, payload={"backupServers": [SAMPLE_SERVER_RAW]})
@@ -342,7 +342,7 @@ async def test_get_by_name_does_not_match_server_id() -> None:
     """get_by_name() should not match on backup_server_id; ID lookup goes through get()."""
     session = make_session()
     page_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=100&keyword={SERVER_ID}"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(page_url, payload={"backupServers": [SAMPLE_SERVER_RAW]})
@@ -357,7 +357,7 @@ async def test_get_by_name_case_insensitive_name() -> None:
     """get_by_name() name matching should be case-insensitive."""
     session = make_session()
     page_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=100&keyword=APM-SERVER-01"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(page_url, payload={"backupServers": [SAMPLE_SERVER_RAW]})
@@ -371,7 +371,7 @@ async def test_get_by_name_raises_when_keyword_matches_but_name_does_not() -> No
     """Should raise ResourceNotFoundError when keyword returns results but none is an exact match (no fuzzy return)."""
     session = make_session()
     page_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=100&keyword=apm-server"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         # API returns "apm-server-01" but identity is "apm-server" (partial match)
@@ -387,7 +387,7 @@ async def test_get_by_name_raises_when_empty_result() -> None:
     """Should raise ResourceNotFoundError when API returns an empty array."""
     session = make_session()
     page_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=100&keyword=no-such"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(page_url, payload={"backupServers": []})

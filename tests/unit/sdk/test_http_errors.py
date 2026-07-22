@@ -1,18 +1,19 @@
 """Unit tests for synology_apm.sdk._http.WebAPISession: error handling.
 
 Covers HTTP status code → exception mapping, JSON body error code mapping, and
-SSL/connection-level error handling. Uses aioresponses to mock all HTTP requests;
-no real APM connection required.
+SSL/connection-level error handling. Uses aiointercept to mock all HTTP requests;
+no real APM connection required. The SSL/connection section reproduces real
+network failure conditions (a genuinely untrusted TLS cert, a real closed port,
+a real slow response past a tiny timeout) rather than injecting fake exception
+instances, since aiointercept has no equivalent to aioresponses' exception=<instance>.
 """
 from __future__ import annotations
 
-import ssl
+import asyncio
 from typing import Any
-from unittest.mock import Mock
 
-import aiohttp
 import pytest
-from aioresponses import aioresponses
+from aiointercept import CallbackResult, aiointercept
 
 from synology_apm.sdk._http import WebAPISession
 from synology_apm.sdk.exceptions import (
@@ -24,33 +25,25 @@ from synology_apm.sdk.exceptions import (
     PermissionDeniedError,
     ResourceNotFoundError,
 )
+from tests.unit.sdk.conftest import (
+    BASE_URL,
+    HOST,
+    LOGIN_OK,
+    TESTUSER_LOGIN_URL,
+    closed_port,
+    tls_test_server,
+)
+from tests.unit.sdk.conftest import (
+    connect_testuser_session as connect_session,
+)
+from tests.unit.sdk.conftest import (
+    disconnect_testuser_session as disconnect_session,
+)
+from tests.unit.sdk.conftest import (
+    make_testuser_session as make_session,
+)
 
 # ── Test fixtures & helpers ────────────────────────────────────────────────
-
-BASE_URL = "https://fake-apm.test"
-HOST = "fake-apm.test"
-WEBAPI_URL = f"{BASE_URL}/webapi/entry.cgi"
-
-# Standard success responses
-LOGIN_OK: dict[str, Any] = {"success": True, "data": {"sid": "test-sid-abc", "synotoken": "test-token-xyz"}}
-LOGOUT_OK: dict[str, Any] = {}
-
-
-def make_session(**kwargs: Any) -> WebAPISession:
-    """Create a test session (verify_ssl=False, base_url pointing to the fake host)."""
-    return WebAPISession(HOST, "testuser", "testpass", verify_ssl=False, **kwargs)
-
-
-async def connect_session(m: aioresponses, session: WebAPISession) -> None:
-    """Register a single GET mock inside an aioresponses context to satisfy connect()."""
-    m.get("https://fake-apm.test/webapi/entry.cgi?account=testuser&api=SYNO.API.Auth&client=browser&enable_syno_token=yes&method=login&passwd=testpass&session=webui&version=6", payload=LOGIN_OK)
-    await session.connect()
-
-
-async def disconnect_session(m: aioresponses, session: WebAPISession) -> None:
-    """Register a logout GET mock inside an aioresponses context to satisfy disconnect()."""
-    m.get(f"{BASE_URL}/api/v1/preference/logout", payload=LOGOUT_OK)
-    await session.disconnect()
 
 
 # ── HTTP status code → exception mapping ──────────────────────────────────
@@ -58,7 +51,7 @@ async def disconnect_session(m: aioresponses, session: WebAPISession) -> None:
 
 async def test_403_raises_permission_denied_error() -> None:
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/plan/backup_plan", status=403)
         with pytest.raises(PermissionDeniedError):
@@ -68,7 +61,7 @@ async def test_403_raises_permission_denied_error() -> None:
 
 async def test_404_raises_resource_not_found_error() -> None:
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload/bad-id", status=404)
         with pytest.raises(ResourceNotFoundError):
@@ -79,7 +72,7 @@ async def test_404_raises_resource_not_found_error() -> None:
 async def test_501_raises_not_supported_error() -> None:
     """HTTP 501 should raise NotSupportedError (as of APM 1.2, returns 501 for M365 workloads)."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/m365_workload", status=501)
         with pytest.raises(NotSupportedError):
@@ -89,7 +82,7 @@ async def test_501_raises_not_supported_error() -> None:
 
 async def test_500_raises_api_error() -> None:
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload", status=500)
         with pytest.raises(APIError) as exc_info:
@@ -102,7 +95,7 @@ async def test_500_raises_api_error() -> None:
 async def test_error_detail_code_2003_raises_backup_server_disconnected() -> None:
     """error.details[0].errorCode=2003 (backup server disconnected) should raise BackupServerDisconnectedError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/workload/device_workload",
@@ -132,7 +125,7 @@ async def test_error_detail_code_2003_raises_backup_server_disconnected() -> Non
 async def test_error_detail_code_1402_raises_resource_not_found() -> None:
     """error.details[0].errorCode=1402 (backup server ID not found) should raise ResourceNotFoundError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/workload/device_workload",
@@ -165,7 +158,7 @@ async def test_error_detail_code_1402_raises_resource_not_found() -> None:
 async def test_error_code_in_body_format1_raises_api_error() -> None:
     """{"error": {"code": N, "message": "..."}} format should raise the corresponding exception."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/plan/backup_plan",
@@ -181,7 +174,7 @@ async def test_error_code_in_body_format1_raises_api_error() -> None:
 async def test_error_code_in_body_format2_raises_api_error() -> None:
     """{"errorCode": N, "message": "..."} format should raise the corresponding exception."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.put(
             f"{BASE_URL}/api/v1/workload/device_workloads/plan",
@@ -197,7 +190,7 @@ async def test_error_code_in_body_format2_raises_api_error() -> None:
 async def test_error_code_7000_in_body_raises_resource_not_found() -> None:
     """errorCode=7000 (resource not found) should raise ResourceNotFoundError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/workload/device_workload/missing-id",
@@ -213,7 +206,7 @@ async def test_error_code_7000_in_body_raises_resource_not_found() -> None:
 async def test_error_code_105_in_body_raises_permission_denied() -> None:
     """error.code=105 (permission denied) should raise PermissionDeniedError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/plan/backup_plan",
@@ -229,7 +222,7 @@ async def test_error_code_105_in_body_raises_permission_denied() -> None:
 async def test_error_code_119_in_body_raises_authentication_error() -> None:
     """errorCode=119 (session expired) should raise AuthenticationError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/workload/device_workload",
@@ -245,7 +238,7 @@ async def test_error_code_119_in_body_raises_authentication_error() -> None:
 async def test_zero_error_code_in_body_is_not_an_error() -> None:
     """errorCode=0 is treated as success and should not raise an exception."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/workload/device_workload",
@@ -260,7 +253,7 @@ async def test_zero_error_code_in_body_is_not_an_error() -> None:
 async def test_success_response_without_error_fields_is_not_an_error() -> None:
     """Normal response (no error / errorCode fields) should not raise an exception."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/infra/backup_server",
@@ -273,22 +266,19 @@ async def test_success_response_without_error_fields_is_not_an_error() -> None:
 
 
 # ── SSL / connection error handling ────────────────────────────────────────
+#
+# aiointercept intercepts at the DNS/connector layer and never terminates real
+# TLS, and its exception= only supports a generic connection-close (no typed
+# aiohttp/ssl exception injection) — so these reproduce real network failure
+# conditions instead of injecting fake exception instances: a genuinely
+# untrusted TLS certificate (tls_test_server), a real closed port
+# (closed_port), and a real slow response past a deliberately tiny timeout.
 
 
 async def test_connect_ssl_cert_error_raises_api_error_with_hint() -> None:
     """SSL certificate verification failure should raise APIError with an actionable hint, not the raw aiohttp exception."""
-    session = WebAPISession(HOST, "testuser", "testpass", verify_ssl=True)
-    conn_key = Mock()
-    ssl_exc = ssl.SSLCertVerificationError("CERTIFICATE_VERIFY_FAILED")
-    cert_err = aiohttp.ClientConnectorCertificateError(conn_key, ssl_exc)
-
-    with aioresponses() as m:
-        m.get(
-            "https://fake-apm.test/webapi/entry.cgi?account=testuser&api=SYNO.API.Auth"
-            "&client=browser&enable_syno_token=yes&method=login&passwd=testpass"
-            "&session=webui&version=6",
-            exception=cert_err,
-        )
+    async with tls_test_server() as host_port:
+        session = WebAPISession(host_port, "testuser", "testpass", verify_ssl=True)
         with pytest.raises(APIError) as exc_info:
             await session.connect()
 
@@ -299,19 +289,9 @@ async def test_connect_ssl_cert_error_raises_api_error_with_hint() -> None:
 
 async def test_connect_connection_refused_raises_api_error() -> None:
     """When the host is unreachable, should raise APIError rather than the raw aiohttp exception."""
-    session = WebAPISession(HOST, "testuser", "testpass", verify_ssl=False)
-    conn_key = Mock()
-    conn_err = aiohttp.ClientConnectorError(conn_key, OSError("Connection refused"))
-
-    with aioresponses() as m:
-        m.get(
-            "https://fake-apm.test/webapi/entry.cgi?account=testuser&api=SYNO.API.Auth"
-            "&client=browser&enable_syno_token=yes&method=login&passwd=testpass"
-            "&session=webui&version=6",
-            exception=conn_err,
-        )
-        with pytest.raises(APIError) as exc_info:
-            await session.connect()
+    session = WebAPISession(f"127.0.0.1:{closed_port()}", "testuser", "testpass", verify_ssl=False)
+    with pytest.raises(APIError) as exc_info:
+        await session.connect()
 
     assert "cannot connect" in exc_info.value.message.lower()
     assert session._connected is False
@@ -320,12 +300,9 @@ async def test_connect_connection_refused_raises_api_error() -> None:
 async def test_request_connection_error_during_api_call_raises_api_error() -> None:
     """Connection error during an API call (after connect) should be wrapped as APIError."""
     session = make_session()
-    conn_key = Mock()
-    conn_err = aiohttp.ClientConnectorError(conn_key, OSError("Connection reset"))
-
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
-        m.get(f"{BASE_URL}/api/v1/workload/device_workload", exception=conn_err)
+        m.get(f"{BASE_URL}/api/v1/workload/device_workload", exception=True)
         with pytest.raises(APIError) as exc_info:
             await session.get("/api/v1/workload/device_workload")
         await disconnect_session(m, session)
@@ -334,15 +311,15 @@ async def test_request_connection_error_during_api_call_raises_api_error() -> No
 
 
 async def test_connect_server_timeout_raises_connection_timeout_error() -> None:
-    """ServerTimeoutError during login should raise ConnectionTimeoutError, not APIError."""
-    session = WebAPISession(HOST, "testuser", "testpass", verify_ssl=False)
-    with aioresponses() as m:
-        m.get(
-            "https://fake-apm.test/webapi/entry.cgi?account=testuser&api=SYNO.API.Auth"
-            "&client=browser&enable_syno_token=yes&method=login&passwd=testpass"
-            "&session=webui&version=6",
-            exception=aiohttp.ServerTimeoutError(),
-        )
+    """A login response slower than the session timeout should raise ConnectionTimeoutError, not APIError."""
+    session = WebAPISession(HOST, "testuser", "testpass", verify_ssl=False, timeout=0.05)
+
+    async def slow_login(url: Any, **kwargs: Any) -> CallbackResult:
+        await asyncio.sleep(1)
+        return CallbackResult(payload=LOGIN_OK)
+
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(TESTUSER_LOGIN_URL, callback=slow_login)
         with pytest.raises(ConnectionTimeoutError) as exc_info:
             await session.connect()
 
@@ -351,11 +328,23 @@ async def test_connect_server_timeout_raises_connection_timeout_error() -> None:
 
 
 async def test_request_server_timeout_raises_connection_timeout_error() -> None:
-    """ServerTimeoutError during an API call should raise ConnectionTimeoutError."""
-    session = make_session()
-    with aioresponses() as m:
+    """A response slower than the session timeout should raise ConnectionTimeoutError.
+
+    timeout=0.5 (not the tighter 0.05 used elsewhere) because this session's
+    timeout also governs the plain, non-slow login performed by
+    connect_session() during setup — a generous budget avoids that real
+    (if fast) loopback round-trip spuriously exceeding the timeout under load,
+    while staying comfortably under slow_response's deliberate 1s delay.
+    """
+    session = make_session(timeout=0.5)
+
+    async def slow_response(url: Any, **kwargs: Any) -> CallbackResult:
+        await asyncio.sleep(1)
+        return CallbackResult(payload={})
+
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
-        m.get(f"{BASE_URL}/api/v1/workload/device_workload", exception=aiohttp.ServerTimeoutError())
+        m.get(f"{BASE_URL}/api/v1/workload/device_workload", callback=slow_response)
         with pytest.raises(ConnectionTimeoutError) as exc_info:
             await session.get("/api/v1/workload/device_workload")
         await disconnect_session(m, session)
@@ -364,14 +353,15 @@ async def test_request_server_timeout_raises_connection_timeout_error() -> None:
 
 
 async def test_request_server_disconnected_raises_api_error_cannot_connect() -> None:
-    """ServerDisconnectedError (stale pooled connection) should raise APIError with 'Cannot connect'."""
+    """A dropped connection mid-request should raise APIError with 'Cannot connect'.
+
+    exception=True force-closes the connection from the server side, which is a
+    real aiohttp.ServerDisconnectedError on the client — not a fabricated one.
+    """
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
-        m.get(
-            f"{BASE_URL}/api/v1/workload/device_workload",
-            exception=aiohttp.ServerDisconnectedError(),
-        )
+        m.get(f"{BASE_URL}/api/v1/workload/device_workload", exception=True)
         with pytest.raises(APIError) as exc_info:
             await session.get("/api/v1/workload/device_workload")
         await disconnect_session(m, session)
@@ -386,7 +376,7 @@ async def test_request_server_disconnected_raises_api_error_cannot_connect() -> 
 async def test_request_4xx_range_raises_api_error() -> None:
     """_request() raises APIError for 4xx responses not covered by specific handlers (e.g. 408)."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload",
               status=408, payload={"message": "Request Timeout"})
@@ -401,7 +391,7 @@ async def test_request_4xx_range_raises_api_error() -> None:
 async def test_request_400_with_nested_error_message_surfaces_message() -> None:
     """HTTP 400 with {"error": {"message": "..."}} structure should use the nested message, not 'HTTP error 400'."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.post(
             f"{BASE_URL}/api/v1/application/m365/tenant/auto_backup_rule",
@@ -426,7 +416,7 @@ async def test_request_400_with_nested_error_message_surfaces_message() -> None:
 async def test_request_4xx_nested_error_message_takes_priority_over_top_level() -> None:
     """When both body["message"] and body["error"]["message"] are present, error.message wins."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/workload/device_workload",
@@ -444,7 +434,7 @@ async def test_request_4xx_nested_error_message_takes_priority_over_top_level() 
 async def test_request_4xx_non_dict_error_field_falls_back_to_top_level_message() -> None:
     """When body["error"] is not a dict (e.g. a string), fall back to body["message"]."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/workload/device_workload",
@@ -459,19 +449,28 @@ async def test_request_4xx_non_dict_error_field_falls_back_to_top_level_message(
 
 
 async def test_request_ssl_cert_error_raises_api_error() -> None:
-    """_request() wraps ClientConnectorCertificateError in APIError with SSL hint."""
-    import ssl as _ssl
+    """_request() wraps ClientConnectorCertificateError in APIError with SSL hint.
 
-    session = make_session()
-    cert_err = aiohttp.ClientConnectorCertificateError(
-        Mock(), _ssl.SSLCertVerificationError()
-    )
-    with aioresponses() as m:
-        await connect_session(m, session)
-        m.get(f"{BASE_URL}/api/v1/workload/device_workload", exception=cert_err)
+    A WebAPISession is bound to one host and one verify_ssl setting for its
+    whole lifetime, so there is no way for a later request on an
+    already-connected session to newly fail cert validation that an earlier
+    connect() on the same host already passed — connecting with
+    verify_ssl=True against a genuinely untrusted cert fails at connect()
+    itself (see test_connect_ssl_cert_error_raises_api_error_with_hint).
+    Reproduce the "_request() has its own cert-error handling" scenario
+    instead by connecting with verify_ssl=False (succeeds despite the bad
+    cert) and then flipping to True for the one subsequent request that
+    should fail — session._verify_ssl is used here only to set up the
+    scenario, never asserted on.
+    """
+    async with tls_test_server() as host_port:
+        session = WebAPISession(host_port, "testuser", "testpass", verify_ssl=False)
+        await session.connect()
+
+        session._verify_ssl = True
         with pytest.raises(APIError, match="SSL certificate"):
             await session.get("/api/v1/workload/device_workload")
-        await disconnect_session(m, session)
+        await session.disconnect()
 
 
 # ── _get_detail_error_code ────────────────────────────────────────────────────
@@ -480,7 +479,7 @@ async def test_request_ssl_cert_error_raises_api_error() -> None:
 async def test_get_detail_error_code_error_is_not_dict() -> None:
     """A 500 with {"error": "string"} (not a dict) falls through to generic APIError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload",
               status=500, payload={"error": "plain string error"})
@@ -492,7 +491,7 @@ async def test_get_detail_error_code_error_is_not_dict() -> None:
 async def test_get_detail_error_code_missing_details_key() -> None:
     """A 500 with {"error": {}} (no "details" key) falls through to generic APIError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload",
               status=500, payload={"error": {"code": 9999}})
@@ -504,7 +503,7 @@ async def test_get_detail_error_code_missing_details_key() -> None:
 async def test_get_detail_error_code_empty_details_list() -> None:
     """A 500 with {"error": {"details": []}} (empty list) falls through to generic APIError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload",
               status=500, payload={"error": {"details": []}})
@@ -516,7 +515,7 @@ async def test_get_detail_error_code_empty_details_list() -> None:
 async def test_get_detail_error_code_first_detail_not_dict() -> None:
     """A 500 with {"error": {"details": ["not-a-dict"]}} falls through to generic APIError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload",
               status=500, payload={"error": {"details": ["not-a-dict"]}})
@@ -528,7 +527,7 @@ async def test_get_detail_error_code_first_detail_not_dict() -> None:
 async def test_request_4xx_non_dict_body_falls_back_to_default_message() -> None:
     """A 4xx response whose JSON body is not a dict (e.g. a list) should fall back to the default message."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload", status=400, payload=["unexpected", "list", "body"])
         with pytest.raises(APIError) as exc_info:
@@ -541,7 +540,7 @@ async def test_request_4xx_non_dict_body_falls_back_to_default_message() -> None
 async def test_success_response_invalid_utf8_body_raises_api_error() -> None:
     """A 2xx response whose body cannot be decoded as UTF-8 should raise APIError, not propagate UnicodeDecodeError."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(
             f"{BASE_URL}/api/v1/workload/device_workload",
@@ -557,7 +556,7 @@ async def test_success_response_invalid_utf8_body_raises_api_error() -> None:
 async def test_success_response_non_dict_json_body_is_returned_as_is() -> None:
     """A 2xx response whose JSON body is a list (not a dict) should be returned unchanged, skipping error-code checks."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.get(f"{BASE_URL}/api/v1/workload/device_workload", status=200, payload=["a", "b"])
         result = await session.get("/api/v1/workload/device_workload")
@@ -569,7 +568,7 @@ async def test_success_response_non_dict_json_body_is_returned_as_is() -> None:
 async def test_error_code_in_body_format3_nested_raises_api_error() -> None:
     """{"error": {"errorCode": N, "message": "..."}} nested format should raise the corresponding exception."""
     session = make_session()
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         await connect_session(m, session)
         m.post(
             f"{BASE_URL}/api/v1/workload/m365_workload/batch",

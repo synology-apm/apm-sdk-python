@@ -293,10 +293,6 @@ def _parse_task_config(raw: dict[str, Any]) -> MachineTaskConfig:
     )
 
 
-def _parse_task_list(tasks_raw: list[dict[str, Any]]) -> tuple[MachineTaskConfig, ...]:
-    return tuple(_parse_task_config(t) for t in tasks_raw)
-
-
 def _parse_plan(
     raw: dict[str, Any],
     location_cache: dict[str, LocationInfo] | None = None,
@@ -364,7 +360,7 @@ def _parse_plan(
         if "backupWindow" in config_device:
             backup_window = _parse_backup_window(config_device["backupWindow"])
         if "task" in config_device and isinstance(config_device["task"], list):
-            tasks = _parse_task_list(config_device["task"])
+            tasks = tuple(_parse_task_config(t) for t in config_device["task"])
 
     return ProtectionPlan(
         plan_id=raw["id"],

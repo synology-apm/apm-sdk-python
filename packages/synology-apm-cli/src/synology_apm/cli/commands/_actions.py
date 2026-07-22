@@ -1,4 +1,4 @@
-"""Shared resolve/confirm/invoke/print-success bodies for backup/cancel/retire/change-plan.
+"""Shared resolve/confirm/invoke/print-success bodies for backup/cancel/retire/change-plan/version.
 
 Domain-specific differences (workload resolution, presence of a type label, the
 ``resource_type`` string passed to ``InvalidOperationError``) are absorbed via callables
@@ -7,23 +7,41 @@ passed in by each call site in ``commands/machine.py`` and ``commands/m365.py``.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import TypeVar
 
 import typer
 
-from synology_apm.cli._display import fmt_datetime, fmt_retention, fmt_retirement_retention, fmt_schedule_label
-from synology_apm.cli._validate import _resolve_plan
-from synology_apm.cli.errors import err_console
-from synology_apm.cli.output import console
+from synology_apm.cli._display import (
+    fmt_datetime,
+    fmt_retention,
+    fmt_retirement_retention,
+    fmt_schedule_label,
+    print_list_footer,
+    print_version_detail,
+    render_version_table,
+)
+from synology_apm.cli._serializers import version_detail_to_dict, version_to_csv_row, version_to_dict
+from synology_apm.cli._validate import _resolve_plan, print_resolved_version
+from synology_apm.cli.errors import EXIT_ERROR, err_console
+from synology_apm.cli.output import (
+    ListOutputFormat,
+    OutputFormat,
+    console,
+    dispatch_output,
+    dispatch_paginated_list,
+)
 from synology_apm.sdk import (
     APMClient,
     BackupActivityCollection,
     InvalidOperationError,
+    ListResult,
     ProtectionPlan,
     ResourceNotFoundError,
     RestoreActivityCollection,
     RetirementPlan,
     Workload,
+    WorkloadVersion,
 )
 
 W = TypeVar("W", bound=Workload)
@@ -150,6 +168,77 @@ async def _do_change_plan(
         console.print(f"[green]✓[/green] Plan changed: {wl.name}")
 
 
+async def _do_version_list(
+    resolve: Callable[[], Awaitable[W]],
+    list_versions: Callable[..., Awaitable[ListResult[WorkloadVersion]]],
+    show_verify: Callable[[W], bool] | None,
+    *,
+    limit: int,
+    offset: int,
+    page_all: bool,
+    since: datetime | None,
+    until: datetime | None,
+    output: ListOutputFormat,
+    verbose: bool,
+) -> None:
+    wl = await resolve()
+    result = await dispatch_paginated_list(
+        lambda off, lim: list_versions(wl, limit=lim, offset=off, since=since, until=until),
+        limit=limit, offset=offset, page_all=page_all, output=output,
+        to_dict=version_to_dict, to_csv_row=version_to_csv_row,
+    )
+    if result is None:
+        return
+
+    versions, total = result
+    render_version_table(
+        console, versions, offset, wl, verbose=verbose,
+        show_verify=show_verify(wl) if show_verify else False,
+    )
+    print_list_footer(console, len(versions), total, offset)
+
+
+async def _do_version_get(
+    resolve: Callable[[], Awaitable[W]],
+    get_version: Callable[[W, str], Awaitable[WorkloadVersion]],
+    get_latest_version: Callable[[W], Awaitable[WorkloadVersion]],
+    *,
+    apm: APMClient,
+    version_id: str | None,
+    output: OutputFormat,
+) -> None:
+    wl = await resolve()
+
+    if version_id is not None:
+        v = await get_version(wl, version_id)
+    else:
+        v = await get_latest_version(wl)
+    print_resolved_version(version_id, v)
+
+    act = await apm.activities.backup.get_by_version(v)
+
+    if dispatch_output(None, output, lambda _: version_detail_to_dict(v, act)):
+        return
+    print_version_detail(console, v, act)
+
+
+async def _do_version_lock_unlock(
+    resolve: Callable[[], Awaitable[W]],
+    get_version: Callable[[W, str], Awaitable[WorkloadVersion]],
+    lock_version: Callable[[WorkloadVersion], Awaitable[None]],
+    unlock_version: Callable[[WorkloadVersion], Awaitable[None]],
+    *,
+    version_id: str,
+    lock: bool,
+) -> None:
+    wl = await resolve()
+    version = await get_version(wl, version_id)
+    if lock:
+        await lock_version(version)
+    else:
+        await unlock_version(version)
+
+
 async def _cancel_activity(
     collection: BackupActivityCollection | RestoreActivityCollection,
     activity_id: str,
@@ -168,7 +257,7 @@ async def _cancel_activity(
 
     if not target:
         err_console.print("[red]✗[/red] Running activity not found, or it has already completed.")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR)
 
     if not yes:
         err_console.print(f"[yellow]⚠[/yellow] Confirm cancel {noun} activity?")

@@ -37,9 +37,8 @@ def test_print_json_serializes_datetime() -> None:
 
 
 def test_print_yaml_no_pyyaml_exits_1() -> None:
-    with patch.dict("sys.modules", {"yaml": None}):
-        with pytest.raises(typer.Exit) as exc_info:
-            print_yaml({"key": "value"})
+    with patch.dict("sys.modules", {"yaml": None}), pytest.raises(typer.Exit) as exc_info:
+        print_yaml({"key": "value"})
     assert exc_info.value.exit_code == 1
 
 

@@ -5,12 +5,13 @@ Consumed by m365.py: import _TENANT_ID_OPTION, _M365_TYPE_MAP, _make_export_app.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import signal
 from datetime import date
 from pathlib import Path
 from types import FrameType
-from typing import cast
+from typing import NamedTuple, cast
 
 import typer
 
@@ -33,7 +34,7 @@ from synology_apm.cli._validate import (
     require_or_help,
     validate_resolve_args,
 )
-from synology_apm.cli.errors import EXIT_ERROR, err_console
+from synology_apm.cli.errors import EXIT_CANCEL, EXIT_ERROR, err_console
 from synology_apm.cli.output import ListOutputFormat, cell, console, dispatch_paginated_list, new_table
 from synology_apm.sdk import (
     APMClient,
@@ -47,6 +48,14 @@ from synology_apm.sdk import (
     M365Workload,
     M365WorkloadType,
 )
+
+
+class ExportDownloadTarget(NamedTuple):
+    """A resolved export download URL and local destination path; unpacks as `(url, dest_path)`."""
+
+    url: str
+    dest_path: str
+
 
 _TENANT_ID_OPTION = typer.Option(
     None, "--tenant-id", "-t",
@@ -85,11 +94,12 @@ def _safe_export_name(wl_name: str) -> str:
 
 
 def _confirm_overwrite(dest_path: str, yes: bool) -> None:
-    """Prompt before overwriting an existing download target; Exit(4) when declined."""
+    """Prompt before overwriting an existing download target; Exit(EXIT_CANCEL) when declined."""
     if not yes and Path(dest_path).exists():
         err_console.print(f"[yellow]![/yellow] File already exists: {dest_path}")
         if not typer.confirm("Overwrite?", default=False):
-            raise typer.Exit(4)
+            err_console.print("\n[bright_black]Cancelled.[/bright_black]")
+            raise typer.Exit(EXIT_CANCEL)
 
 
 _EXPORT_DOWNLOADABLE: frozenset[M365ExportStatus] = frozenset({
@@ -146,10 +156,8 @@ async def _poll_export_until_ready(
             if activity is not None and activity.status in _EXPORT_TERMINAL:
                 found_status = activity.status
                 break
-            try:  # pragma: no cover
+            with contextlib.suppress(TimeoutError):  # pragma: no cover
                 await asyncio.wait_for(interrupt.wait(), timeout=poll_interval)
-            except TimeoutError:  # pragma: no cover
-                pass
     finally:
         _unregister_export_interrupt(loop)
 
@@ -184,14 +192,14 @@ async def _wait_until_downloadable(
                 f"  Export task still running on APM.{act_id_str}\n"
                 f"  Run [bold]{cmd_prefix} list {identifier}[/bold] to check status."
             )
-        raise typer.Exit(4)
+        raise typer.Exit(EXIT_CANCEL)
 
     if status not in _EXPORT_DOWNLOADABLE:
         assert status is not None
         err_console.print(
             f"[red]✗[/red] Export ended with status: {fmt_export_status(status)}"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(EXIT_ERROR)
 
 
 async def _start_export_and_resolve_url(
@@ -208,7 +216,7 @@ async def _start_export_and_resolve_url(
     filename: str | None,
     no_wait: bool,
     yes: bool,
-) -> tuple[str, str]:
+) -> ExportDownloadTarget:
     """Auto-start mode: start a new export, wait until downloadable, return (url, dest_path)."""
     effective_archive = False if is_group else archive_mailbox
     effective_mailbox_label = mailbox_label if not effective_archive else "archive mailbox"
@@ -240,10 +248,7 @@ async def _start_export_and_resolve_url(
                 export_name=effective_export_name,
             )
 
-    if is_group:
-        identifier = cast(M365GroupInfo, wl.info).mail
-    else:
-        identifier = cast(M365UserInfo, wl.info).user_principal_name
+    identifier = cast(M365GroupInfo, wl.info).mail if is_group else cast(M365UserInfo, wl.info).user_principal_name
 
     if not start_result.ready_to_download:
         if no_wait:
@@ -270,7 +275,7 @@ async def _start_export_and_resolve_url(
         await _wait_until_downloadable(col, start_result, identifier, cmd_prefix)
 
     url = await col.get_download_url_by_ready_result(start_result)
-    return url, dest_path
+    return ExportDownloadTarget(url, dest_path)
 
 
 async def _resolve_existing_export_url(
@@ -280,7 +285,7 @@ async def _resolve_existing_export_url(
     activity_id: str,
     filename: str | None,
     yes: bool,
-) -> tuple[str, str]:
+) -> ExportDownloadTarget:
     """Direct mode (--id): look up a previously started export, return (url, dest_path)."""
     dest_path = filename if filename is not None else _auto_download_filename_by_id(
         wl.name, activity_id
@@ -293,7 +298,7 @@ async def _resolve_existing_export_url(
         err_console.print(f"[red]✗[/red] Activity '{activity_id}' not found.")
         raise typer.Exit(EXIT_ERROR)
     url = await col.get_download_url_by_activity(activity)
-    return url, dest_path
+    return ExportDownloadTarget(url, dest_path)
 
 
 async def _download_with_progress(apm: APMClient, url: str, dest_path: str) -> None:
@@ -514,12 +519,10 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
 
         except OSError as exc:
             if dest_path is not None:
-                try:
-                    Path(dest_path).unlink(missing_ok=True)
-                except OSError:
-                    pass
+                with contextlib.suppress(OSError):
+                    await asyncio.to_thread(Path(dest_path).unlink, missing_ok=True)
             err_console.print(f"[red]✗[/red] Download failed: {exc}")
-            raise typer.Exit(EXIT_ERROR)
+            raise typer.Exit(EXIT_ERROR) from exc
 
         assert dest_path is not None
         console.print(f"[green]✓[/green] Saved to [bold]{dest_path}[/bold]")

@@ -42,12 +42,12 @@ _CUTOFF = _NOW - timedelta(days=1)
 
 
 def test_terminal_statuses_are_the_completed_outcomes() -> None:
-    assert TERMINAL_STATUSES == {
+    assert {
         BackupActivityStatus.SUCCESS,
         BackupActivityStatus.FAILED,
         BackupActivityStatus.PARTIAL,
         BackupActivityStatus.CANCELED,
-    }
+    } == TERMINAL_STATUSES
 
 
 def test_non_terminal_statuses_are_the_in_progress_states() -> None:
@@ -162,7 +162,10 @@ def test_is_stale_never_backed_up_only_true_none_backup_is_stale() -> None:
     assert _is_stale(wl, _CUTOFF, never_backed_up_only=True) is True
 
 
-@pytest.mark.parametrize("status", list(_NEEDS_RETRY))
+_NEEDS_RETRY_SORTED: list[WorkloadStatus] = sorted(_NEEDS_RETRY, key=lambda s: s.value)
+
+
+@pytest.mark.parametrize("status", _NEEDS_RETRY_SORTED)
 def test_is_stale_never_backed_up_only_true_needs_retry_with_backup_not_stale(
     status: WorkloadStatus,
 ) -> None:
@@ -552,12 +555,12 @@ def test_main_parses_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(sys, "argv", [
         "backup_catchup.py",
         "--category", "machine", "--max-age", "3", "--dry-run", "-y",
-        "--timeout", "600", "--never-backed-up", "-o", "json",
+        "--timeout", "600", "--never-backed-up", "-o", "json", "--profile", "lab",
     ])
 
     backup_catchup.main()
 
-    run_mock.assert_called_once_with(3, True, True, 600, True, "machine", None, "json")
+    run_mock.assert_called_once_with(3, True, True, 600, True, "machine", None, "json", profile="lab")
     run_main_mock.assert_called_once_with(run_mock.return_value)
 
 
@@ -567,4 +570,4 @@ def test_main_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     backup_catchup.main()
 
-    run_mock.assert_called_once_with(1, False, False, 1800, False, "machine", None, "table")
+    run_mock.assert_called_once_with(1, False, False, 1800, False, "machine", None, "table", profile=None)

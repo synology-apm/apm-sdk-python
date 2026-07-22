@@ -22,121 +22,32 @@
 3. A subsequent `backup`/`cancel` on the retired workload fails with a clear error (the
    workload is no longer under active protection).
 
-## 1. Machine Workload
+## Template
 
-Search mode (name lookup):
-
-```bash
-synology-apm-cli machine retire "vm-web-01" --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Direct mode (ID + namespace, from `synology-apm-cli machine list --verbose`):
+Search mode (by name/identifier):
 
 ```bash
-synology-apm-cli machine retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+synology-apm-cli <SUBCOMMAND> retire "<IDENTIFIER>" [--tenant-id <TENANT_ID>] --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
 ```
 
-Verify: `synology-apm-cli machine list --retired -o json` includes the workload with
+Direct mode (ID + namespace, from `synology-apm-cli <SUBCOMMAND> list --verbose`):
+
+```bash
+synology-apm-cli <SUBCOMMAND> retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
+```
+
+Verify: `synology-apm-cli <SUBCOMMAND> list --retired -o json` includes the workload with
 `"is_retired": true`.
 
-## 2. M365 Exchange mailbox
+Substitute `<SUBCOMMAND>` and `<IDENTIFIER>` per scope (`--tenant-id` applies to M365 scopes
+only, and is optional there per the Prerequisites note above):
 
-Search mode (UPN):
-
-```bash
-synology-apm-cli m365 exchange retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Direct mode:
-
-```bash
-synology-apm-cli m365 exchange retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Verify: `synology-apm-cli m365 exchange list --retired -o json` includes the workload with
-`"is_retired": true`.
-
-## 3. M365 OneDrive
-
-Search mode (UPN):
-
-```bash
-synology-apm-cli m365 onedrive retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Direct mode:
-
-```bash
-synology-apm-cli m365 onedrive retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Verify: `synology-apm-cli m365 onedrive list --retired -o json` includes the workload with
-`"is_retired": true`.
-
-## 4. M365 Teams chat (user)
-
-Search mode (UPN):
-
-```bash
-synology-apm-cli m365 chat retire "alice@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Direct mode:
-
-```bash
-synology-apm-cli m365 chat retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Verify: `synology-apm-cli m365 chat list --retired -o json` includes the workload with
-`"is_retired": true`.
-
-## 5. M365 group / shared mailbox
-
-Search mode (group email):
-
-```bash
-synology-apm-cli m365 group retire "marketing@contoso.com" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Direct mode:
-
-```bash
-synology-apm-cli m365 group retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Verify: `synology-apm-cli m365 group list --retired -o json` includes the workload with
-`"is_retired": true`.
-
-## 6. M365 SharePoint site
-
-Search mode (site name):
-
-```bash
-synology-apm-cli m365 sharepoint retire "Marketing" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Direct mode:
-
-```bash
-synology-apm-cli m365 sharepoint retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Verify: `synology-apm-cli m365 sharepoint list --retired -o json` includes the workload with
-`"is_retired": true`.
-
-## 7. M365 Teams team
-
-Search mode (team name):
-
-```bash
-synology-apm-cli m365 teams retire "Engineering" --tenant-id <TENANT_ID> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Direct mode:
-
-```bash
-synology-apm-cli m365 teams retire --id <WORKLOAD_ID> --namespace <NAMESPACE> --plan <RETIREMENT_PLAN_NAME_OR_ID> --yes
-```
-
-Verify: `synology-apm-cli m365 teams list --retired -o json` includes the workload with
-`"is_retired": true`.
+| Scope | `<SUBCOMMAND>` | Identifier type | Example `<IDENTIFIER>` |
+|---|---|---|---|
+| Machine Workload | `machine` | Workload name | `vm-web-01` |
+| M365 Exchange mailbox | `m365 exchange` | UPN | `alice@contoso.com` |
+| M365 OneDrive | `m365 onedrive` | UPN | `alice@contoso.com` |
+| M365 Teams chat (user) | `m365 chat` | UPN | `alice@contoso.com` |
+| M365 group / shared mailbox | `m365 group` | Group email | `marketing@contoso.com` |
+| M365 SharePoint site | `m365 sharepoint` | Site name | `Marketing` |
+| M365 Teams team | `m365 teams` | Team name | `Engineering` |

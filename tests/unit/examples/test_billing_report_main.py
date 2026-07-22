@@ -102,9 +102,8 @@ def _make_detail_scenario() -> tuple[list[_PlanCharge], list[_GroupCharge], list
 
 
 def test_dump_config_template_exits_0(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch.object(sys, "argv", _argv("--dump-config-template")):
-        with pytest.raises(SystemExit) as exc:
-            main()
+    with patch.object(sys, "argv", _argv("--dump-config-template")), pytest.raises(SystemExit) as exc:
+        main()
     assert exc.value.code == 0
     assert capsys.readouterr().out == _PRICING_TEMPLATE
 
@@ -148,9 +147,8 @@ def test_main_error_exits(
         cfg = tmp_path / "pricing.yaml"
         cfg.write_text(cfg_yaml)
         argv = [a.replace("{cfg}", str(cfg)) for a in argv]
-    with patch.object(sys, "argv", _argv(*argv)):
-        with pytest.raises(SystemExit) as exc:
-            main()
+    with patch.object(sys, "argv", _argv(*argv)), pytest.raises(SystemExit) as exc:
+        main()
     assert exc.value.code == exit_code
     assert stderr_match in capsys.readouterr().err
 

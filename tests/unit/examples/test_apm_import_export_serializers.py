@@ -1,8 +1,10 @@
 """Unit tests for serialization helper functions in examples/apm_import_export.py."""
 from __future__ import annotations
 
+import csv
 import io
 from datetime import time
+from pathlib import Path
 from typing import Any
 
 import apm_import_export as ie
@@ -605,3 +607,70 @@ def test_ser_m365_auto_backup_rules_block_serializes_user_rules() -> None:
         ],
         "collab_services": {},
     }
+
+
+# ── _write_export_yaml ───────────────────────────────────────────────────────
+
+
+def test_write_export_yaml_writes_each_section_under_correct_key(tmp_path: Path) -> None:
+    """Each data list lands under its own top-level YAML key, not a neighboring one."""
+    output = str(tmp_path / "export.yaml")
+
+    ie._write_export_yaml(
+        output,
+        bs_data=[{"ref_key": "server-1", "name_or_id": "apm-server-01"}],
+        rs_data=[{"ref_key": "remote-1", "name_or_id": "tiering-remote"}],
+        protection_data=[{"ref_key": "plan-1", "name_or_id": "Daily Backup"}],
+        retirement_data=[{"ref_key": "plan-2", "name_or_id": "Compliance Retention"}],
+        tiering_data=[{"ref_key": "plan-3", "name_or_id": "Tiering Plan"}],
+        fs_data=[{"backup_server_ref": "server-1", "name": "Corp Share"}],
+        saas_data=[{"ref_key": "tenant-1", "tenant_id": "123e4567-e89b-12d3-a456-426614174060"}],
+        m365_auto_bkp_data=[{"tenant_ref": "tenant-1", "user_rules": [], "collab_services": {}}],
+    )
+
+    parsed: dict[str, Any] = yaml.safe_load(Path(output).read_text(encoding="utf-8"))
+    assert parsed["backup_servers"][0]["name_or_id"] == "apm-server-01"
+    assert parsed["remote_storages"][0]["name_or_id"] == "tiering-remote"
+    assert parsed["protection_plans"][0]["name_or_id"] == "Daily Backup"
+    assert parsed["retirement_plans"][0]["name_or_id"] == "Compliance Retention"
+    assert parsed["tiering_plans"][0]["name_or_id"] == "Tiering Plan"
+    assert parsed["file_servers"][0]["name"] == "Corp Share"
+    assert parsed["saas_tenants"][0]["tenant_id"] == "123e4567-e89b-12d3-a456-426614174060"
+    assert parsed["m365_auto_backup_rules"][0]["tenant_ref"] == "tenant-1"
+
+
+# ── _write_fs_credentials_csv / _write_storage_credentials_csv ──────────────
+
+
+def test_write_fs_credentials_csv_writes_expected_rows(tmp_path: Path) -> None:
+    path = str(tmp_path / "fs-credentials.csv")
+
+    ie._write_fs_credentials_csv(path, [("192.0.2.1", "admin"), ("192.0.2.2", "root")])
+
+    with open(path, newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows == [
+        {"endpoint": "192.0.2.1", "login_user": "admin", "password": ""},
+        {"endpoint": "192.0.2.2", "login_user": "root", "password": ""},
+    ]
+
+
+def test_write_storage_credentials_csv_writes_expected_rows(tmp_path: Path) -> None:
+    path = str(tmp_path / "storage-credentials.csv")
+
+    ie._write_storage_credentials_csv(
+        path, [("s3_compatible", "https://s3.example.com:443", "my-bucket")]
+    )
+
+    with open(path, newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows == [
+        {
+            "storage_type": "s3_compatible",
+            "endpoint": "https://s3.example.com:443",
+            "vault_name": "my-bucket",
+            "access_key": "",
+            "secret_key": "",
+            "relink_encryption_key": "",
+        }
+    ]

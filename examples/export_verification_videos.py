@@ -20,7 +20,7 @@ Usage:
     python export_verification_videos.py --concurrency 5
     python export_verification_videos.py --csv /path/to/report.csv
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import csv
 import os
 import sys
@@ -39,10 +40,12 @@ from datetime import datetime
 from _common import (
     Progress,
     _remove_quietly,
+    add_profile_arg,
     fmt_bytes,
     fmt_dt,
     fmt_speed,
     make_client,
+    paginate,
     prompt_yes_no,
     register_interrupt,
     run_main,
@@ -108,22 +111,18 @@ async def _list_all_workloads(
     keyword: str | None,
     namespace: str | None,
 ) -> list[MachineWorkload]:
-    results: list[MachineWorkload] = []
-    offset = 0
-    while True:
-        page, total = await apm.machine.workloads.list(
+    items, _ = await paginate(
+        lambda limit, offset: apm.machine.workloads.list(
             workload_types=workload_types,
             is_retired=False,
             name_contains=keyword,
             namespace=namespace,
-            limit=500,
+            limit=limit,
             offset=offset,
-        )
-        results.extend(page)
-        offset += len(page)
-        if not page or offset >= total:
-            break
-    return results
+        ),
+        page=500,
+    )
+    return items
 
 
 # ── Phase 2: classify workload (skip or download) ────────────────────────────
@@ -203,7 +202,7 @@ async def _download_one(
             await apm.download_file(url, job.dest_path)
 
             dl_secs         = (datetime.now() - job.started_at).total_seconds()
-            job.bytes_saved = os.path.getsize(job.dest_path)
+            job.bytes_saved = await asyncio.to_thread(os.path.getsize, job.dest_path)
             job.outcome     = "ok"
             progress.clear_progress()
             version_date = fmt_dt(job.version.created_at)
@@ -239,9 +238,8 @@ def _write_csv(
     jobs: list[_DownloadJob],
     skipped: list[_SkippedWorkload],
 ) -> None:
-    rows = []
-    for j in jobs:
-        rows.append({
+    rows = [
+        {
             "workload_name": j.workload.name,
             "workload_type": workload_type_label(j.workload),
             "version_date":  fmt_dt(j.version.created_at),
@@ -249,9 +247,11 @@ def _write_csv(
             "size_bytes":    j.bytes_saved if j.bytes_saved is not None else "",
             "note":          j.outcome_msg if j.outcome != "ok" else "",
             "dest_path":     j.dest_path if j.outcome == "ok" else "",
-        })
-    for s in skipped:
-        rows.append({
+        }
+        for j in jobs
+    ]
+    rows.extend(
+        {
             "workload_name": s.workload.name,
             "workload_type": workload_type_label(s.workload),
             "version_date":  fmt_dt(s.version.created_at) if s.version else "",
@@ -259,7 +259,9 @@ def _write_csv(
             "size_bytes":    "",
             "note":          s.reason,
             "dest_path":     "",
-        })
+        }
+        for s in skipped
+    )
     rows.sort(key=lambda r: r["workload_name"])
     with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=_CSV_FIELDS)
@@ -300,6 +302,7 @@ async def run(
     yes: bool,
     concurrency: int,
     csv_path: str | None,
+    profile: str | None = None,
 ) -> int:
     wl_types: list[MachineWorkloadType]
     if workload_type_filter == "ps":
@@ -318,7 +321,7 @@ async def run(
     silent_skip_count = 0
 
     try:
-        async with make_client() as apm:
+        async with make_client(profile=profile) as apm:
 
             # ── 1. List workloads ─────────────────────────────────────────
             type_label = workload_type_filter.upper() if workload_type_filter != "all" else "PS/VM"
@@ -366,13 +369,14 @@ async def run(
 
             # ── 4. Download ────────────────────────────────────────────────
             assert csv_path is not None
-            print(f"\nOutput dir : {os.path.abspath(output_dir)}", file=sys.stderr)
-            print(f"CSV report : {os.path.abspath(csv_path)}", file=sys.stderr)
+            output_dir_abs = await asyncio.to_thread(os.path.abspath, output_dir)
+            csv_path_abs = await asyncio.to_thread(os.path.abspath, csv_path)
+            print(f"\nOutput dir : {output_dir_abs}", file=sys.stderr)
+            print(f"CSV report : {csv_path_abs}", file=sys.stderr)
 
-            if not yes:
-                if not await prompt_yes_no(f"\nAbout to download {len(all_jobs)} video(s). Continue? [y/N] "):
-                    print("Cancelled.", file=sys.stderr)
-                    return 0
+            if not yes and not await prompt_yes_no(f"\nAbout to download {len(all_jobs)} video(s). Continue? [y/N] "):
+                print("Cancelled.", file=sys.stderr)
+                return 0
 
             os.makedirs(output_dir, exist_ok=True)
             print(f"\nDownloading {len(all_jobs)} video(s):", file=sys.stderr)
@@ -390,10 +394,8 @@ async def run(
                 while not stop_ticker.is_set():
                     if not interrupt.is_set():
                         progress.print_progress()
-                    try:
+                    with contextlib.suppress(TimeoutError):
                         await asyncio.wait_for(stop_ticker.wait(), timeout=1.0)
-                    except TimeoutError:
-                        pass
 
             ticker_task = asyncio.create_task(_ticker())
             dl_tasks = [
@@ -441,7 +443,7 @@ async def run(
 
     assert csv_path is not None  # resolved above; dry-run / no-workload paths returned earlier
     os.makedirs(output_dir, exist_ok=True)
-    _write_csv(csv_path, all_jobs, all_skipped)
+    await asyncio.to_thread(_write_csv, csv_path, all_jobs, all_skipped)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     ok          = [j for j in all_jobs if j.outcome == "ok"]
@@ -502,6 +504,7 @@ def main() -> None:
         "--csv", metavar="FILE", default=None,
         help="CSV report path (default: {output_dir}/download_report_{timestamp}.csv)",
     )
+    add_profile_arg(parser)
     args = parser.parse_args()
 
     run_main(run(
@@ -513,6 +516,7 @@ def main() -> None:
         yes=args.yes,
         concurrency=args.concurrency,
         csv_path=args.csv,
+        profile=args.profile,
     ))
 
 

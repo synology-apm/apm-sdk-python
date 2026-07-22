@@ -33,8 +33,8 @@ from synology_apm.cli._serializers import (
     system_log_to_csv_row,
     system_log_to_dict,
 )
-from synology_apm.cli._validate import parse_time_range, validate_name_or_id_args
-from synology_apm.cli.errors import err_console
+from synology_apm.cli._validate import parse_time_range, resolve_by_name_or_id, validate_name_or_id_args
+from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.cli.output import ListOutputFormat, cell, console, dispatch_paginated_list, new_table
 from synology_apm.sdk import (
     APMActivityLog,
@@ -70,17 +70,13 @@ app.add_typer(_system_app,     name="system")
 
 async def _resolve_server(apm: APMClient, name: str | None, server_id: str | None) -> BackupServer:
     """Resolve server search or direct ID to a BackupServer, and enforce DP-only requirement."""
-    if name is not None:
-        server = await apm.backup_servers.get_by_name(name)
-    else:
-        assert server_id is not None
-        server = await apm.backup_servers.get(server_id)
+    server = await resolve_by_name_or_id(name, server_id, apm.backup_servers.get, apm.backup_servers.get_by_name)
     if server.server_type != BackupServerType.DP:
         err_console.print(
             f"[red]✗[/red] '{server.name}' is a NAS server — "
             "log commands only work on DP (ActiveProtect Appliance) servers."
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR)
     return server
 
 
@@ -120,7 +116,7 @@ async def _run_log_list(
     spinner: str,
     list_fn: Callable[
         [APMClient, BackupServer, datetime | None, datetime | None, int, int],
-        Awaitable[tuple[Sequence[Any], int]],
+        Awaitable[tuple[Sequence[Any], int | None]],
     ],
     to_dict: Callable[[Any], dict[str, Any]],
     to_csv_row: Callable[[Any], dict[str, Any]],
@@ -154,7 +150,7 @@ async def _run_log_list(
     for e in logs:
         t.add_row(*row_fn(e))
     console.print(t)
-    print_list_footer(console, len(logs), total or None)
+    print_list_footer(console, len(logs), total)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

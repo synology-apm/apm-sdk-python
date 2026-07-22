@@ -4,7 +4,15 @@ Command-line interface for [Synology ActiveProtect Manager (APM)](https://www.sy
 
 ## Installation
 
-Requires Python 3.11 or later.
+Requires Python 3.11 or later — provisioned automatically if you use `uv`/`uvx` below, otherwise required on your own interpreter for `pip install`.
+
+Run directly without installing, via [`uv`](https://docs.astral.sh/uv/getting-started/installation/)'s `uvx` launcher:
+
+```bash
+uvx synology-apm-cli --help
+```
+
+Or install with [`pip`](https://pip.pypa.io/en/stable/installation/):
 
 ```bash
 pip install synology-apm-cli
@@ -109,8 +117,6 @@ Use `--debug` (before the subcommand) to print every API request and response to
 
 ```bash
 synology-apm-cli --debug machine list
-synology-apm-cli --debug infra server get --id <server-id>
-synology-apm-cli --debug m365 exchange list -t $TENANT
 ```
 
 Output goes to **stderr** so it does not interfere with `--output json` pipelines:
@@ -380,7 +386,7 @@ Lists and inspects backup protection plans. To apply a plan to a workload, use
 `synology-apm-cli machine change-plan` / `synology-apm-cli m365 <scope> change-plan`.
 
 ```bash
-# List all protection plans (machine + M365 in a single API call)
+# List all protection plans (machine and M365 plans together)
 synology-apm-cli plan protection list
 synology-apm-cli plan protection list --category machine   # Machine plans only
 synology-apm-cli plan protection list --category m365      # M365 plans only

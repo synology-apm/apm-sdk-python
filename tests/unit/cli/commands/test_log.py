@@ -483,8 +483,8 @@ def test_activity_list_page_all_combines_pages(mock_apm: AsyncMock, monkeypatch:
     assert mock_apm.logs.list_activity.call_args_list[1].kwargs["offset"] == 1
 
 
-def test_activity_list_page_all_continues_past_full_page_with_total_zero(mock_apm: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
-    """log activity list --page-all must keep paging when the API reports total=0 (the
+def test_activity_list_page_all_continues_past_full_page_with_total_none(mock_apm: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    """log activity list --page-all must keep paging when the API reports total=None (the
     real list_activity sentinel for "no total available") even though the first page is full."""
     monkeypatch.setattr("synology_apm.cli.output._PAGE_FETCH_DELAY_SECONDS", 0)
     activity_1b = dataclasses.replace(SAMPLE_ACTIVITY, description="First page, second event.")
@@ -492,8 +492,8 @@ def test_activity_list_page_all_continues_past_full_page_with_total_zero(mock_ap
 
     mock_apm.backup_servers.get_by_name = AsyncMock(return_value=SAMPLE_SERVER)
     mock_apm.logs.list_activity = AsyncMock(side_effect=[
-        ([SAMPLE_ACTIVITY, activity_1b], 0),  # full page (n == limit), total=0 sentinel
-        ([activity_2], 0),                    # short page (n < limit) -> stop
+        ([SAMPLE_ACTIVITY, activity_1b], None),  # full page (n == limit), total=None sentinel
+        ([activity_2], None),                    # short page (n < limit) -> stop
     ])
 
     @asynccontextmanager

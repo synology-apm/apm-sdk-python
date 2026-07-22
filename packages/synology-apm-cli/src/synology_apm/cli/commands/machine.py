@@ -22,9 +22,7 @@ from synology_apm.cli._display import (
     fmt_verify_status,
     fmt_workload_status,
     print_list_footer,
-    print_version_detail,
     print_workload_detail,
-    render_version_table,
 )
 from synology_apm.cli._helpers import apm_session
 from synology_apm.cli._options import (
@@ -38,9 +36,6 @@ from synology_apm.cli._options import (
     VERSION_LIMIT_OPTION,
 )
 from synology_apm.cli._serializers import (
-    version_detail_to_dict,
-    version_to_csv_row,
-    version_to_dict,
     workload_to_csv_row,
     workload_to_dict,
 )
@@ -48,18 +43,24 @@ from synology_apm.cli._validate import (
     MACHINE_TYPE_ARGS,
     VERIFY_STATUS_ARGS,
     WORKLOAD_STATUS_ARGS,
-    WorkloadRef,
     _resolve_plans,
     parse_enum_list,
     parse_time_range,
-    print_resolved_version,
     require_or_help,
     validate_resolve_args,
     validate_version_lock_args,
     validate_version_workload_args,
 )
-from synology_apm.cli.commands._actions import _do_backup, _do_cancel, _do_change_plan, _do_retire
-from synology_apm.cli.errors import err_console
+from synology_apm.cli.commands._actions import (
+    _do_backup,
+    _do_cancel,
+    _do_change_plan,
+    _do_retire,
+    _do_version_get,
+    _do_version_list,
+    _do_version_lock_unlock,
+)
+from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.cli.output import (
     ListOutputFormat,
     OutputFormat,
@@ -151,7 +152,7 @@ async def machine_list(
         invalid = [t for t in type_filter if t.lower() not in MACHINE_TYPE_ARGS]
         if invalid:
             err_console.print(f"[red]✗[/red] Invalid type: {invalid[0]!r} (expected: pc / ps / vm / fs)")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_ERROR)
         workload_types = [MACHINE_TYPE_ARGS[t.lower()] for t in type_filter]
     status_enums = parse_enum_list(
         status, WORKLOAD_STATUS_ARGS, "status",
@@ -431,22 +432,13 @@ async def machine_version_list(
     since_dt, until_dt = parse_time_range(since, until)
 
     async with apm_session(ctx) as apm:
-        wl = await ref.resolve_machine(apm, is_retired=retired)
-        result = await dispatch_paginated_list(
-            lambda off, lim: apm.machine.workloads.list_versions(
-                wl, limit=lim, offset=off, since=since_dt, until=until_dt,
-            ),
-            limit=limit, offset=offset, page_all=page_all, output=output,
-            to_dict=version_to_dict, to_csv_row=version_to_csv_row,
+        await _do_version_list(
+            lambda: ref.resolve_machine(apm, is_retired=retired),
+            apm.machine.workloads.list_versions,
+            lambda wl: wl.workload_type in (MachineWorkloadType.PS, MachineWorkloadType.VM),
+            limit=limit, offset=offset, page_all=page_all, since=since_dt, until=until_dt,
+            output=output, verbose=verbose,
         )
-
-    if result is None:
-        return
-
-    versions, total = result
-    show_verify = wl.workload_type in (MachineWorkloadType.PS, MachineWorkloadType.VM)
-    render_version_table(console, versions, offset, wl, verbose=verbose, show_verify=show_verify)
-    print_list_footer(console, len(versions), total, offset)
 
 
 @version_app.command("get")
@@ -476,40 +468,17 @@ async def machine_version_get(
     ref = validate_version_workload_args(ctx, name, workload_id, namespace)
 
     async with apm_session(ctx) as apm:
-        wl = await ref.resolve_machine(apm, is_retired=retired)
-
-        if version_id is not None:
-            v = await apm.machine.workloads.get_version(wl, version_id)
-        else:
-            v = await apm.machine.workloads.get_latest_version(wl)
-        print_resolved_version(version_id, v)
-
-        act = await apm.activities.backup.get_by_version(v)
-
-    if dispatch_output(None, output, lambda _: version_detail_to_dict(v, act)):
-        return
-
-    print_version_detail(console, v, act)
+        await _do_version_get(
+            lambda: ref.resolve_machine(apm, is_retired=retired),
+            apm.machine.workloads.get_version,
+            apm.machine.workloads.get_latest_version,
+            apm=apm,
+            version_id=version_id,
+            output=output,
+        )
 
 
 # ── synology-apm-cli machine version lock / unlock ─────────────────────────────────────
-
-
-async def _exec_version_lock(
-    ctx: typer.Context,
-    ref: WorkloadRef,
-    retired: bool,
-    version_id: str,
-    *,
-    lock: bool,
-) -> None:
-    async with apm_session(ctx) as apm:
-        wl = await ref.resolve_machine(apm, is_retired=retired)
-        version = await apm.machine.workloads.get_version(wl, version_id)
-        if lock:
-            await apm.machine.workloads.lock_version(version)
-        else:
-            await apm.machine.workloads.unlock_version(version)
 
 
 @version_app.command("lock")
@@ -534,7 +503,15 @@ async def machine_version_lock(
       synology-apm-cli machine version lock --workload-id <wl-id> --namespace <ns> --id <ver-id>
     """
     ref, version_id = validate_version_lock_args(ctx, name, workload_id, namespace, version_id)
-    await _exec_version_lock(ctx, ref, retired, version_id, lock=True)
+    async with apm_session(ctx) as apm:
+        await _do_version_lock_unlock(
+            lambda: ref.resolve_machine(apm, is_retired=retired),
+            apm.machine.workloads.get_version,
+            apm.machine.workloads.lock_version,
+            apm.machine.workloads.unlock_version,
+            version_id=version_id,
+            lock=True,
+        )
     if not quiet:
         console.print(f"[green]✓[/green] Version locked: {version_id}")
 
@@ -561,7 +538,15 @@ async def machine_version_unlock(
       synology-apm-cli machine version unlock --workload-id <wl-id> --namespace <ns> --id <ver-id>
     """
     ref, version_id = validate_version_lock_args(ctx, name, workload_id, namespace, version_id)
-    await _exec_version_lock(ctx, ref, retired, version_id, lock=False)
+    async with apm_session(ctx) as apm:
+        await _do_version_lock_unlock(
+            lambda: ref.resolve_machine(apm, is_retired=retired),
+            apm.machine.workloads.get_version,
+            apm.machine.workloads.lock_version,
+            apm.machine.workloads.unlock_version,
+            version_id=version_id,
+            lock=False,
+        )
     if not quiet:
         console.print(f"[green]✓[/green] Version unlocked: {version_id}")
 

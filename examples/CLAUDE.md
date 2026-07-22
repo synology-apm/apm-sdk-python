@@ -6,21 +6,34 @@ This file provides context for Claude Code when helping write scripts that use t
 
 ## Script Skeleton
 
-Every script follows this shape: build the client with `make_client()` — which reads
-`APM_HOST` / `APM_USERNAME` / `APM_PASSWORD` / `APM_NO_VERIFY_SSL` from the environment /
-`.env` (see `.env.example` at the repository root) — and hand an async entry coroutine to
-`run_main()`. Never hardcode credentials.
+Every script follows this shape: build the client with `make_client()` — which resolves
+connection settings the same way `synology-apm-cli` and `synology-apm-mcp` do: an explicit
+keyword argument (`make_client(host=..., profile=...)`, etc.) takes priority, then
+`APM_HOST` / `APM_USERNAME` / `APM_PASSWORD` / `APM_NO_VERIFY_SSL` / `APM_PROFILE` environment
+variables, then a profile configured via `synology-apm-cli config set`
+(`~/.config/synology-apm/config.toml`) — and hand an async entry coroutine to `run_main()`.
+Never hardcode credentials.
+
+To use a `.env` file (see `.env.example` at the repository root), run scripts via
+`uv run --env-file .env python examples/<script>.py ...`; otherwise export real environment
+variables directly, or configure a profile.
+
+Every script also takes `add_profile_arg(parser)`'s standard `--profile` flag (same flag/help
+text as `synology-apm-cli`/`synology-apm-mcp`) and threads `args.profile` through its `run()`
+coroutine into `make_client(profile=...)`, so `--profile lab` overrides `APM_PROFILE` the same
+way it does for the CLI and MCP server. Add it to every new script, even if the script has no
+other reason to touch connection settings.
 
 ```python
 import argparse
 import sys
 
-from _common import add_output_arg, make_client, run_main
+from _common import add_output_arg, add_profile_arg, make_client, run_main
 
 
-async def run(output_format: str) -> int | None:
+async def run(output_format: str, profile: str | None = None) -> int | None:
     print("Collecting data...", file=sys.stderr)
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         servers, total = await apm.backup_servers.list()
     ...
     return 0  # None also means success; run_main() maps APMError to exit code 1
@@ -29,8 +42,9 @@ async def run(output_format: str) -> int | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     add_output_arg(parser)
+    add_profile_arg(parser)
     args = parser.parse_args()
-    run_main(run(args.output))
+    run_main(run(args.output, profile=args.profile))
 
 
 if __name__ == "__main__":
@@ -122,9 +136,10 @@ script). Test layering:
 - Build SDK model values with the `make_*` builders in `tests/unit/examples/_fixtures.py`
   rather than hand-constructing dataclasses; test data follows the placeholder table in the
   repository CLAUDE.md.
-- Tests must not hit the network, sleep for real, or read the developer's `.env` (note
-  `_common.py` calls `load_dotenv()` at import time — environment-dependent tests must
-  monkeypatch every variable they read).
+- Tests must not hit the network, sleep for real, or read the developer's real
+  `~/.config/synology-apm/config.toml` — mock `_common.resolve_connection` directly (see
+  `test_common.py`'s `make_client` tests) rather than exercising the real config-file/keyring
+  lookup.
 
 > **Note:** `tests/unit/examples/conftest.py` inserts `examples/` into `sys.path`, so test
 > modules import scripts flat (`from backup_catchup import ...`); shared test helpers use the
@@ -152,4 +167,4 @@ mypy .
 - Add its `tests/unit/examples/test_<module>.py` — `examples/` is included in the unit-test
   coverage gate (`make test`).
 - Dependencies are limited to the public SDK API and the existing dev dependencies
-  (`python-dotenv`, `pyyaml`, `openpyxl`); do not introduce new third-party packages.
+  (`pyyaml`, `openpyxl`); do not introduce new third-party packages.

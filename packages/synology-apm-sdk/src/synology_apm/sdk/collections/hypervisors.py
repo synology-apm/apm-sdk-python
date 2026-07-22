@@ -7,7 +7,7 @@ from .._http import WebAPISession
 from ..enums import HypervisorType
 from ..exceptions import ResourceNotFoundError
 from ..models.hypervisor import Hypervisor
-from ._shared import _not_found_as
+from ._shared import ListResult, _not_found_as
 
 _HOST_TYPE_MAP: dict[str, HypervisorType] = {
     "ESXi":            HypervisorType.VSPHERE_ESXI,
@@ -27,15 +27,15 @@ class HypervisorCollection:
     def __init__(self, session: WebAPISession) -> None:
         self._session = session
 
-    async def list(self) -> tuple[list[Hypervisor], int]:
+    async def list(self) -> ListResult[Hypervisor]:
         """List all registered hypervisor inventory servers.
 
         Returns:
-            (list of Hypervisor, total count)
+            ListResult of (list of Hypervisor, total count)
         """
         raw = await self._session.get("/api/v1/inventory")
         items = [_parse_hypervisor(h) for h in raw.get("inventories", [])]
-        return items, len(items)
+        return ListResult(items, len(items))
 
     async def get(self, hypervisor_id: str) -> Hypervisor:
         """Fetch a hypervisor inventory server by ID.

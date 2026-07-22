@@ -377,8 +377,8 @@ def register_workload_tools(  # pragma: no cover
                 params=mutation_params(cat, workload_id, tenant_id, workload_type, version_id=version_id),
             )
 
-    registrar.tool("manager", name=f"lock_{name_prefix}_version", description=f"Lock a {name_prefix} backup version to prevent automatic deletion.")(_lock_version)
-    registrar.tool("manager", name=f"unlock_{name_prefix}_version", description=f"Unlock a {name_prefix} backup version to allow automatic deletion.")(_unlock_version)
+    registrar.tool("admin", name=f"lock_{name_prefix}_version", description=f"Lock a {name_prefix} backup version to prevent automatic deletion.")(_lock_version)
+    registrar.tool("admin", name=f"unlock_{name_prefix}_version", description=f"Unlock a {name_prefix} backup version to allow automatic deletion.")(_unlock_version)
 
     # ── admin mutations ───────────────────────────────────────────────────────
 

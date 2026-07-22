@@ -6,10 +6,10 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import typer
-from rich.console import Console
 
 from synology_apm.cli.errors import (
     EXIT_ERROR,
+    _dynamic_console,
     apm_error_handler,
     err_console,
     handle_keyring_error,
@@ -20,7 +20,7 @@ from synology_apm.cli.errors import (
 )
 from synology_apm.sdk import APMClient, KeyringUnavailableError, resolve_connection
 
-_spinner_console = Console(stderr=True)
+_spinner_console = _dynamic_console(stderr=True)
 
 _debug_mode: bool = False
 
@@ -50,14 +50,12 @@ async def get_client(ctx: typer.Context) -> AsyncIterator[APMClient]:
             profile=obj.get("profile"),
             no_verify_ssl=obj.get("no_verify_ssl"),
         )
-        eff_host, eff_username, eff_password, eff_ssl = (
-            resolved.host, resolved.username, resolved.password, resolved.no_verify_ssl
-        )
+        eff_host, eff_username, eff_password = resolved.host, resolved.username, resolved.password
     except KeyringUnavailableError as exc:
         handle_keyring_error(
             exc, "Set the APM_PASSWORD environment variable instead, or use a plaintext-stored profile."
         )
-    if not eff_host or not eff_username:
+    if not resolved.is_complete():
         missing_config_hint(resolved.profile)  # NoReturn
     if not eff_password:
         if obj.get("no_input"):
@@ -66,7 +64,7 @@ async def get_client(ctx: typer.Context) -> AsyncIterator[APMClient]:
         eff_password = typer.prompt("Password", hide_input=True)
     async with APMClient(
         eff_host, eff_username, eff_password,
-        verify_ssl=not eff_ssl,
+        verify_ssl=resolved.verify_ssl,
         debug=_debug_mode,
     ) as apm:
         server = apm.my_server

@@ -42,6 +42,10 @@ fuller detail when:
 A cheaper static heuristic (e.g. "last backup older than 25 hours" instead of reading a plan's
 actual schedule) is often good enough and keeps the tool-call footprint minimal.
 
+**Activity detail fields**: `get_backup_activity`'s (and `get_restore_activity`'s) `log_entries`
+array holds each entry's detail text in its `message` field — there is no separate
+`error_message` field.
+
 ## Pagination convention
 
 - Every `list_*` tool accepts `limit`/`offset` and returns `{items, total}`. If `total` exceeds
@@ -64,8 +68,7 @@ before it):
 |---|---|
 | `readonly` | list/get queries only — no mutations |
 | `operator` | trigger/cancel backups, cancel activities, start/cancel/list M365 exports |
-| `manager` | lock/unlock backup versions |
-| `admin` | create/update/delete plans, workloads, remote storage, file servers, auto-backup rules |
+| `admin` | lock/unlock backup versions, create/update/delete plans, workloads, remote storage, file servers, auto-backup rules |
 
 If a tool call fails with a permission error, tell the user which mode is required rather than
 retrying — there's no way to escalate mid-session.
@@ -131,20 +134,14 @@ retention/schedule/Backup Copy parameter shape (M365 plans just omit the machine
 below). Get the exact spelling and cross-field requirements right on the first call — none of
 these are validated until the request reaches the tool.
 
-**Retention (`retention_type`)** — one of `keep_all`, `keep_days`, `keep_versions`,
-`keep_advanced`, `none`:
-- `keep_days` → also set `retention_days` (int).
-- `keep_versions` → also set `retention_versions` (int).
+**Retention (`retention_type`)** — the tool description already lists the five values and the
+`is_immutable`/`keep_days` coupling; the one thing it omits:
 - `keep_advanced` → set **all four** of `gfs_daily_versions`, `gfs_weekly_versions`,
   `gfs_monthly_versions`, `gfs_yearly_versions` (ints) — omitting even one raises an error. You
   may combine this with `retention_days`/`retention_versions` too.
-- `is_immutable=true` is only valid when `retention_type=keep_days` — it rejects every other
-  retention type.
 
-**Main schedule** — `schedule_frequency` is one of `manual`, `hourly`, `daily`, `weekly`;
-`schedule_time` is `"HH:MM"` (24-hour, e.g. `"02:00"`); `weekdays` is a list of 3-letter
-lowercase tokens `sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`. `weekdays` is required
-(non-empty) only when `schedule_frequency=weekly`; it's ignored for every other frequency.
+**Main schedule** — see the tool description for `schedule_frequency`/`schedule_time`/`weekdays`
+format; nothing to add here beyond that.
 
 **Backup Copy (`backup_copy_*`)** — a second, independent copy destination with its own
 retention and schedule. Leave `backup_copy_destination_id` unset to disable it entirely. Once

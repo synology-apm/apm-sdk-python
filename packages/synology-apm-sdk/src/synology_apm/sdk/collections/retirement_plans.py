@@ -7,6 +7,7 @@ from .._http import WebAPISession
 from ..exceptions import ResourceNotFoundError
 from ..models.retirement_plan import RetirementPlan, RetirementPlanCreateRequest, RetirementRetentionPolicy
 from ._shared import (
+    ListResult,
     _create_plan_and_fetch,
     _delete_plan_checked,
     _not_found_as,
@@ -32,7 +33,7 @@ class RetirementPlanCollection:
         name_contains: str | None = None,
         limit: int = 500,
         offset: int = 0,
-    ) -> tuple[list[RetirementPlan], int]:
+    ) -> ListResult[RetirementPlan]:
         """List all Retirement Plans.
 
         Args:
@@ -41,14 +42,14 @@ class RetirementPlanCollection:
             offset:        Pagination start offset (default 0).
 
         Returns:
-            (list of RetirementPlan, total count matching the filter)
+            ListResult of (list of RetirementPlan, total count matching the filter)
         """
         params: dict[str, Any] = {"offset": offset, "limit": limit}
         if name_contains:
             params["keyword"] = name_contains
 
         raw = await self._session.get("/api/v1/plan/archive_plan", params=params)
-        return [_parse_retirement_plan(p) for p in raw.get("plans", [])], raw.get("total", 0)
+        return ListResult([_parse_retirement_plan(p) for p in raw.get("plans", [])], raw.get("total"))
 
     async def get(self, plan_id: str) -> RetirementPlan:
         """Fetch a Retirement Plan by UUID.
@@ -81,7 +82,7 @@ class RetirementPlanCollection:
                 "offset": offset,
             }
             raw = await self._session.get("/api/v1/plan/archive_plan", params=params)
-            return raw.get("plans", []), raw.get("total", 0)
+            return raw.get("plans", []), raw.get("total")
 
         async for p in _paginate(fetch):
             plan = _parse_retirement_plan(p)

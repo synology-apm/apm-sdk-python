@@ -5,7 +5,7 @@ from datetime import time
 from typing import Any
 
 import pytest
-from aioresponses import aioresponses
+from aiointercept import aiointercept
 from yarl import URL
 
 from synology_apm.sdk.client import APMClient
@@ -17,7 +17,7 @@ from synology_apm.sdk.models.protection_plan import (
     ProtectionRetentionPolicy,
     ProtectionSchedule,
 )
-from tests.unit.sdk.conftest import BASE_URL, HOST, LOGIN_OK, LOGIN_URL, LOGOUT_OK, assert_resource_error
+from tests.unit.sdk.conftest import BASE_URL, HOST, LOGIN_OK, LOGIN_URL, LOGOUT_OK, assert_resource_error, request_json
 
 ME_URL = f"{BASE_URL}/api/v1/infra/backup_server/me"
 ME_OK = {
@@ -63,7 +63,7 @@ SAMPLE_M365_PLAN = {
 async def test_plans_list_machine_category() -> None:
     """plans.list(category=MACHINE) passes serviceType=DEVICE."""
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [SAMPLE_MACHINE_PLAN], "total": 1})
@@ -80,7 +80,7 @@ async def test_plans_list_machine_category() -> None:
 async def test_plans_list_m365_category() -> None:
     """plans.list(category=M365) passes serviceType=M365."""
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=M365"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [SAMPLE_M365_PLAN], "total": 1})
@@ -100,7 +100,7 @@ async def test_plans_list_no_category_passes_both_service_types() -> None:
         f"{BASE_URL}/api/v1/plan/backup_plan"
         "?limit=500&offset=0&serviceType=DEVICE&serviceType=M365"
     )
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [SAMPLE_MACHINE_PLAN, SAMPLE_M365_PLAN], "total": 2})
@@ -123,7 +123,7 @@ async def test_plans_get_by_name_returns_m365_plan_via_cross_category_search() -
         f"{BASE_URL}/api/v1/plan/backup_plan"
         "?keyword=M365+Daily&limit=100&offset=0&serviceType=DEVICE&serviceType=M365"
     )
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(keyword_url, payload={"plans": [SAMPLE_M365_PLAN], "total": 1})
@@ -141,7 +141,7 @@ async def test_plans_get_by_name_raises_not_found_when_no_match() -> None:
         f"{BASE_URL}/api/v1/plan/backup_plan"
         "?keyword=Non-Existent&limit=100&offset=0&serviceType=DEVICE&serviceType=M365"
     )
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(keyword_url, payload={"plans": [], "total": 0})
@@ -160,7 +160,7 @@ async def test_plans_get_by_name_match_is_case_insensitive() -> None:
         f"{BASE_URL}/api/v1/plan/backup_plan"
         "?keyword=daily+machine+backup&limit=100&offset=0&serviceType=DEVICE&serviceType=M365"
     )
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(keyword_url, payload={"plans": [SAMPLE_MACHINE_PLAN], "total": 1})
@@ -176,7 +176,7 @@ async def test_plans_get_by_name_match_is_case_insensitive() -> None:
 
 async def test_plans_get_calls_direct_endpoint() -> None:
     """plans.get(id) calls GET /api/v1/plan/backup_plan/{id} and returns the parsed plan."""
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(f"{BASE_URL}/api/v1/plan/backup_plan/plan-machine-001", payload=SAMPLE_MACHINE_PLAN)
@@ -211,7 +211,7 @@ async def test_plans_list_resolves_external_storage_copy_destination() -> None:
     }
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
     ext_url = f"{BASE_URL}/api/v1/external_storage/ext-001"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
@@ -257,7 +257,7 @@ async def test_plans_list_external_storage_empty_name_yields_no_destination() ->
     }
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
     ext_url = f"{BASE_URL}/api/v1/external_storage/ext-002"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
@@ -288,7 +288,7 @@ async def test_plans_list_external_storage_error_propagates() -> None:
     }
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
     ext_url = f"{BASE_URL}/api/v1/external_storage/ext-003"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
@@ -318,7 +318,7 @@ async def test_plans_list_deleted_external_storage_yields_no_destination() -> No
     }
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
     ext_url = f"{BASE_URL}/api/v1/external_storage/ext-004"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
@@ -352,7 +352,7 @@ async def test_plans_list_resolves_appliance_copy_destination() -> None:
     }
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
     servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
@@ -403,7 +403,7 @@ async def test_plans_list_appliance_namespace_not_in_server_list_yields_no_desti
     }
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
     servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
@@ -434,7 +434,7 @@ async def test_plans_list_appliance_server_list_error_propagates() -> None:
     }
     plans_url = f"{BASE_URL}/api/v1/plan/backup_plan?limit=500&offset=0&serviceType=DEVICE"
     servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [plan_with_copy], "total": 1})
@@ -451,7 +451,7 @@ async def test_plans_list_name_contains_passes_keyword_param() -> None:
         f"{BASE_URL}/api/v1/plan/backup_plan"
         "?keyword=Daily&limit=500&offset=0&serviceType=DEVICE&serviceType=M365"
     )
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(plans_url, payload={"plans": [SAMPLE_MACHINE_PLAN], "total": 1})
@@ -472,7 +472,7 @@ async def test_plans_create_with_machine_request_dispatches_to_device_body() -> 
     get_url = f"{BASE_URL}/api/v1/plan/backup_plan/plan-machine-001"
     _retention = ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=30)
     _schedule = ProtectionSchedule(frequency=ScheduleFrequency.DAILY, start_time=time(9, 0))
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.post(create_url, payload={"id": "plan-machine-001"})
@@ -486,7 +486,7 @@ async def test_plans_create_with_machine_request_dispatches_to_device_body() -> 
             ))
 
     post_key = ("POST", URL(create_url))
-    body: dict[str, Any] = m.requests[post_key][0].kwargs["json"]
+    body = request_json(m, post_key)
     assert body["plan"]["serviceType"] == "DEVICE"
     assert body["plan"]["retention"]["keepDays"] == 30
     assert body["plan"]["configDevice"]["mainSchedule"]["runHour"] == 9
@@ -500,7 +500,7 @@ async def test_plans_create_with_m365_request_dispatches_to_m365_body() -> None:
     get_url = f"{BASE_URL}/api/v1/plan/backup_plan/plan-m365-001"
     _retention = ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=30)
     _schedule = ProtectionSchedule(frequency=ScheduleFrequency.DAILY, start_time=time(9, 0))
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.post(create_url, payload={"id": "plan-m365-001"})
@@ -514,7 +514,7 @@ async def test_plans_create_with_m365_request_dispatches_to_m365_body() -> None:
             ))
 
     post_key = ("POST", URL(create_url))
-    body: dict[str, Any] = m.requests[post_key][0].kwargs["json"]
+    body = request_json(m, post_key)
     assert body["plan"]["serviceType"] == "M365"
     assert body["plan"]["retention"]["keepDays"] == 30
     assert body["plan"]["configM365"]["schedule"]["runHour"] == 9
@@ -528,7 +528,7 @@ async def test_plans_create_with_m365_request_dispatches_to_m365_body() -> None:
 async def test_plans_delete_sends_delete_request() -> None:
     """apm.plans.delete(plan_id) sends DELETE to /api/v1/plan/backup_plan/{plan_id}."""
     delete_url = f"{BASE_URL}/api/v1/plan/backup_plan/plan-machine-001"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.delete(delete_url, payload={})
@@ -545,7 +545,7 @@ async def test_plans_delete_plan_in_use_raises_plan_in_use_error() -> None:
     error_body: dict[str, Any] = {
         "error": {"code": 500, "details": [{"errorCode": 4019}]}
     }
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.delete(delete_url, status=500, payload=error_body)

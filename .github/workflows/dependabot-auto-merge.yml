@@ -1,0 +1,34 @@
+# Auto-merges Dependabot security-update PRs once the required `test` status check
+# (from ci.yml) passes. Relies on repo Settings prerequisites documented in CLAUDE.md's
+# "GitHub Actions Security Conventions" section (Dependabot security updates enabled,
+# auto-merge allowed, branch protection requiring the `test` check on main).
+#
+# Gating on the PR author alone is sufficient because this repo has no dependabot.yml:
+# with no version-updates configured for any ecosystem, "Dependabot security updates" is
+# the only mechanism that can make dependabot[bot] open a PR here, so every such PR is a
+# security update. If dependabot.yml version-updates are added for any ecosystem, this
+# condition must gate on more than just the author, or routine bumps will auto-merge too.
+name: Dependabot auto-merge (security updates)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

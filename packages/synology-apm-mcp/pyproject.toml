@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "synology-apm-mcp"
-version = "0.2.1"
+version = "0.3.0"
 description = "MCP server for Synology ActiveProtect Manager, built on synology-apm-sdk"
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "synology-apm-sdk==0.2.1",
+    "synology-apm-sdk==0.3.0",
     "fastmcp>=2.0",
 ]
 

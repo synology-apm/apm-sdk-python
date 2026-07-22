@@ -27,17 +27,16 @@ delete steps below depend on.
 
 3. `retire_machine_workload`/`retire_m365_workload` move the workload to a retirement plan and
    stop new backups, but keep existing backup data under that plan's retention policy. Resolve
-   the target retirement plan's id first (`list_retirement_plans`). Follow the
-   [preview/confirm pattern](../apm-mcp-conventions/SKILL.md#destructive-action-preview-pattern):
-   call once with `confirm=false`, show the preview to the user, then call again with
-   `confirm=true` only after explicit approval. Requires `admin` mode.
+   the target retirement plan's id first (`list_retirement_plans`), then follow the
+   [preview/confirm pattern](../apm-mcp-conventions/SKILL.md#destructive-action-preview-pattern).
+   Requires `admin` mode.
 
 ## Deleting a workload
 
 4. `delete_machine_workload`/`delete_m365_workload` permanently remove the workload **and its
    backup data** — this is irreversible, unlike retiring. Follow the same
    [preview/confirm pattern](../apm-mcp-conventions/SKILL.md#destructive-action-preview-pattern)
-   as retiring; make sure the preview/warning is read back to the user verbatim before the
+   as retiring, and make sure the preview/warning is read back to the user verbatim before the
    `confirm=true` call, given the data loss involved. Requires `admin` mode.
    `delete_m365_workload` succeeds silently if the workload is already gone — don't treat that
    as an error.

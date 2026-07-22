@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any
 
 from synology_apm.cli._display import fmt_datetime_iso, fmt_schedule_frequency, fmt_schedule_label
-from synology_apm.cli.output import to_local_iso as _iso
 from synology_apm.sdk import (
     APMActivityLog,
     BackupActivity,
@@ -33,7 +32,7 @@ def workload_to_dict(wl: MachineWorkload) -> dict[str, Any]:
     plan = d.pop("plan")
     d["plan_name"] = plan["name"]
     d["plan_id"] = plan["plan_id"]
-    d["last_backup_at"] = _iso(wl.last_backup_at)
+    d["last_backup_at"] = fmt_datetime_iso(wl.last_backup_at)
     return d
 
 
@@ -46,7 +45,7 @@ def workload_to_csv_row(wl: MachineWorkload) -> dict[str, Any]:
         "workload_type":          wl.workload_type.value,
         "status":                 wl.status.value,
         "verify_status":          wl.verify_status.value if wl.verify_status else "",
-        "last_backup_at":         _iso(wl.last_backup_at) or "",
+        "last_backup_at":         fmt_datetime_iso(wl.last_backup_at) or "",
         "protected_data_bytes":   wl.protected_data_bytes,
         "backup_copy_data_bytes": wl.backup_copy_data_bytes,
         "plan_name":              wl.plan.name,
@@ -112,7 +111,7 @@ def protection_plan_to_dict(plan: ProtectionPlan) -> dict[str, Any]:
         if plan.backup_copy_policy else None
     )
     d["tasks"] = (
-        [{**td, "schedule": _task_schedule_to_dict(t.schedule)} for td, t in zip(d["tasks"], plan.tasks)]
+        [{**td, "schedule": _task_schedule_to_dict(t.schedule)} for td, t in zip(d["tasks"], plan.tasks, strict=True)]
         if plan.tasks is not None else None
     )
     return d
@@ -193,7 +192,7 @@ def tiering_plan_to_csv_row(plan: TieringPlan) -> dict[str, Any]:
 def version_to_dict(v: WorkloadVersion) -> dict[str, Any]:
     """Serialize a WorkloadVersion to a JSON-safe dict."""
     d = v.to_dict()
-    d["created_at"] = _iso(v.created_at)
+    d["created_at"] = fmt_datetime_iso(v.created_at)
     locations = []
     for loc in d["locations"]:
         location_info = loc.pop("location_info")
@@ -206,7 +205,7 @@ def version_to_csv_row(v: WorkloadVersion) -> dict[str, Any]:
     """Serialize a WorkloadVersion to a CSV-safe flat dict (table columns, raw values)."""
     return {
         "version_id":         v.version_id,
-        "created_at":         _iso(v.created_at),
+        "created_at":         fmt_datetime_iso(v.created_at),
         "status":             v.status.value,
         "locked":             v.locked,
         "changed_size_bytes": v.changed_size_bytes if v.changed_size_bytes is not None else "",
@@ -227,7 +226,7 @@ def backup_activity_to_csv_row(act: BackupActivity) -> dict[str, Any]:
         "workload_name":          act.workload_name,
         "status":                 act.status.value,
         "verify_status":          act.verify_status.value if act.verify_status else "",
-        "started_at":             _iso(act.started_at),
+        "started_at":             fmt_datetime_iso(act.started_at),
         "duration_seconds":       act.duration_seconds if act.duration_seconds is not None else "",
         "activity_id":            act.activity_id,
         "data_transferred_bytes": act.data_transferred_bytes if act.data_transferred_bytes is not None else "",
@@ -242,7 +241,7 @@ def restore_activity_to_csv_row(act: RestoreActivity) -> dict[str, Any]:
         "workload_name":          act.workload_name,
         "restore_type":           act.restore_type.value if act.restore_type else "",
         "status":                 act.status.value,
-        "started_at":             _iso(act.started_at) or "",
+        "started_at":             fmt_datetime_iso(act.started_at) or "",
         "duration_seconds":       act.duration_seconds if act.duration_seconds is not None else "",
         "operator":               act.operator or "",
         "activity_id":            act.activity_id,
@@ -260,8 +259,8 @@ def activity_to_dict(act: BackupActivity | RestoreActivity) -> dict[str, Any]:
     """
     d = act.to_dict()
     d["activity_type"] = "backup" if isinstance(act, BackupActivity) else "restore"
-    d["started_at"] = _iso(act.started_at)
-    d["finished_at"] = _iso(act.finished_at)
+    d["started_at"] = fmt_datetime_iso(act.started_at)
+    d["finished_at"] = fmt_datetime_iso(act.finished_at)
 
     if isinstance(act, BackupActivity) and act.backup_scope is None:
         del d["backup_scope"]
@@ -275,8 +274,8 @@ def activity_to_dict(act: BackupActivity | RestoreActivity) -> dict[str, Any]:
         del d["log_entries"]
     else:
         d["log_entries"] = [
-            {**entry, "timestamp": _iso(e.timestamp)}
-            for entry, e in zip(d["log_entries"], act.log_entries)
+            {**entry, "timestamp": fmt_datetime_iso(e.timestamp)}
+            for entry, e in zip(d["log_entries"], act.log_entries, strict=True)
         ]
 
     if isinstance(act, BackupActivity) and act.verify_status is None:
@@ -286,7 +285,7 @@ def activity_to_dict(act: BackupActivity | RestoreActivity) -> dict[str, Any]:
         if act.version_timestamp is None:
             del d["version_timestamp"]
         else:
-            d["version_timestamp"] = _iso(act.version_timestamp)
+            d["version_timestamp"] = fmt_datetime_iso(act.version_timestamp)
         for key in ("restore_type", "restore_destination", "operator", "restore_from_info", "destination_path"):
             if getattr(act, key) is None:
                 del d[key]
@@ -299,11 +298,17 @@ def activity_to_dict(act: BackupActivity | RestoreActivity) -> dict[str, Any]:
     return d
 
 
+def _log_to_dict(e: APMActivityLog | DriveLog | ConnectionLog | SystemLog) -> dict[str, Any]:
+    """Serialize a log entry's to_dict() output with timestamp reformatted to local ISO."""
+    d = e.to_dict()
+    d["timestamp"] = fmt_datetime_iso(e.timestamp)
+    return d
+
+
 def activity_log_to_dict(e: APMActivityLog) -> dict[str, Any]:
     """Serialize an APMActivityLog entry to a JSON-safe dict."""
-    d = e.to_dict()
+    d = _log_to_dict(e)
     d["type"] = d.pop("log_type")
-    d["timestamp"] = fmt_datetime_iso(e.timestamp)
     return d
 
 
@@ -320,9 +325,7 @@ def activity_log_to_csv_row(e: APMActivityLog) -> dict[str, Any]:
 
 def drive_log_to_dict(e: DriveLog) -> dict[str, Any]:
     """Serialize a DriveLog entry to a JSON-safe dict."""
-    d = e.to_dict()
-    d["timestamp"] = fmt_datetime_iso(e.timestamp)
-    return d
+    return _log_to_dict(e)
 
 
 def drive_log_to_csv_row(e: DriveLog) -> dict[str, Any]:
@@ -338,38 +341,34 @@ def drive_log_to_csv_row(e: DriveLog) -> dict[str, Any]:
     }
 
 
+def _login_log_to_csv_row(e: ConnectionLog | SystemLog) -> dict[str, Any]:
+    """Serialize a level/timestamp/username/description-shaped log entry to a CSV row."""
+    return {
+        "level":       e.level.value,
+        "timestamp":   fmt_datetime_iso(e.timestamp) or "",
+        "username":    e.username,
+        "description": e.description,
+    }
+
+
 def connection_log_to_dict(e: ConnectionLog) -> dict[str, Any]:
     """Serialize a ConnectionLog entry to a JSON-safe dict."""
-    d = e.to_dict()
-    d["timestamp"] = fmt_datetime_iso(e.timestamp)
-    return d
+    return _log_to_dict(e)
 
 
 def connection_log_to_csv_row(e: ConnectionLog) -> dict[str, Any]:
     """Serialize a ConnectionLog entry to a CSV-safe flat dict (table columns, raw values)."""
-    return {
-        "level":       e.level.value,
-        "timestamp":   fmt_datetime_iso(e.timestamp) or "",
-        "username":    e.username,
-        "description": e.description,
-    }
+    return _login_log_to_csv_row(e)
 
 
 def system_log_to_dict(e: SystemLog) -> dict[str, Any]:
     """Serialize a SystemLog entry to a JSON-safe dict."""
-    d = e.to_dict()
-    d["timestamp"] = fmt_datetime_iso(e.timestamp)
-    return d
+    return _log_to_dict(e)
 
 
 def system_log_to_csv_row(e: SystemLog) -> dict[str, Any]:
     """Serialize a SystemLog entry to a CSV-safe flat dict (table columns, raw values)."""
-    return {
-        "level":       e.level.value,
-        "timestamp":   fmt_datetime_iso(e.timestamp) or "",
-        "username":    e.username,
-        "description": e.description,
-    }
+    return _login_log_to_csv_row(e)
 
 
 def m365_workload_to_dict(wl: M365Workload) -> dict[str, Any]:

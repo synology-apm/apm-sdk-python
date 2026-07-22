@@ -164,9 +164,11 @@ def test_missing_config_hint_default_profile_no_other_profiles(capsys: pytest.Ca
     names the default profile, offers a bare `config set`, and lists env vars including
     APM_NO_VERIFY_SSL — but never mentions APM_PROFILE, since selecting a profile that
     doesn't exist wouldn't fix anything."""
-    with patch("synology_apm.cli.errors.load_config", return_value=AppConfig()):
-        with pytest.raises(typer.Exit) as exc_info:
-            missing_config_hint()
+    with (
+        patch("synology_apm.cli.errors.load_config", return_value=AppConfig()),
+        pytest.raises(typer.Exit) as exc_info,
+    ):
+        missing_config_hint()
     assert exc_info.value.exit_code == EXIT_ERROR
 
     captured = capsys.readouterr().err
@@ -182,9 +184,8 @@ def test_missing_config_hint_lists_other_configured_profiles(capsys: pytest.Capt
     """When other profiles already exist in config.toml, the hint surfaces them as a
     real, working fix (--profile <name> / APM_PROFILE=<name>)."""
     cfg = AppConfig(profiles={"prod": ProfileConfig(host="apm.corp.com", username="admin")})
-    with patch("synology_apm.cli.errors.load_config", return_value=cfg):
-        with pytest.raises(typer.Exit):
-            missing_config_hint()
+    with patch("synology_apm.cli.errors.load_config", return_value=cfg), pytest.raises(typer.Exit):
+        missing_config_hint()
 
     captured = capsys.readouterr().err
     assert "Configured profiles found: prod" in captured
@@ -194,9 +195,11 @@ def test_missing_config_hint_lists_other_configured_profiles(capsys: pytest.Capt
 def test_missing_config_hint_non_default_profile_requested(capsys: pytest.CaptureFixture[str]) -> None:
     """When a non-default profile was requested and isn't configured, the config set
     example includes --profile <name> so the user configures the right profile."""
-    with patch("synology_apm.cli.errors.load_config", return_value=AppConfig()):
-        with pytest.raises(typer.Exit) as exc_info:
-            missing_config_hint("prod")
+    with (
+        patch("synology_apm.cli.errors.load_config", return_value=AppConfig()),
+        pytest.raises(typer.Exit) as exc_info,
+    ):
+        missing_config_hint("prod")
     assert exc_info.value.exit_code == EXIT_ERROR
 
     captured = capsys.readouterr().err

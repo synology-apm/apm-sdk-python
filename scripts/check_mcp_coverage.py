@@ -18,9 +18,9 @@ Pass 5 — registered tools -> manifest: every registered tool must have at
          least one [[mapping]] entry.
 
 Pass 6 — manifest mode -> actual registration mode: every [[mapping]] `mode`
-         must match the least-permissive mode at which create_server() actually
-         registers that tool (catches a tool's inline mode_allows() gate drifting
-         out of sync with the manifest's declared mode).
+         must match the tool's actual required mode, as recorded by
+         ToolRegistrar during registration (catches a tool's inline mode_allows()
+         gate drifting out of sync with the manifest's declared mode).
 
 Exit code 0 = clean; non-zero = errors printed to stderr.
 """
@@ -41,36 +41,6 @@ _TOP_LEVEL_EXCLUDE = {"connect", "disconnect"}
 def _load_manifest() -> dict[str, Any]:
     with open(MANIFEST, "rb") as f:
         return tomllib.load(f)
-
-
-# Ascending permissiveness, matching synology_apm.mcp._security._LEVELS.
-_MODES = ("readonly", "operator", "manager", "admin")
-
-
-def _registered_tool_names_by_mode() -> dict[str, set[str]]:
-    """Create a server at each mode and return {mode: registered tool names}.
-
-    Modes are cumulative (each includes every less-permissive mode's tools), so the
-    first mode (in ascending order) at which a tool appears is that tool's actual
-    minimum required mode.
-    """
-    import asyncio
-
-    from synology_apm.mcp._server import create_server
-
-    async def _collect(mode: str) -> set[str]:
-        server = create_server(mode=mode)
-        return {t.name for t in await server.list_tools()}
-
-    return {mode: asyncio.run(_collect(mode)) for mode in _MODES}
-
-
-def _minimum_registered_mode(tool: str, by_mode: dict[str, set[str]]) -> str | None:
-    """Return the least-permissive mode at which `tool` is registered, or None."""
-    for mode in _MODES:
-        if tool in by_mode[mode]:
-            return mode
-    return None
 
 
 def _resolve_sdk_path(client: Any, path: str) -> bool:
@@ -142,21 +112,24 @@ def main() -> int:
         errors.extend(f"  {path}" for path in unmapped_sdk)
 
     # ── Pass 4/5/6: manifest ↔ registered tools ─────────────────────────────────
+    from synology_apm.mcp._server import tool_required_modes
+
     try:
-        by_mode = _registered_tool_names_by_mode()
+        required_modes = tool_required_modes()
     except Exception as exc:
         errors.append(f"failed to instantiate MCP server: {exc}")
         for err in errors:
             print(f"ERROR: {err}", file=sys.stderr)
         return 1
 
-    registered = by_mode["admin"]
+    registered = set(required_modes)
 
     # Every [[mapping]] mcp_tool must be registered
-    stale: list[str] = []
-    for m in mappings:
-        if m["mcp_tool"] not in registered:
-            stale.append(f"  manifest claims tool {m['mcp_tool']!r} (sdk: {m['sdk_path']!r}) but it is not registered")
+    stale: list[str] = [
+        f"  manifest claims tool {m['mcp_tool']!r} (sdk: {m['sdk_path']!r}) but it is not registered"
+        for m in mappings
+        if m["mcp_tool"] not in registered
+    ]
     if stale:
         errors.append("stale [[mapping]] entries — tool not registered in admin mode:")
         errors.extend(stale)
@@ -165,14 +138,13 @@ def main() -> int:
     unmapped = sorted(registered - mapped_tools)
     if unmapped:
         errors.append("registered tools missing from mcp_coverage.toml [[mapping]]:")
-        for t in unmapped:
-            errors.append(f"  {t}")
+        errors.extend(f"  {t}" for t in unmapped)
 
-    # Every [[mapping]] `mode` must match the tool's actual minimum registration mode
+    # Every [[mapping]] `mode` must match the tool's actual required mode
     mode_mismatches: list[str] = []
     for m in mappings:
         tool, declared_mode = m["mcp_tool"], m["mode"]
-        actual_mode = _minimum_registered_mode(tool, by_mode)
+        actual_mode = required_modes.get(tool)
         if actual_mode is not None and actual_mode != declared_mode:
             mode_mismatches.append(
                 f"  {tool}: manifest declares mode={declared_mode!r} but is actually "

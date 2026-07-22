@@ -1,4 +1,4 @@
-"""Bootstrap sys.path so test modules can import check_mcp_coverage from scripts/ directly."""
+"""Bootstrap sys.path so test modules can import scripts/*.py modules directly."""
 from __future__ import annotations
 
 import sys

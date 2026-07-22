@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from aioresponses import aioresponses
+from aiointercept import aiointercept
 
 from synology_apm.sdk._http import WebAPISession
 from synology_apm.sdk.collections.activities import RestoreActivityCollection
@@ -274,6 +274,8 @@ async def test_restore_list_status_filter_sends_restore_status_param() -> None:
 
 async def test_restore_list_with_workload_passes_workload_params() -> None:
     """workload should be passed to the API via the workload.uid/workload.namespace params."""
+    from unittest.mock import AsyncMock, patch
+
     wl = Workload(
         workload_id="fbf93425-d9e7-1c70-f4b2-231d7fc7b116",
         name="vm-web-01",
@@ -285,16 +287,16 @@ async def test_restore_list_with_workload_passes_workload_params() -> None:
         status=WorkloadStatus.NO_BACKUPS,
         plan=ProtectionPlan(plan_id="plan-001", name="Daily Backup", category=WorkloadCategory.MACHINE),
     )
-    async with connected_session() as (session, m):
-        pat = re.compile(
-            r".*/api/v2/activity/restore/activities\?.*"
-            r"workload\.namespace=9053e422-4154-4abc-b03a-6e3d8e17b2d5"
-            r".*workload\.uid=fbf93425-d9e7-1c70-f4b2-231d7fc7b116"
-        )
-        m.get(pat, payload={"activities": [SAMPLE_RESTORE_ACTIVITY_RAW]})
-        acts, total = await RestoreActivityCollection(session).list(workload=wl)
-        await session.disconnect()
+    session = make_session()
+    collection = RestoreActivityCollection(session)
+    with patch.object(
+        session, "get", AsyncMock(return_value={"activities": [SAMPLE_RESTORE_ACTIVITY_RAW]})
+    ) as mock_get:
+        acts, total = await collection.list(workload=wl)
 
+    params = dict(mock_get.call_args_list[0][1]["params"])
+    assert params.get("workload.uid") == "fbf93425-d9e7-1c70-f4b2-231d7fc7b116"
+    assert params.get("workload.namespace") == "9053e422-4154-4abc-b03a-6e3d8e17b2d5"
     assert len(acts) == 1
 
 
@@ -377,27 +379,64 @@ async def test_restore_list_transferred_size_field_name() -> None:
 # ── get() ──────────────────────────────────────────────────────────────────
 
 
-async def test_restore_list_workload_filter_http_404_raises_with_resource_fields() -> None:
-    """list(workload=...) maps the API's HTTP 404 for an unknown workload to a fully-populated error."""
-    wl = Workload(
-        workload_id="00000000-0000-0000-0000-000000000000",
-        name="nonexistent-workload",
-        category=WorkloadCategory.MACHINE,
-        namespace="00000000-0000-0000-0000-000000000000",
-        last_backup_at=None,
-        is_retired=False,
-        protected_data_bytes=0,
-        status=WorkloadStatus.NO_BACKUPS,
-        plan=ProtectionPlan(plan_id="plan-001", name="Daily Backup", category=WorkloadCategory.MACHINE),
-    )
+_NONEXISTENT_WORKLOAD = Workload(
+    workload_id="00000000-0000-0000-0000-000000000000",
+    name="nonexistent-workload",
+    category=WorkloadCategory.MACHINE,
+    namespace="00000000-0000-0000-0000-000000000000",
+    last_backup_at=None,
+    is_retired=False,
+    protected_data_bytes=0,
+    status=WorkloadStatus.NO_BACKUPS,
+    plan=ProtectionPlan(plan_id="plan-001", name="Daily Backup", category=WorkloadCategory.MACHINE),
+)
+
+# Confirmed live against /api/v2/activity/restore/activities for a workload.uid/
+# workload.namespace filter matching no workload (errorString.key: "database_query_failed").
+_WORKLOAD_NOT_FOUND_BODY: dict[str, Any] = {
+    "error": {
+        "code": 404,
+        "status": "Not Found",
+        "message": "query workload resource failed",
+        "details": [
+            {
+                "@type": "type.googleapis.com/api.ErrorDetail",
+                "category": "abc",
+                "errorCode": 1002,
+                "errorString": {"class": "abc", "section": "general", "key": "database_query_failed"},
+                "server": {"type": "dp"},
+            }
+        ],
+    }
+}
+
+
+async def test_restore_list_workload_filter_nonexistent_returns_empty() -> None:
+    """list(workload=...) treats the API's HTTP 404 carrying errorCode 1002 for an unknown
+    workload as an empty result, matching BackupActivityCollection.list()'s behavior."""
+    async with connected_session() as (session, m):
+        m.get(
+            re.compile(r".*/api/v2/activity/restore/activities.*"),
+            status=404, payload=_WORKLOAD_NOT_FOUND_BODY,
+        )
+        acts, total = await RestoreActivityCollection(session).list(workload=_NONEXISTENT_WORKLOAD)
+        await session.disconnect()
+
+    assert acts == []
+    assert total == 0
+
+
+async def test_restore_list_workload_filter_unrelated_404_still_raises() -> None:
+    """list(workload=...) must not swallow a 404 that isn't the documented workload-not-found
+    signal (errorCode 1002) -- any other error still propagates, unenriched (the SDK cannot
+    confirm it's about this workload, so it must not claim resource_type="Workload")."""
     async with connected_session() as (session, m):
         m.get(re.compile(r".*/api/v2/activity/restore/activities.*"), status=404)
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            await RestoreActivityCollection(session).list(workload=wl)
+            await RestoreActivityCollection(session).list(workload=_NONEXISTENT_WORKLOAD)
         await session.disconnect()
 
-    assert_resource_error(exc_info, resource_type="Workload", resource_id=wl.workload_id)
-    assert exc_info.value.error_code == 404
+    assert_resource_error(exc_info, resource_type="unknown", resource_id="")
 
 
 async def test_restore_get_raises_resource_not_found() -> None:
@@ -427,7 +466,7 @@ async def test_restore_get_uses_restore_activity_uid_param() -> None:
         ]
     }
 
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(RESTORE_RECENT_URL, payload={"activities": [SAMPLE_RESTORE_ACTIVITY_RAW], "total": 1})
@@ -713,15 +752,16 @@ async def test_restore_get_latest_by_workload_name_falls_back_to_history() -> No
 # ════════════════════════════════════════════════════════════════════════════
 
 async def test_restore_list_failed_status_sends_multiple_api_statuses() -> None:
-    """RestoreActivityStatus.FAILED should expand to restoreStatus=DEVICE_MISSING&restoreStatus=FAILED&restoreStatus=MIGRATE_FAILED."""
-    async with connected_session() as (session, m):
+    """RestoreActivityStatus.FAILED should expand to restoreStatus=DEVICE_MISSING/FAILED/MIGRATE_FAILED (order not asserted)."""
+    from unittest.mock import AsyncMock, patch
 
-        # aiohttp sorts params alphabetically: DEVICE_MISSING < FAILED < MIGRATE_FAILED
-        pat = re.compile(r".*restoreStatus=DEVICE_MISSING.*restoreStatus=FAILED.*restoreStatus=MIGRATE_FAILED")
-        m.get(pat, payload=EMPTY_RESTORE_RESPONSE)
-        result, total = await RestoreActivityCollection(session).list(status=[RestoreActivityStatus.FAILED])
-        await session.disconnect()
+    session = make_session()
+    collection = RestoreActivityCollection(session)
+    with patch.object(session, "get", AsyncMock(return_value=EMPTY_RESTORE_RESPONSE)) as mock_get:
+        result, total = await collection.list(status=[RestoreActivityStatus.FAILED])
 
+    status_values = {v for k, v in mock_get.call_args_list[0][1]["params"] if k == "restoreStatus"}
+    assert status_values == {"FAILED", "DEVICE_MISSING", "MIGRATE_FAILED"}
     assert result == []
 
 

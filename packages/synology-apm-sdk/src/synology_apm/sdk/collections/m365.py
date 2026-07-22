@@ -5,7 +5,7 @@ from typing import Any
 
 from .._http import WebAPISession
 from ..enums import M365WorkloadType, WorkloadCategory, WorkloadStatus
-from ..exceptions import InvalidOperationError, ResourceNotFoundError
+from ..exceptions import ResourceNotFoundError
 from ..models.protection_plan import ProtectionPlan
 from ..models.retirement_plan import RetirementPlan
 from ..models.workload import (
@@ -16,6 +16,7 @@ from ..models.workload import (
     M365Workload,
 )
 from ._shared import (
+    ListResult,
     _build_location_info,
     _build_workload_plan_ref,
     _check_active_for_write,
@@ -25,6 +26,7 @@ from ._shared import (
     _not_found_as,
     _paginate,
     _parse_ts_optional,
+    _raise_first_batch_error,
     _resolve_namespace_to_server_id,
     _VersionMixin,
 )
@@ -206,7 +208,7 @@ class M365WorkloadCollection(_VersionMixin):
         status: list[WorkloadStatus] | None = None,
         limit: int = 500,
         offset: int = 0,
-    ) -> tuple[list[M365Workload], int]:
+    ) -> ListResult[M365Workload]:
         """List M365 Workloads of a given service sub-type for a tenant.
 
         Args:
@@ -267,7 +269,7 @@ class M365WorkloadCollection(_VersionMixin):
             if parsed is not None:
                 workloads.append(parsed)
 
-        return workloads, raw.get("total", 0)
+        return ListResult(workloads, raw.get("total"))
 
     async def get(
         self,
@@ -342,7 +344,7 @@ class M365WorkloadCollection(_VersionMixin):
                 "/api/v1/workload/m365_workload",
                 json={"filter": filter_body},
             )
-            return raw.get("m365Workloads", []), None
+            return raw.get("m365Workloads", []), raw.get("total")
 
         async for w in _paginate(fetch):
             parsed = _parse_m365_workload(w)
@@ -449,16 +451,12 @@ class M365WorkloadCollection(_VersionMixin):
                 "nsUidPairs": [{"namespace": workload.namespace, "uid": workload.workload_id}],
             },
         )
-        errors = (resp or {}).get("errors") or []
-        if errors:
-            err = errors[0]
-            raise InvalidOperationError(
-                err.get("message", "Workload delete failed"),
-                resource_type="Workload",
-                resource_id=workload.workload_id,
-                error_code=err.get("errorCode"),
-                response_body=resp,
-            )
+        _raise_first_batch_error(
+            (resp or {}).get("errors") or [],
+            workload,
+            default_message="Workload delete failed",
+            response_body=resp,
+        )
 
     async def _put_plan_change(self, workload: M365Workload, plan_id: str, plan_type: str) -> None:
         resp = await self._session.put(
@@ -471,16 +469,12 @@ class M365WorkloadCollection(_VersionMixin):
                 "isFromUnmanagedWorkload": False,
             },
         )
-        errors = (resp or {}).get("errors") or []
-        if errors:
-            err = errors[0]
-            raise InvalidOperationError(
-                err.get("message", "Workload plan change failed"),
-                resource_type="Workload",
-                resource_id=workload.workload_id,
-                error_code=err.get("errorCode"),
-                response_body=resp,
-            )
+        _raise_first_batch_error(
+            (resp or {}).get("errors") or [],
+            workload,
+            default_message="Workload plan change failed",
+            response_body=resp,
+        )
 
 
 class M365Collection:

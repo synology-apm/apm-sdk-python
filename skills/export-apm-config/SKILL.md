@@ -63,5 +63,4 @@ relies on (list vs. get field completeness, pagination, permission modes).
 
 ## See also
 
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes
 - [provision-apm-config](../provision-apm-config/SKILL.md) — the create/import counterpart; re-provision this same configuration on another APM server

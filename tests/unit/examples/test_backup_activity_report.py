@@ -33,14 +33,14 @@ from tests.unit.examples._fixtures import (
 
 def test_status_sets_are_pairwise_disjoint() -> None:
     """_SUCCESS, _FAILED, and _ONGOING share no member."""
-    assert _SUCCESS & _FAILED == set()
-    assert _SUCCESS & _ONGOING == set()
-    assert _FAILED & _ONGOING == set()
+    assert set() == _SUCCESS & _FAILED
+    assert set() == _SUCCESS & _ONGOING
+    assert set() == _FAILED & _ONGOING
 
 
 def test_status_sets_cover_all_statuses() -> None:
     """Union of _SUCCESS, _FAILED, and _ONGOING equals the full BackupActivityStatus enum."""
-    assert _SUCCESS | _FAILED | _ONGOING == set(BackupActivityStatus)
+    assert set(BackupActivityStatus) == _SUCCESS | _FAILED | _ONGOING
 
 
 # ── _tally: status routing ─────────────────────────────────────────────────────
@@ -434,11 +434,12 @@ def test_main_parses_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(sys, "argv", [
         "backup_activity_report.py",
         "--date", "2026-05-07", "--retired", "--category", "machine", "-o", "csv",
+        "--profile", "lab",
     ])
 
     backup_activity_report.main()
 
-    run_mock.assert_called_once_with(date(2026, 5, 7), True, "machine", None, "csv")
+    run_mock.assert_called_once_with(date(2026, 5, 7), True, "machine", None, "csv", profile="lab")
     run_main_mock.assert_called_once_with(run_mock.return_value)
 
 
@@ -453,6 +454,7 @@ def test_main_defaults_to_yesterday_all_category_table(
     assert run_mock.call_args.args == (
         date.today() - timedelta(days=1), False, "all", None, "table",
     )
+    assert run_mock.call_args.kwargs == {"profile": None}
 
 
 def test_main_m365_services_convert_to_enum_list(monkeypatch: pytest.MonkeyPatch) -> None:

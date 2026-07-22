@@ -197,12 +197,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         tenant_id: str,
     ) -> str:
         apm: APMClient = ctx.lifespan_context["apm"]
-
-        async def _get() -> dict[str, Any]:
-            result = await apm.m365.auto_backup_rules.list(tenant_id)
-            return result.to_dict()
-
-        return await run_tool(_get())
+        return await get_tool(apm.m365.auto_backup_rules.list(tenant_id), lambda x: x.to_dict())
 
     # ── Export tools ──────────────────────────────────────────────────────────
 

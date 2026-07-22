@@ -5,7 +5,7 @@ from datetime import time
 from typing import Any
 
 import pytest
-from aioresponses import aioresponses
+from aiointercept import aiointercept
 from yarl import URL
 
 from synology_apm.sdk.collections.protection_plans import MachinePlanCollection
@@ -312,7 +312,7 @@ async def test_list_parses_backup_copy_policy_with_appliance_destination() -> No
     servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
     list_url = f"{BASE_URL}/api/v1/plan/backup_plan?offset=0&limit=500&serviceType=DEVICE"
 
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
 
@@ -340,7 +340,7 @@ async def test_list_parses_backup_copy_policy_with_remote_storage() -> None:
     storage_url = f"{BASE_URL}/api/v1/external_storage/{REMOTE_DEST_ID}"
     list_url = f"{BASE_URL}/api/v1/plan/backup_plan?offset=0&limit=500&serviceType=DEVICE"
 
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
 
@@ -368,7 +368,7 @@ async def test_list_deduplicates_destination_lookups() -> None:
     servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
     list_url = f"{BASE_URL}/api/v1/plan/backup_plan?offset=0&limit=500&serviceType=DEVICE"
 
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
 
@@ -395,7 +395,7 @@ async def test_list_backup_copy_policy_none_when_lookup_fails() -> None:
     servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
     list_url = f"{BASE_URL}/api/v1/plan/backup_plan?offset=0&limit=500&serviceType=DEVICE"
 
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
 

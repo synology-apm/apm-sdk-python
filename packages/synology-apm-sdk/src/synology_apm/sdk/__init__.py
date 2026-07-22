@@ -2,6 +2,7 @@
 from importlib.metadata import version as _get_version
 
 from .client import APMClient
+from .collections._shared import ListResult
 from .collections.activities import ActivityCollection, BackupActivityCollection, RestoreActivityCollection
 from .collections.backup_servers import BackupServerCollection
 from .collections.hypervisors import HypervisorCollection
@@ -201,6 +202,7 @@ __all__ = [
     "InvalidOperationError",
     "KeyringUnavailableError",
     "load_config",
+    "ListResult",
     "LocationInfo",
     "LogCollection",
     "LogLevel",

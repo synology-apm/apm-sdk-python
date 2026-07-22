@@ -6,36 +6,51 @@ runnable command-line tool.
 
 ## Prerequisites
 
-Install the SDK first — see the [repository README](../README.md#installation) for the
-available install methods (editable install from source, or installing a built wheel).
+Install the SDK first — see the [repository README](../README.md#install-the-sdk) for the
+available install methods, or [Install From Source (Contributing)](../README.md#install-from-source-contributing)
+for an editable install from source.
 
-The scripts read APM credentials from a `.env` file via `python-dotenv`. Some scripts
-need two more packages: `pyyaml` (YAML config import/export) and `openpyxl` (XLSX
-output). All three are dev dependencies already installed by `uv sync`; otherwise:
+Some scripts need two more packages: `pyyaml` (YAML config import/export) and `openpyxl`
+(XLSX output). Both are dev dependencies already installed by `uv sync`; otherwise:
 
 ```bash
-pip install python-dotenv pyyaml openpyxl
+pip install pyyaml openpyxl
 ```
 
 **Create a `.env` file** with your APM credentials — copy `.env.example` at the repository
 root and fill in the values (`APM_HOST` / `APM_USERNAME` / `APM_PASSWORD` /
-`APM_NO_VERIFY_SSL`). `load_dotenv()` searches the current directory and its parents
-automatically, so a single `.env` at the repository root covers every script.
+`APM_NO_VERIFY_SSL`). Load it via `uv run`'s built-in `--env-file` support when running a
+script (run from the repository root, so the relative `.env` path resolves):
+
+```bash
+uv run --env-file .env python examples/workload_inventory.py --category machine
+```
+
+Alternatively, if you've already configured a profile with `synology-apm-cli config set`
+(`~/.config/synology-apm/config.toml`), the scripts fall back to it automatically when no
+`.env`/environment variables are set — no separate setup needed for examples. A script's own
+`--profile` flag selects which configured profile to fall back to (see `examples/CLAUDE.md`'s
+Script Skeleton section for the full env-var/profile priority order if you're adapting a
+script).
 
 ## Running an Example
 
-Run a script with `python`, passing its path; `--help` shows its full option list:
+Run a script with `uv run --env-file .env`, passing its path; `--help` shows its full option
+list:
 
 ```bash
-python examples/workload_inventory.py --help
-python examples/workload_inventory.py --category machine
+uv run --env-file .env python examples/workload_inventory.py --help
+uv run --env-file .env python examples/workload_inventory.py --category machine
 ```
+
+(Omit `--env-file .env` if you're supplying credentials via real exported environment
+variables, a configured profile, or a script's own `--profile` flag instead.)
 
 The tables below show only the script name for readability.
 
 All scripts print progress to `stderr` and machine-readable output (`-o csv` / `-o json`,
-where supported) to `stdout`, so you can redirect data to a file while still seeing progress:
-`python examples/<name>.py -o csv > out.csv`.
+where supported) to `stdout`, so `uv run --env-file .env python examples/<name>.py -o csv
+> out.csv` captures data cleanly while still showing progress in the terminal.
 
 ## Examples by Category
 

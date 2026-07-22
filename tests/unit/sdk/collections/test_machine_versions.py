@@ -332,9 +332,8 @@ async def test_lock_version_raises_api_error_when_version_has_no_locations() -> 
         locations=[],
     )
 
-    with patch.object(session, "post", new_callable=AsyncMock):
-        with pytest.raises(APIError, match="no location data"):
-            await collection.lock_version(empty_version)
+    with patch.object(session, "post", new_callable=AsyncMock), pytest.raises(APIError, match="no location data"):
+        await collection.lock_version(empty_version)
 
 
 # ── _parse_version_location (via list_versions) ───────────────────────────

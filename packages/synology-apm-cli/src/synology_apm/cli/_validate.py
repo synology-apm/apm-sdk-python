@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar
@@ -10,7 +11,7 @@ from typing import TypeVar
 import typer
 
 from synology_apm.cli._display import fmt_datetime
-from synology_apm.cli.errors import err_console
+from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.sdk import (
     APMClient,
     M365Workload,
@@ -71,7 +72,7 @@ async def _resolve_tenant(apm: APMClient, tenant_id: str | None) -> str:
     m365 = [t for t in tenants if t.category == WorkloadCategory.M365]
     if not m365:
         err_console.print("[red]✗[/red] No M365 tenant found. Add a tenant in the APM UI or specify --tenant-id.")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR)
     return m365[0].tenant_id
 
 
@@ -188,14 +189,14 @@ def validate_resolve_args(
     if workload_id is not None:
         if namespace is None:
             err_console.print(f"[red]✗[/red] {id_flag} requires --namespace")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_ERROR)
         if name is not None:
             err_console.print(f"[red]✗[/red] <name> cannot be used with {id_flag} / --namespace")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_ERROR)
     else:
         if namespace is not None:
             err_console.print(f"[red]✗[/red] --namespace requires {id_flag}")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_ERROR)
         if name is None:
             typer.echo(ctx.get_help())
             raise typer.Exit(0)
@@ -215,11 +216,11 @@ def validate_version_workload_args(
     if name is not None:
         if workload_id is not None or namespace is not None:
             err_console.print("[red]✗[/red] <name> cannot be used with --workload-id / --namespace")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_ERROR)
     elif workload_id is not None:
         if namespace is None:
             err_console.print("[red]✗[/red] --workload-id requires --namespace")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_ERROR)
     else:
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
@@ -265,10 +266,27 @@ def validate_name_or_id_args(
     """
     if name is not None and resource_id is not None:
         err_console.print(f"[red]✗[/red] {exclusive_msg}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR)
     if name is None and resource_id is None:
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
+
+
+async def resolve_by_name_or_id(
+    name: str | None,
+    resource_id: str | None,
+    get_by_id: Callable[[str], Awaitable[_T]],
+    get_by_name: Callable[[str], Awaitable[_T]],
+) -> _T:
+    """Resolve to a resource via get_by_id() (--id) or get_by_name() (name).
+
+    Call only after validate_name_or_id_args() has confirmed that exactly one of
+    ``name`` or ``resource_id`` is set.
+    """
+    if resource_id is not None:
+        return await get_by_id(resource_id)
+    assert name is not None, "resolve_by_name_or_id requires name or resource_id (validate args first)"
+    return await get_by_name(name)
 
 
 def parse_enum_list(
@@ -291,7 +309,7 @@ def parse_enum_list(
                 err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v} (available: {available})")
             else:
                 err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v}")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_ERROR)
         result.append(enum_val)
     return result
 
@@ -311,11 +329,11 @@ def parse_time_filter(value: str) -> datetime:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return dt
-    except ValueError:
+    except ValueError as exc:
         raise typer.BadParameter(
             f"Cannot parse time format: {value!r}. "
             "Supported: ISO 8601 (e.g. 2026-04-01) or relative (e.g. 30m, 1h, 24h, 7d)."
-        )
+        ) from exc
 
 
 def parse_time_range(

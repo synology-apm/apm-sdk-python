@@ -42,8 +42,8 @@ from synology_apm.cli._serializers import (
     retirement_plan_to_dict,
     tiering_plan_to_csv_row,
 )
-from synology_apm.cli._validate import validate_name_or_id_args
-from synology_apm.cli.errors import err_console
+from synology_apm.cli._validate import resolve_by_name_or_id, validate_name_or_id_args
+from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.cli.output import (
     ListOutputFormat,
     OutputFormat,
@@ -103,7 +103,7 @@ async def protection_list(
     """
     if category is not None and category.lower() not in _CATEGORY_MAP:
         err_console.print(f"[red]✗[/red] Invalid category: {category!r} (expected: machine / m365)")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR)
 
     async with apm_session(ctx, spinner="Fetching protection plans...") as apm:
         result = await dispatch_paginated_list(
@@ -142,11 +142,7 @@ async def protection_get(
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:
-        if plan_id is not None:
-            plan = await apm.plans.get(plan_id)
-        else:
-            assert name is not None
-            plan = await apm.plans.get_by_name(name)
+        plan = await resolve_by_name_or_id(name, plan_id, apm.plans.get, apm.plans.get_by_name)
 
     if dispatch_output(plan, output, protection_plan_to_dict):
         return
@@ -242,11 +238,9 @@ async def retirement_get(
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:
-        if plan_id is not None:
-            plan = await apm.retirement_plans.get(plan_id)
-        else:
-            assert name is not None
-            plan = await apm.retirement_plans.get_by_name(name)
+        plan = await resolve_by_name_or_id(
+            name, plan_id, apm.retirement_plans.get, apm.retirement_plans.get_by_name,
+        )
 
     if dispatch_output(plan, output, retirement_plan_to_dict):
         return
@@ -311,11 +305,9 @@ async def tiering_get(
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:
-        if plan_id is not None:
-            plan = await apm.tiering_plans.get(plan_id)
-        else:
-            assert name is not None
-            plan = await apm.tiering_plans.get_by_name(name)
+        plan = await resolve_by_name_or_id(
+            name, plan_id, apm.tiering_plans.get, apm.tiering_plans.get_by_name,
+        )
 
     if dispatch_output(plan, output, TieringPlan.to_dict):
         return

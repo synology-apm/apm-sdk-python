@@ -7,7 +7,7 @@ import pytest
 
 from synology_apm.sdk import APMClient
 from synology_apm.sdk.enums import DbActionOnError, RetentionType, ScheduleFrequency, WorkloadCategory
-from synology_apm.sdk.exceptions import PlanInUseError, PlanNameConflictError, ResourceNotFoundError
+from synology_apm.sdk.exceptions import APIError, PlanInUseError, PlanNameConflictError, ResourceNotFoundError
 from synology_apm.sdk.models.protection_plan import (
     M365PlanCreateRequest,
     MachineDbConfig,
@@ -115,7 +115,7 @@ async def test_get_includes_schedule(apm: APMClient) -> None:
 
 
 async def test_get_nonexistent_raises(apm: APMClient) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(APIError):
         await apm.machine.plans.get("00000000-0000-0000-0000-000000000000")
 
 

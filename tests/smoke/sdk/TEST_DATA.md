@@ -48,28 +48,12 @@ cp tests/smoke/smoke_creds.toml.example tests/smoke/smoke_creds.toml
 | `c2` | ignored | required | ignored |
 | `amazon_s3_china` | ignored | required | ignored |
 
-Each `[[remote_storage]]` block runs a full roundtrip: `retirement_plan[name/create]` (a
-temporary 9999-day retirement plan created to satisfy APM's catalog-relinking requirement),
-`add[name]`, `add[name/duplicate]` (expects `RemoteStorageConflictError`), `get[name]`,
-`check[name/fields]`, `update[name]`, `check[name/post_update]`, an in-use delete check via a
-temporary tiering plan (expects `RemoteStorageInUseError`; skipped without a DP backup server),
-`delete[name]`, `get[name/post_delete]` (expects `ResourceNotFoundError`), and
-`retirement_plan[name/delete]` (always runs regardless of intermediate failures).
-
-The unmanaged-catalog check runs for every entry: `add[name/unmanaged_raises]` first adds the
-vault **without** a retirement plan. When the vault holds catalogs left by a previous
-registration this must raise `RemoteStorageUnmanagedCatalogError` (`vault_name` and
-`catalog_count` are checked), and the normal `add[name]` that follows adopts the catalogs;
-on a vault with no pre-existing catalogs the probe registration succeeds instead — it is
-rolled back and the three steps are recorded as skipped. To exercise the raise path, include
-at least one entry whose vault already holds catalogs (e.g. one previously used by another
-APM instance); deleting the storage at the end of the roundtrip leaves adopted catalogs
-unmanaged again, so such a vault stays reusable across runs.
-
-Optional per-entry steps:
-
-- `relink_encryption_key` set: `add[name/no_key]` (expects
-  `RemoteStorageEncryptionMismatchError`) and `check[name/encryption_key]`.
+Each `[[remote_storage]]` entry runs a full add→update→delete roundtrip, including the
+unmanaged-catalog and (when `relink_encryption_key` is set) encryption-relink checks — see
+`README.md`'s "Round-trip operations" section for the exact step sequence. To exercise the
+unmanaged-catalog raise path, include at least one entry whose vault already holds catalogs
+(e.g. one previously used by another APM instance) — deleting the storage at the end of the
+roundtrip leaves adopted catalogs unmanaged again, so such a vault stays reusable across runs.
 
 ## Machine
 
@@ -160,9 +144,5 @@ steps (and, for `group`, `m365.group.check[export_no_archive_param]`) are skippe
 
 ## Sample environment
 
-If you are setting up a test APM from scratch, the placeholder names in root `CLAUDE.md`'s
-"Example Data Conventions" table double as a ready-made naming scheme — e.g. a `vm-web-01`
-Machine Workload under a `Daily Backup` Protection Plan, an `alice@contoso.com` mailbox and
-OneDrive, a `Marketing` SharePoint site, and so on. Naming real test resources after these
-placeholders also makes it easy to write example commands/docs later without having to
-substitute names.
+See `tests/smoke/cli/TEST_DATA.md`'s "Sample environment" section — the same placeholder
+naming scheme applies here.

@@ -413,7 +413,7 @@ def test_main_parses_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(sys, "argv", [
         "workload_inventory.py",
         "--category", "machine", "--retired", "--no-versions",
-        "--concurrency", "5", "-o", "csv",
+        "--concurrency", "5", "-o", "csv", "--profile", "lab",
     ])
 
     workload_inventory.main()
@@ -425,6 +425,7 @@ def test_main_parses_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> Non
         category="machine",
         m365_services=None,
         output_format="csv",
+        profile="lab",
     )
     run_main_mock.assert_called_once_with(run_mock.return_value)
 
@@ -442,4 +443,5 @@ def test_main_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         category="all",
         m365_services=None,
         output_format="table",
+        profile=None,
     )

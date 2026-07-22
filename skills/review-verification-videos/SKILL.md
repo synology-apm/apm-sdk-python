@@ -40,7 +40,3 @@ relies on (list vs. get field completeness, pagination, permission modes).
 6. `get_machine_verification_video_url` is readonly and does not require elevated mode. There
    is no bulk "download all" tool — hand back the list of URLs for the user (or their own
    tooling) to fetch individually.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

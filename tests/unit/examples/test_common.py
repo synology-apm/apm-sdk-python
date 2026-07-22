@@ -20,6 +20,7 @@ from _common import (
     _remove_quietly,
     add_category_args,
     add_output_arg,
+    add_profile_arg,
     category_label,
     collect_backup_servers,
     collect_m365_workloads,
@@ -43,7 +44,14 @@ from _common import (
     workload_type_label,
 )
 
-from synology_apm.sdk import APMError, M365WorkloadType, MachineWorkloadType, WorkloadCategory
+from synology_apm.sdk import (
+    APMError,
+    KeyringUnavailableError,
+    M365WorkloadType,
+    MachineWorkloadType,
+    ResolvedConnection,
+    WorkloadCategory,
+)
 from tests.unit.examples._fixtures import (
     make_backup_server,
     make_fake_apm,
@@ -55,19 +63,25 @@ from tests.unit.examples._fixtures import (
 # ── make_client ────────────────────────────────────────────────────────────────
 
 
-def _set_apm_env(monkeypatch: pytest.MonkeyPatch, *, no_verify_ssl: str | None = None) -> None:
-    """Pin every APM_* variable; load_dotenv() at import time may have set real values."""
-    monkeypatch.setenv("APM_HOST", "apm.corp.com")
-    monkeypatch.setenv("APM_USERNAME", "admin")
-    monkeypatch.setenv("APM_PASSWORD", "password")
-    if no_verify_ssl is None:
-        monkeypatch.delenv("APM_NO_VERIFY_SSL", raising=False)
-    else:
-        monkeypatch.setenv("APM_NO_VERIFY_SSL", no_verify_ssl)
+def _mock_resolved(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    host: str = "apm.corp.com",
+    username: str = "admin",
+    password: str = "password",
+    verify_ssl: bool = True,
+) -> MagicMock:
+    """Point _common.resolve_connection at a fake ResolvedConnection, sidestepping
+    any real config.toml on the test machine."""
+    mock_resolve = MagicMock(
+        return_value=ResolvedConnection(host, username, password, verify_ssl)
+    )
+    monkeypatch.setattr("_common.resolve_connection", mock_resolve)
+    return mock_resolve
 
 
-def test_make_client_builds_client_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    _set_apm_env(monkeypatch)
+def test_make_client_builds_client_from_resolved_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_resolved(monkeypatch)
     fake_cls = MagicMock(name="APMClient")
     monkeypatch.setattr("_common.APMClient", fake_cls)
     client = make_client()
@@ -75,33 +89,58 @@ def test_make_client_builds_client_from_env(monkeypatch: pytest.MonkeyPatch) -> 
     assert client is fake_cls.return_value
 
 
-@pytest.mark.parametrize(
-    "no_verify_ssl,expected_verify",
-    [
-        ("true", False),
-        ("True", False),
-        ("TRUE", False),
-        ("false", True),
-        ("1", True),
-        (None, True),  # unset → verify enabled
-    ],
-)
-def test_make_client_no_verify_ssl_parsing(
-    monkeypatch: pytest.MonkeyPatch, no_verify_ssl: str | None, expected_verify: bool
-) -> None:
-    _set_apm_env(monkeypatch, no_verify_ssl=no_verify_ssl)
+@pytest.mark.parametrize("verify_ssl", [True, False])
+def test_make_client_passes_through_verify_ssl(monkeypatch: pytest.MonkeyPatch, verify_ssl: bool) -> None:
+    _mock_resolved(monkeypatch, verify_ssl=verify_ssl)
     fake_cls = MagicMock(name="APMClient")
     monkeypatch.setattr("_common.APMClient", fake_cls)
     make_client()
-    assert fake_cls.call_args.kwargs["verify_ssl"] is expected_verify
+    assert fake_cls.call_args.kwargs["verify_ssl"] is verify_ssl
+
+
+def test_make_client_forwards_explicit_arguments_to_resolve_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_resolve = _mock_resolved(monkeypatch)
+    monkeypatch.setattr("_common.APMClient", MagicMock(name="APMClient"))
+    make_client(
+        host="apm2.corp.com", username="alice", password="secret",
+        profile="lab", no_verify_ssl=True,
+    )
+    mock_resolve.assert_called_once_with(
+        host="apm2.corp.com", username="alice", password="secret",
+        profile="lab", no_verify_ssl=True,
+    )
 
 
 def test_make_client_missing_host_raises_key_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    _set_apm_env(monkeypatch)
-    monkeypatch.delenv("APM_HOST")
+    _mock_resolved(monkeypatch, host="")
     with pytest.raises(KeyError) as exc_info:
         make_client()
     assert exc_info.value.args[0] == "APM_HOST"
+
+
+def test_make_client_missing_username_raises_key_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_resolved(monkeypatch, username="")
+    with pytest.raises(KeyError) as exc_info:
+        make_client()
+    assert exc_info.value.args[0] == "APM_USERNAME"
+
+
+def test_make_client_missing_password_raises_key_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_resolved(monkeypatch, password="")
+    with pytest.raises(KeyError) as exc_info:
+        make_client()
+    assert exc_info.value.args[0] == "APM_PASSWORD"
+
+
+def test_make_client_propagates_keyring_unavailable_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _raise(**kwargs: object) -> None:
+        raise KeyringUnavailableError("keyring locked")
+
+    monkeypatch.setattr("_common.resolve_connection", _raise)
+    with pytest.raises(KeyringUnavailableError):
+        make_client()
 
 
 # ── fmt_bytes ──────────────────────────────────────────────────────────────────
@@ -474,6 +513,18 @@ def test_add_output_arg_accepts_csv_and_json() -> None:
     assert parser.parse_args(["--output", "json"]).output == "json"
 
 
+def test_add_profile_arg_defaults_to_none() -> None:
+    parser = argparse.ArgumentParser()
+    add_profile_arg(parser)
+    assert parser.parse_args([]).profile is None
+
+
+def test_add_profile_arg_accepts_value() -> None:
+    parser = argparse.ArgumentParser()
+    add_profile_arg(parser)
+    assert parser.parse_args(["--profile", "lab"]).profile == "lab"
+
+
 def test_resolve_m365_services_m365_without_service_prints_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -550,8 +601,22 @@ def test_run_main_key_error_exits_1_with_hint(capsys: pytest.CaptureFixture[str]
         run_main(_coro())
     assert exc_info.value.code == 1
     err = capsys.readouterr().err
-    assert "Missing environment variable: APM_HOST" in err
+    assert "Missing APM_HOST." in err
+    assert "uv run --env-file .env" in err
     assert "export APM_HOST" in err
+    assert "synology-apm-cli config set" in err
+
+
+def test_run_main_keyring_unavailable_exits_1_with_hint(capsys: pytest.CaptureFixture[str]) -> None:
+    async def _coro() -> int | None:
+        raise KeyringUnavailableError("keyring locked")
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_main(_coro())
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "Keyring error: keyring locked" in err
+    assert "synology-apm-cli config set --save-password plaintext" in err
 
 
 def test_run_main_keyboard_interrupt_exits_130(capsys: pytest.CaptureFixture[str]) -> None:

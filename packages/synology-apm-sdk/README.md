@@ -9,7 +9,8 @@ Async-native, fully typed Python interface to the APM REST API — no raw HTTP r
 Requires Python 3.11 or later.
 
 ```bash
-pip install synology-apm-sdk
+uv add synology-apm-sdk        # inside a uv project
+pip install synology-apm-sdk   # any other environment
 ```
 
 ## Quick start
@@ -406,23 +407,9 @@ plan = await apm.m365.plans.get("m365-plan-uuid")                # direct UUID
 
 # Apply a plan to an M365 workload
 await apm.m365.workloads.change_plan(wl, plan)
-
-# Create a new M365 plan
-from synology_apm.sdk import M365PlanCreateRequest
-plan = await apm.m365.plans.create(M365PlanCreateRequest(
-    name="M365 Daily",
-    schedule=schedule,
-    retention=retention,
-))
-
-# Update or delete
-plan = await apm.m365.plans.update(plan.plan_id, M365PlanCreateRequest(
-    name="M365 Daily",
-    schedule=schedule,
-    retention=ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_VERSIONS, versions=60),
-))
-await apm.m365.plans.delete(plan)
 ```
+
+`create()` / `update()` / `delete()` follow the same pattern as [Machine Plans](#protection-plans) above — use `apm.m365.plans` and `M365PlanCreateRequest` in place of `apm.machine.plans` and `MachinePlanCreateRequest`.
 
 ---
 

@@ -34,7 +34,3 @@ relies on (list vs. get field completeness, pagination, permission modes).
 
 8. Note: `backup_machine_workload` and `backup_m365_workload` require `operator` mode or
    higher. If the server responds with a permission error, inform the user.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

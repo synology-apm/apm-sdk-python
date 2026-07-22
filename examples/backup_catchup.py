@@ -19,7 +19,7 @@ All progress messages go to stderr; use -o csv or -o json to send only the final
     python backup_catchup.py --category machine -o csv > results.csv
     python backup_catchup.py --category machine -o json > results.json
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -37,6 +37,7 @@ from datetime import UTC, datetime, timedelta
 from _common import (
     add_category_args,
     add_output_arg,
+    add_profile_arg,
     category_label,
     collect_workloads,
     fmt_dt,
@@ -132,7 +133,7 @@ async def _poll_all(
             await asyncio.gather(*(_poll_one(apm, wl, t, sem) for wl, t in pending))
         )
         still_pending: list[tuple[MachineWorkload | M365Workload, datetime]] = []
-        for (wl, triggered_at), status in zip(pending, statuses):
+        for (wl, triggered_at), status in zip(pending, statuses, strict=True):
             if status is not None:
                 results[wl.name] = status
             else:
@@ -154,6 +155,7 @@ async def run(
     category: str,
     m365_services: list[M365WorkloadType] | None,
     output_format: str,
+    profile: str | None = None,
 ) -> int:
     now    = datetime.now(UTC)
     cutoff = now - timedelta(days=threshold_days)
@@ -167,7 +169,7 @@ async def run(
     wl_info: dict[str, tuple[str, str]] = {}  # name → (cat_label, wtype_label)
 
     print("Fetching workloads...", file=sys.stderr)
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         workloads, total = await collect_workloads(apm, category, m365_services, is_retired=False)
 
         stale = [wl for wl in workloads if _is_stale(wl, cutoff, never_backed_up_only)]
@@ -196,10 +198,9 @@ async def run(
             print("\n[dry-run] No backups triggered.", file=sys.stderr)
             return 0
 
-        if not yes:
-            if not await prompt_yes_no(f"\nAbout to trigger {len(stale)} backup(s). Continue? [y/N] "):
-                print("Cancelled.", file=sys.stderr)
-                return 0
+        if not yes and not await prompt_yes_no(f"\nAbout to trigger {len(stale)} backup(s). Continue? [y/N] "):
+            print("Cancelled.", file=sys.stderr)
+            return 0
 
         # ── Trigger backups ─────────────────────────────────────────
         print("\nTriggering backups...", file=sys.stderr)
@@ -317,6 +318,7 @@ def main() -> None:
         help="Only process workloads that have never been backed up (ignores --max-age)",
     )
     add_output_arg(parser)
+    add_profile_arg(parser)
     args = parser.parse_args()
 
     m365_services = resolve_m365_services(parser, args)
@@ -324,6 +326,7 @@ def main() -> None:
     run_main(run(
         args.max_age, args.dry_run, args.yes, args.timeout, args.never_backed_up,
         args.category, m365_services, args.output,
+        profile=args.profile,
     ))
 
 

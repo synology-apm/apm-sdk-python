@@ -25,7 +25,7 @@ from ..models.remote_storage import (
     WasabiCloudStorageAddRequest,
     _S3VendorStorageAddRequest,
 )
-from ._shared import _not_found_as
+from ._shared import ListResult, _not_found_as
 
 _REMOTE_STORAGE_STATUS_MAP: dict[str, RemoteStorageStatus] = {
     "Connection":      RemoteStorageStatus.CONNECTED,
@@ -125,17 +125,17 @@ class RemoteStorageCollection:
     def __init__(self, session: WebAPISession) -> None:
         self._session = session
 
-    async def list(self) -> tuple[list[RemoteStorage], int]:
+    async def list(self) -> ListResult[RemoteStorage]:
         """List all remote storage devices.
 
         Returns all results at once; pagination is not available for this resource.
 
         Returns:
-            (list of RemoteStorage, total count)
+            ListResult of (list of RemoteStorage, total count)
         """
         raw = await self._session.get("/api/v1/external_storage/detail")
         items = [_parse_remote_storage(s) for s in raw.get("storages", [])]
-        return items, len(items)
+        return ListResult(items, len(items))
 
     async def get(self, storage_id: str) -> RemoteStorage:
         """Fetch a remote storage device by ID.

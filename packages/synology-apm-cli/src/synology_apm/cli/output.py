@@ -12,11 +12,12 @@ from enum import Enum, StrEnum
 from typing import Any, TypeVar
 
 import typer
-from rich.console import Console
 from rich.markup import escape as _markup_escape
 from rich.table import Table
 
-console = Console(soft_wrap=True)
+from synology_apm.cli.errors import EXIT_ERROR, _dynamic_console
+
+console = _dynamic_console(soft_wrap=True)
 
 _T = TypeVar("_T")
 
@@ -71,7 +72,7 @@ def print_yaml(data: Any) -> None:
         import yaml
     except ImportError:
         typer.echo("YAML output requires PyYAML: pip install pyyaml", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR) from None
     console.print(yaml.dump(_to_serializable(data), allow_unicode=True, sort_keys=False))
 
 
@@ -98,7 +99,7 @@ def print_csv(
     if headers is None:
         if not rows:
             return None
-        headers = list(dict.fromkeys(k for row in rows for k in row.keys()))
+        headers = list(dict.fromkeys(k for row in rows for k in row))
 
     def _cell(v: Any) -> Any:
         if isinstance(v, (dict, list)):

@@ -6,6 +6,8 @@ from pathlib import Path
 import check_mcp_coverage
 import pytest
 
+import synology_apm.mcp._server as mcp_server
+
 
 def _write_manifest(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "mcp_coverage.toml"
@@ -13,12 +15,11 @@ def _write_manifest(tmp_path: Path, text: str) -> Path:
     return path
 
 
-def _by_mode_all(*tool_names: str) -> dict[str, set[str]]:
-    """A _registered_tool_names_by_mode() fake where every tool is present at every
-    mode -- puts each tool's actual minimum mode at "readonly", so Pass 6 only flags
-    a mismatch for tests whose manifest declares a different mode for that tool."""
-    tools = set(tool_names)
-    return {mode: set(tools) for mode in check_mcp_coverage._MODES}
+def _required_modes_all(*tool_names: str) -> dict[str, str]:
+    """A tool_required_modes() fake where every listed tool's required mode is
+    "readonly", so Pass 6 only flags a mismatch for tests whose manifest declares
+    a different mode for that tool."""
+    return {name: "readonly" for name in tool_names}
 
 
 class TestLoadManifest:
@@ -125,9 +126,9 @@ class TestMain:
         monkeypatch.setattr(check_mcp_coverage, "MANIFEST", manifest)
         monkeypatch.setattr(check_mcp_coverage, "_walk_sdk_surface", lambda client: set())
         monkeypatch.setattr(
-            check_mcp_coverage,
-            "_registered_tool_names_by_mode",
-            lambda: _by_mode_all("get_site_info", "get_site_info_again"),
+            mcp_server,
+            "tool_required_modes",
+            lambda: _required_modes_all("get_site_info", "get_site_info_again"),
         )
 
         assert check_mcp_coverage.main() == 1
@@ -149,7 +150,7 @@ class TestMain:
         monkeypatch.setattr(check_mcp_coverage, "MANIFEST", manifest)
         monkeypatch.setattr(check_mcp_coverage, "_walk_sdk_surface", lambda client: set())
         monkeypatch.setattr(
-            check_mcp_coverage, "_registered_tool_names_by_mode", lambda: _by_mode_all("get_site_info")
+            mcp_server, "tool_required_modes", lambda: _required_modes_all("get_site_info")
         )
 
         assert check_mcp_coverage.main() == 1
@@ -174,7 +175,7 @@ class TestMain:
             check_mcp_coverage, "_walk_sdk_surface", lambda client: {"get_site_info", "some_new_method"}
         )
         monkeypatch.setattr(
-            check_mcp_coverage, "_registered_tool_names_by_mode", lambda: _by_mode_all("get_site_info")
+            mcp_server, "tool_required_modes", lambda: _required_modes_all("get_site_info")
         )
 
         assert check_mcp_coverage.main() == 1
@@ -196,7 +197,7 @@ class TestMain:
         )
         monkeypatch.setattr(check_mcp_coverage, "MANIFEST", manifest)
         monkeypatch.setattr(check_mcp_coverage, "_walk_sdk_surface", lambda client: {"get_site_info"})
-        monkeypatch.setattr(check_mcp_coverage, "_registered_tool_names_by_mode", lambda: _by_mode_all())
+        monkeypatch.setattr(mcp_server, "tool_required_modes", lambda: _required_modes_all())
 
         assert check_mcp_coverage.main() == 1
         err = capsys.readouterr().err
@@ -218,9 +219,9 @@ class TestMain:
         monkeypatch.setattr(check_mcp_coverage, "MANIFEST", manifest)
         monkeypatch.setattr(check_mcp_coverage, "_walk_sdk_surface", lambda client: {"get_site_info"})
         monkeypatch.setattr(
-            check_mcp_coverage,
-            "_registered_tool_names_by_mode",
-            lambda: _by_mode_all("get_site_info", "some_untracked_tool"),
+            mcp_server,
+            "tool_required_modes",
+            lambda: _required_modes_all("get_site_info", "some_untracked_tool"),
         )
 
         assert check_mcp_coverage.main() == 1
@@ -247,16 +248,7 @@ class TestMain:
         )
         monkeypatch.setattr(check_mcp_coverage, "MANIFEST", manifest)
         monkeypatch.setattr(check_mcp_coverage, "_walk_sdk_surface", lambda client: {"get_site_info"})
-        monkeypatch.setattr(
-            check_mcp_coverage,
-            "_registered_tool_names_by_mode",
-            lambda: {
-                "readonly": set(),
-                "operator": {"get_site_info"},
-                "manager": {"get_site_info"},
-                "admin": {"get_site_info"},
-            },
-        )
+        monkeypatch.setattr(mcp_server, "tool_required_modes", lambda: {"get_site_info": "operator"})
 
         assert check_mcp_coverage.main() == 1
         err = capsys.readouterr().err

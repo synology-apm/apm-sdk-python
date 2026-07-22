@@ -101,6 +101,8 @@ async def test_list_status_filter_cross_field_combination_is_or_not_and(apm: APM
     _, total_combined = await apm.machine.workloads.list(
         status=[WorkloadStatus.SUCCESS, WorkloadStatus.DELETING]
     )
+    assert total_success is not None
+    assert total_deleting is not None
     assert total_combined == total_success + total_deleting
 
 

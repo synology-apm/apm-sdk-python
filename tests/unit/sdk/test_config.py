@@ -16,6 +16,7 @@ from synology_apm.sdk import (
     KeyringUnavailableError,
     PasswordStorage,
     ProfileConfig,
+    ResolvedConnection,
     delete_keyring_password,
     load_config,
     resolve_connection,
@@ -459,7 +460,7 @@ def test_resolve_profile_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert resolved.profile == "lab"
 
 
-def test_resolve_no_verify_ssl_cli_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_verify_ssl_cli_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Caller-supplied no_verify_ssl=True should take priority over all other sources."""
     _clean_env(monkeypatch)
     cfg_file = tmp_path / "config.toml"
@@ -468,11 +469,11 @@ def test_resolve_no_verify_ssl_cli_wins(monkeypatch: pytest.MonkeyPatch, tmp_pat
         patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
     ):
         resolved = resolve_connection(no_verify_ssl=True)
-    assert resolved.no_verify_ssl is True
+    assert resolved.verify_ssl is False
 
 
-def test_resolve_no_verify_ssl_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """APM_NO_VERIFY_SSL=true should set no_verify_ssl."""
+def test_resolve_verify_ssl_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """APM_NO_VERIFY_SSL=true should disable verify_ssl."""
     _clean_env(monkeypatch)
     monkeypatch.setenv("APM_NO_VERIFY_SSL", "true")
     cfg_file = tmp_path / "config.toml"
@@ -481,10 +482,10 @@ def test_resolve_no_verify_ssl_from_env(monkeypatch: pytest.MonkeyPatch, tmp_pat
         patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
     ):
         resolved = resolve_connection()
-    assert resolved.no_verify_ssl is True
+    assert resolved.verify_ssl is False
 
 
-def test_resolve_no_verify_ssl_from_env_with_whitespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_verify_ssl_from_env_with_whitespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A trailing space (common from copy-pasted .env values) must not silently
     disable the flag and fall back to verifying SSL."""
     _clean_env(monkeypatch)
@@ -495,10 +496,10 @@ def test_resolve_no_verify_ssl_from_env_with_whitespace(monkeypatch: pytest.Monk
         patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
     ):
         resolved = resolve_connection()
-    assert resolved.no_verify_ssl is True
+    assert resolved.verify_ssl is False
 
 
-def test_resolve_no_verify_ssl_cli_false_overrides_file_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_verify_ssl_cli_false_overrides_file_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Caller-supplied no_verify_ssl=False must force verification back on even when the
     config file profile has it enabled -- the same "explicit value always wins" cascade
     as host/username/password, not a one-directional "only ever turn it on" override."""
@@ -512,10 +513,10 @@ def test_resolve_no_verify_ssl_cli_false_overrides_file_true(monkeypatch: pytest
     ):
         save_config(cfg)
         resolved = resolve_connection(no_verify_ssl=False)
-    assert resolved.no_verify_ssl is False
+    assert resolved.verify_ssl is True
 
 
-def test_resolve_no_verify_ssl_env_false_overrides_file_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_verify_ssl_env_false_overrides_file_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """APM_NO_VERIFY_SSL=false must force verification back on even when the config file
     profile has it enabled, mirroring how APM_HOST/APM_USERNAME/APM_PASSWORD override the
     file regardless of direction."""
@@ -530,10 +531,10 @@ def test_resolve_no_verify_ssl_env_false_overrides_file_true(monkeypatch: pytest
     ):
         save_config(cfg)
         resolved = resolve_connection()
-    assert resolved.no_verify_ssl is False
+    assert resolved.verify_ssl is True
 
 
-def test_resolve_no_verify_ssl_empty_env_falls_back_to_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_resolve_verify_ssl_empty_env_falls_back_to_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """An empty (but set) APM_NO_VERIFY_SSL must be treated as absent, not as an explicit
     false, falling through to the file profile -- matching how an empty APM_HOST/etc. is
     treated as absent rather than an explicit empty value."""
@@ -548,11 +549,11 @@ def test_resolve_no_verify_ssl_empty_env_falls_back_to_file(monkeypatch: pytest.
     ):
         save_config(cfg)
         resolved = resolve_connection()
-    assert resolved.no_verify_ssl is True
+    assert resolved.verify_ssl is False
 
 
-def test_resolve_no_verify_ssl_from_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """no_verify_ssl=true in the config file should take effect."""
+def test_resolve_verify_ssl_from_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """no_verify_ssl=true in the config file should disable verify_ssl."""
     _clean_env(monkeypatch)
     cfg_file = tmp_path / "config.toml"
     cfg = AppConfig()
@@ -566,11 +567,11 @@ def test_resolve_no_verify_ssl_from_file(monkeypatch: pytest.MonkeyPatch, tmp_pa
     ):
         save_config(cfg)
         resolved = resolve_connection()
-    assert resolved.no_verify_ssl is True
+    assert resolved.verify_ssl is False
 
 
-def test_resolve_no_verify_ssl_default_false(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """no_verify_ssl should default to False when not set from any source."""
+def test_resolve_verify_ssl_default_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """verify_ssl should default to True when nothing is set from any source."""
     _clean_env(monkeypatch)
     cfg_file = tmp_path / "config.toml"
     with (
@@ -578,7 +579,14 @@ def test_resolve_no_verify_ssl_default_false(monkeypatch: pytest.MonkeyPatch, tm
         patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
     ):
         resolved = resolve_connection()
-    assert resolved.no_verify_ssl is False
+    assert resolved.verify_ssl is True
+
+
+def test_resolved_connection_is_complete() -> None:
+    assert ResolvedConnection("https://h", "u", "p", True).is_complete() is True
+    assert ResolvedConnection("https://h", "", "p", True).is_complete() is False
+    assert ResolvedConnection("", "u", "p", True).is_complete() is False
+    assert ResolvedConnection("", "", "", True).is_complete() is False
 
 
 def test_resolve_connection_keyring_lookup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

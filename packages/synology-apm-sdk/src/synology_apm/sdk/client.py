@@ -107,11 +107,11 @@ class APMClient:
         await self._session.connect()
         try:
             my_server = await self._backup_servers._get_me()
-        except ResourceNotFoundError:
+        except ResourceNotFoundError as exc:
             await self._session.disconnect()
             raise NotManagementServerError(
                 "Host is not an APM server."
-            )
+            ) from exc
         except BaseException:
             await self._session.disconnect()
             raise

@@ -13,7 +13,7 @@ Usage:
     python backup_activity_report.py --category m365 --m365-service exchange
     python backup_activity_report.py --category m365 --m365-service exchange --m365-service onedrive
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -32,6 +32,7 @@ from typing import Any
 from _common import (
     add_category_args,
     add_output_arg,
+    add_profile_arg,
     category_label,
     collect_workloads,
     fmt_bytes,
@@ -101,6 +102,7 @@ async def run(
     category: str,
     m365_services: list[M365WorkloadType] | None,
     output_format: str,
+    profile: str | None = None,
 ) -> None:
     day_start = datetime(report_date.year, report_date.month, report_date.day).astimezone()
     day_end   = day_start + timedelta(days=1)
@@ -111,7 +113,7 @@ async def run(
     m365_types_to_query = m365_services if m365_services is not None else list(M365WorkloadType)
 
     print(f"Fetching backup activities for {report_date}...", file=sys.stderr)
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         # 1. Fetch completed and ongoing activities for the day, then merge into a
         #    per-workload map.  list() returns DESC by started_at; setdefault on the
         #    completed set keeps the most recent completed activity per workload.
@@ -153,8 +155,7 @@ async def run(
             is_retired=retired_only,
         )
 
-    for wl in workloads:
-        rows.append(_tally(wl, act_map.get(wl.workload_id)))
+    rows.extend(_tally(wl, act_map.get(wl.workload_id)) for wl in workloads)
 
     # ── Output ─────────────────────────────────────────────────────────
     include_category_col = category == "all"
@@ -256,6 +257,7 @@ def main() -> None:
         help="Show only retired workloads (instead of protected)",
     )
     add_output_arg(parser)
+    add_profile_arg(parser)
     args = parser.parse_args()
 
     m365_services = resolve_m365_services(parser, args)
@@ -265,7 +267,10 @@ def main() -> None:
         else date.today() - timedelta(days=1)
     )
 
-    run_main(run(report_date, args.retired_only, args.category, m365_services, args.output))
+    run_main(run(
+        report_date, args.retired_only, args.category, m365_services, args.output,
+        profile=args.profile,
+    ))
 
 
 if __name__ == "__main__":

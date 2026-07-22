@@ -16,6 +16,7 @@ from tests.unit.sdk.conftest import (
     BASE_URL,
     assert_resource_error,
     connected_session,
+    request_json,
 )
 
 PLANS_URL = f"{BASE_URL}/api/v1/plan/tiering_plan?offset=0&limit=500"
@@ -451,7 +452,7 @@ async def test_create_posts_body_and_returns_plan() -> None:
     _assert_sample_tiering_plan(plan)
 
     post_key = ("POST", URL(create_url))
-    body: dict[str, Any] = m.requests[post_key][0].kwargs["json"]
+    body = request_json(m, post_key)
     assert body["plan"]["name"] == "tiering plan 1"
     assert body["plan"]["tieringAfterDays"] == 9876
     assert body["plan"]["destination"] == DEST_ID
@@ -500,7 +501,7 @@ async def test_update_puts_body_and_returns_plan() -> None:
 
     _assert_sample_tiering_plan(plan)
     put_key = ("PUT", URL(update_url))
-    body = m.requests[put_key][0].kwargs["json"]
+    body = request_json(m, put_key)
     assert body["plan"]["name"] == "tiering plan 1"
     assert body["plan"]["tieringAfterDays"] == 9876
     assert body["plan"]["destination"] == DEST_ID

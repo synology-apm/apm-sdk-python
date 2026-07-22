@@ -34,17 +34,18 @@ Further divided into four subtypes by `MachineWorkloadType`:
 
 Backs up cloud data via the Microsoft 365 API. **One Workload = one account (or site/team) for one service**, divided by `M365WorkloadType` into six subtypes:
 
-| `M365WorkloadType` | Workload Subject | Info Type | Identification |
-|---|---|---|---|
-| **EXCHANGE** | A single user's Exchange mailbox | `M365UserInfo` | `user_principal_name` |
-| **ONEDRIVE** | A single user's OneDrive | `M365UserInfo` | `user_principal_name` |
-| **CHAT** | A single user's Teams 1:1 chat | `M365UserInfo` | `user_principal_name` |
-| **SHAREPOINT** | A single SharePoint site | `M365SiteInfo` | `site_url`, `site_name` |
-| **TEAMS** | A single Team (covering all its channels) | `M365TeamInfo` | `team_id`, `team_name`, `web_url` |
-| **GROUP** | M365 Group (shared mailbox) | `M365GroupInfo` | `group_id`, `display_name`, `mail` |
+| `M365WorkloadType` | Workload Subject | Identified By |
+|---|---|---|
+| **EXCHANGE** | A single user's Exchange mailbox | User principal name |
+| **ONEDRIVE** | A single user's OneDrive | User principal name |
+| **CHAT** | A single user's Teams 1:1 chat | User principal name |
+| **SHAREPOINT** | A single SharePoint site | Site URL/name |
+| **TEAMS** | A single Team (covering all its channels) | Team ID/name/URL |
+| **GROUP** | M365 Group (shared mailbox) | Group ID/display name/mail |
 
 > For the same user, Exchange, OneDrive, and Chat are three independent workloads, each with its own backup schedule and version history.
 > The backup unit for `TEAMS` is the entire Team (covering all channels), not a single channel.
+> For the SDK-level representation of each subject (`M365UserInfo` / `M365SiteInfo` / `M365TeamInfo` / `M365GroupInfo` and their exact fields), see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md`.
 
 - A Version represents the state of cloud items at a point in time
 - Smallest restore granularity: mailbox / single email / file / chat history

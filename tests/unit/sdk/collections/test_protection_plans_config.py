@@ -40,7 +40,7 @@ from synology_apm.sdk.models.protection_plan import (
     ProtectionSchedule,
 )
 from synology_apm.sdk.models.remote_storage import RemoteStorage
-from tests.unit.sdk.conftest import BASE_URL, connected_session
+from tests.unit.sdk.conftest import BASE_URL, connected_session, request_json
 
 PLAN_ID = "0c8f033b-fb57-4f46-9a9d-85e9d21c08ab"
 PLAN_URL = f"{BASE_URL}/api/v1/plan/backup_plan"
@@ -127,7 +127,7 @@ async def _create_and_capture_body(request: MachinePlanCreateRequest) -> tuple[P
         m.get(PLAN_DETAIL_URL, payload=SAMPLE_PLAN_RESPONSE)
         plan = await MachinePlanCollection(session).create(request)
         await session.disconnect()
-    body: dict[str, Any] = m.requests[("POST", URL(PLAN_URL))][0].kwargs["json"]
+    body = request_json(m, ("POST", URL(PLAN_URL)))
     return plan, body
 
 
@@ -160,7 +160,7 @@ async def test_update_retention_keep_versions() -> None:
         await session.disconnect()
 
     _assert_created_plan(plan)
-    body = m.requests[("PUT", URL(PLAN_DETAIL_URL))][0].kwargs["json"]
+    body = request_json(m, ("PUT", URL(PLAN_DETAIL_URL)))
     assert body["plan"]["retention"] == {"keepAll": False, "keepVersions": 10}
 
 

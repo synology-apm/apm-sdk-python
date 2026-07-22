@@ -42,7 +42,7 @@ endpoint-free types (amazon_s3, amazon_s3_china, c2_object_storage, wasabi).
 Export generates pre-populated CSV credential templates by default;
 suppress with --no-credentials-template.
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -64,6 +64,7 @@ from typing import Any, TextIO, TypeVar
 
 import yaml
 from _common import (
+    add_profile_arg,
     fmt_compact_duration,
     list_m365_tenants,
     make_client,
@@ -593,10 +594,7 @@ def _ser_protection_plan(
     backup_copy_d: dict[str, Any] | None = None
     if bcp is not None:
         loc = bcp.destination
-        if loc.is_remote_storage:
-            dest_ref = rs_ref_keys.get(loc.name, loc.name)
-        else:
-            dest_ref = bs_ref_keys.get(loc.name, loc.name)
+        dest_ref = rs_ref_keys.get(loc.name, loc.name) if loc.is_remote_storage else bs_ref_keys.get(loc.name, loc.name)
         backup_copy_d = {
             "destination_type": "remote_storage" if loc.is_remote_storage else "appliance",
             "destination_ref": dest_ref,
@@ -736,15 +734,16 @@ def _ser_m365_auto_backup_rules_block(
     if not result.rules and not has_collab:
         return None
 
-    user_rules: list[dict[str, Any]] = []
-    for rule in result.rules:
-        user_rules.append({
+    user_rules: list[dict[str, Any]] = [
+        {
             "backup_server_ref": bs_ns_to_ref.get(rule.namespace, rule.namespace),
             "plan_ref": plan_id_to_ref.get(rule.plan_id, rule.plan_id),
             "exchange_groups": list(rule.exchange_group_ids),
             "onedrive_groups": list(rule.onedrive_group_ids),
             "chat_groups": list(rule.chat_group_ids),
-        })
+        }
+        for rule in result.rules
+    ]
 
     def _ser_collab(s: M365CollabServiceSetting) -> dict[str, str] | None:
         if not s.enabled:
@@ -1240,18 +1239,90 @@ def _rs_cred_endpoint(rs: RemoteStorage) -> str:
     return rs.endpoint
 
 
+def _write_export_yaml(
+    output: str,
+    *,
+    bs_data: list[dict[str, Any]],
+    rs_data: list[dict[str, Any]],
+    protection_data: list[dict[str, Any]],
+    retirement_data: list[dict[str, Any]],
+    tiering_data: list[dict[str, Any]],
+    fs_data: list[dict[str, Any]],
+    saas_data: list[dict[str, Any]],
+    m365_auto_bkp_data: list[dict[str, Any]],
+) -> None:
+    with open(output, "w", encoding="utf-8") as fh:
+        fh.write("version: 1\n\n")
+
+        _write_section_comment(fh, _COMMENT_BACKUP_SERVERS)
+        _write_ref_section(fh, "backup_servers", bs_data)
+        fh.write("\n")
+
+        _write_section_comment(fh, _COMMENT_REMOTE_STORAGES)
+        _write_commented_section(fh, "remote_storages", rs_data)
+        fh.write("\n")
+
+        _write_section_comment(fh, _COMMENT_PROTECTION_PLANS)
+        _write_commented_section(fh, "protection_plans", protection_data)
+        fh.write("\n")
+
+        _write_section_comment(fh, _COMMENT_RETIREMENT_PLANS)
+        _write_commented_section(fh, "retirement_plans", retirement_data)
+        fh.write("\n")
+
+        _write_section_comment(fh, _COMMENT_TIERING_PLANS)
+        _write_commented_section(fh, "tiering_plans", tiering_data)
+        fh.write("\n")
+
+        _write_section_comment(fh, _COMMENT_FILE_SERVERS)
+        yaml.dump({"file_servers": fs_data}, fh, **_YAML_DUMP_OPTS)
+        fh.write("\n")
+
+        _write_section_comment(fh, _COMMENT_SAAS_TENANTS)
+        _write_saas_tenants_section(fh, saas_data)
+        fh.write("\n")
+
+        _write_section_comment(fh, _COMMENT_M365_AUTO_BACKUP_RULES)
+        _write_commented_section(fh, "m365_auto_backup_rules", m365_auto_bkp_data)
+
+
+def _write_fs_credentials_csv(path: str, rows: list[tuple[str, str]]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=["endpoint", "login_user", "password"])
+        w.writeheader()
+        for host_ip, login_user in rows:
+            w.writerow({"endpoint": host_ip, "login_user": login_user, "password": ""})
+
+
+def _write_storage_credentials_csv(path: str, rows: list[tuple[str, str, str]]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w2 = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "storage_type", "endpoint", "vault_name",
+                "access_key", "secret_key", "relink_encryption_key",
+            ],
+        )
+        w2.writeheader()
+        for storage_type, endpoint, vault_name in rows:
+            w2.writerow({
+                "storage_type": storage_type, "endpoint": endpoint, "vault_name": vault_name,
+                "access_key": "", "secret_key": "", "relink_encryption_key": "",
+            })
+
 
 async def run_export(
     output: str,
     concurrency: int,
     write_credentials_template: bool = True,
     yes: bool = False,
+    profile: str | None = None,
 ) -> int | None:
     files_to_check = [output]
     if write_credentials_template:
         stem = os.path.splitext(output)[0]
         files_to_check += [f"{stem}.fs-credentials.csv", f"{stem}.storage-credentials.csv"]
-    existing_files = [f for f in files_to_check if os.path.exists(f)]
+    existing_files = await asyncio.to_thread(lambda: [f for f in files_to_check if os.path.exists(f)])
     if existing_files:
         print("The following file(s) already exist and will be overwritten:", file=sys.stderr)
         for f in existing_files:
@@ -1270,7 +1341,7 @@ async def run_export(
     bs_data: list[dict[str, Any]] = []
     rs_data: list[dict[str, Any]] = []
 
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         print("Fetching backup server and remote storage registry...", file=sys.stderr)
         bs_list, _ = await paginate(
             lambda limit, offset: apm.backup_servers.list(limit=limit, offset=offset)
@@ -1367,39 +1438,18 @@ async def run_export(
                 m365_auto_bkp_data.append(block)
         print(f"  {len(saas_data)} SaaS tenant(s), {len(m365_auto_bkp_data)} with auto-backup rules.", file=sys.stderr)
 
-    with open(output, "w", encoding="utf-8") as fh:
-        fh.write("version: 1\n\n")
-
-        _write_section_comment(fh, _COMMENT_BACKUP_SERVERS)
-        _write_ref_section(fh, "backup_servers", bs_data)
-        fh.write("\n")
-
-        _write_section_comment(fh, _COMMENT_REMOTE_STORAGES)
-        _write_commented_section(fh, "remote_storages", rs_data)
-        fh.write("\n")
-
-        _write_section_comment(fh, _COMMENT_PROTECTION_PLANS)
-        _write_commented_section(fh, "protection_plans", protection_data)
-        fh.write("\n")
-
-        _write_section_comment(fh, _COMMENT_RETIREMENT_PLANS)
-        _write_commented_section(fh, "retirement_plans", retirement_data)
-        fh.write("\n")
-
-        _write_section_comment(fh, _COMMENT_TIERING_PLANS)
-        _write_commented_section(fh, "tiering_plans", tiering_data)
-        fh.write("\n")
-
-        _write_section_comment(fh, _COMMENT_FILE_SERVERS)
-        yaml.dump({"file_servers": fs_data}, fh, **_YAML_DUMP_OPTS)
-        fh.write("\n")
-
-        _write_section_comment(fh, _COMMENT_SAAS_TENANTS)
-        _write_saas_tenants_section(fh, saas_data)
-        fh.write("\n")
-
-        _write_section_comment(fh, _COMMENT_M365_AUTO_BACKUP_RULES)
-        _write_commented_section(fh, "m365_auto_backup_rules", m365_auto_bkp_data)
+    await asyncio.to_thread(
+        _write_export_yaml,
+        output,
+        bs_data=bs_data,
+        rs_data=rs_data,
+        protection_data=protection_data,
+        retirement_data=retirement_data,
+        tiering_data=tiering_data,
+        fs_data=fs_data,
+        saas_data=saas_data,
+        m365_auto_bkp_data=m365_auto_bkp_data,
+    )
 
     print(
         f"Exported {len(protection_data)} protection, "
@@ -1420,11 +1470,7 @@ async def run_export(
             for wl in fs_workloads
             if wl.fs_config is not None and not wl.is_retired
         })
-        with open(fs_creds_path, "w", newline="", encoding="utf-8") as cfh:
-            w = csv.DictWriter(cfh, fieldnames=["endpoint", "login_user", "password"])
-            w.writeheader()
-            for host_ip, login_user in fs_cred_rows:
-                w.writerow({"endpoint": host_ip, "login_user": login_user, "password": ""})
+        await asyncio.to_thread(_write_fs_credentials_csv, fs_creds_path, fs_cred_rows)
         os.chmod(fs_creds_path, 0o600)
         print(
             f"Wrote FS credentials template: {fs_creds_path}  ({len(fs_cred_rows)} entries)",
@@ -1437,20 +1483,7 @@ async def run_export(
             for rs in rs_list
             if rs.storage_type in _IMPORTABLE_RS_TYPES and rs.vault_name
         })
-        with open(storage_creds_path, "w", newline="", encoding="utf-8") as scfh:
-            w2 = csv.DictWriter(
-                scfh,
-                fieldnames=[
-                    "storage_type", "endpoint", "vault_name",
-                    "access_key", "secret_key", "relink_encryption_key",
-                ],
-            )
-            w2.writeheader()
-            for storage_type, endpoint, vault_name in storage_cred_rows:
-                w2.writerow({
-                    "storage_type": storage_type, "endpoint": endpoint, "vault_name": vault_name,
-                    "access_key": "", "secret_key": "", "relink_encryption_key": "",
-                })
+        await asyncio.to_thread(_write_storage_credentials_csv, storage_creds_path, storage_cred_rows)
         os.chmod(storage_creds_path, 0o600)
         print(
             f"Wrote storage credentials template: {storage_creds_path}  ({len(storage_cred_rows)} entries)",
@@ -2450,23 +2483,27 @@ async def _execute_m365_rules(
         async with sem:
             current = await apm.m365.auto_backup_rules.list(tenant_id)
     except APMError as e:
-        for re_ in rule_entries:
-            results.append(_M365RuleResult(
+        results.extend(
+            _M365RuleResult(
                 label=f"{tenant_id}:{re_.backup_server_ref}",
                 kind="m365_user_rule",
                 action="error",
                 result="failed",
                 error_msg=f"failed to fetch current rules: {e}",
-            ))
-        for ce in collab_entries:
-            if ce.tenant_id == tenant_id:
-                results.append(_M365RuleResult(
-                    label=tenant_id,
-                    kind="m365_collab_services",
-                    action="error",
-                    result="failed",
-                    error_msg=f"failed to fetch current rules: {e}",
-                ))
+            )
+            for re_ in rule_entries
+        )
+        results.extend(
+            _M365RuleResult(
+                label=tenant_id,
+                kind="m365_collab_services",
+                action="error",
+                result="failed",
+                error_msg=f"failed to fetch current rules: {e}",
+            )
+            for ce in collab_entries
+            if ce.tenant_id == tenant_id
+        )
         return results
 
     existing_by_ns_plan: dict[tuple[str, str], M365AutoBackupRule] = {
@@ -2767,11 +2804,9 @@ def _compute_m365_dry_actions(
                     current.group_exchange, current.mysite, current.sharepoint, current.teams,
                 ]
             )
-            if collab_active:
-                action = "overwrite" if on_conflict == "overwrite" else "skip"
-            else:
-                # No existing collab config — settings are applied even under on_conflict=skip.
-                action = "overwrite"
+            # else branch (collab_active is False): no existing collab config, so settings
+            # are applied even under on_conflict=skip.
+            action = ("overwrite" if on_conflict == "overwrite" else "skip") if collab_active else "overwrite"
             dry_actions.append((mce.tenant_id, "m365_collab_services", action))
     return dry_actions
 
@@ -2829,6 +2864,7 @@ async def run_import(
     fs_credentials_path: str | None = None,
     storage_credentials_path: str | None = None,
     import_types: set[str] | None = None,
+    profile: str | None = None,
 ) -> int | None:
     _types = import_types if import_types is not None else {
         "remote-storage", "protection-plan", "retirement-plan", "tiering-plan",
@@ -2864,7 +2900,7 @@ async def run_import(
         else []
     )
 
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         # Phase 2: parallel fetch of all read-only index data.
         bs_list, rs_list, machine_plan_stubs, m365_plan_stubs, fs_wls = await _fetch_import_index(apm)
 
@@ -3119,9 +3155,12 @@ async def run_import(
             if created_rs:
                 # Fast path: populate directly from add() results — no extra round-trip.
                 for rsr in rs_results:
-                    if rsr.result == "ok" and rsr.created_storage is not None:
-                        if rsr.entry.ref_key not in remote_storages_by_ref:
-                            remote_storages_by_ref[rsr.entry.ref_key] = rsr.created_storage
+                    if (
+                        rsr.result == "ok"
+                        and rsr.created_storage is not None
+                        and rsr.entry.ref_key not in remote_storages_by_ref
+                    ):
+                        remote_storages_by_ref[rsr.entry.ref_key] = rsr.created_storage
 
                 # Fallback: if any create entry is still unresolved (e.g. add() failed with a
                 # conflict because another client registered the storage concurrently), fetch
@@ -3267,6 +3306,7 @@ def main() -> None:
         "--yes", "-y", action="store_true",
         help="Skip confirmation prompt when output files already exist",
     )
+    add_profile_arg(ex)
 
     im = sub.add_parser("import", help="Import plans from a YAML file")
     im.add_argument("input", metavar="FILE", help="Input YAML file path")
@@ -3318,11 +3358,15 @@ def main() -> None:
             "(the old CSV is renamed to <file>.<timestamp>.bak before the update)."
         ),
     )
+    add_profile_arg(im)
 
     args = parser.parse_args()
 
     if args.command == "export":
-        run_main(run_export(args.output, args.concurrency, args.write_credentials_template, args.yes))
+        run_main(run_export(
+            args.output, args.concurrency, args.write_credentials_template, args.yes,
+            profile=args.profile,
+        ))
     else:
         import_types = (
             {
@@ -3337,6 +3381,7 @@ def main() -> None:
             args.fs_credentials,
             args.storage_credentials,
             import_types,
+            profile=args.profile,
         ))
 
 

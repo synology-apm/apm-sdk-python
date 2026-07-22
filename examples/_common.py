@@ -19,21 +19,19 @@ from datetime import datetime, timedelta
 from types import FrameType
 from typing import Any, NoReturn, TypeVar
 
-from dotenv import load_dotenv
-
 from synology_apm.sdk import (
     APMClient,
     APMError,
     BackupServer,
+    KeyringUnavailableError,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
     MachineWorkloadType,
     SaasTenant,
     WorkloadCategory,
+    resolve_connection,
 )
-
-load_dotenv()
 
 T = TypeVar("T")
 
@@ -42,24 +40,41 @@ Category = str  # "machine" | "m365" | "all"
 
 # ── Credentials / entry point ───────────────────────────────────────────────
 
-def make_client() -> APMClient:
-    """Build an APMClient from APM_HOST / APM_USERNAME / APM_PASSWORD / APM_NO_VERIFY_SSL.
+def make_client(
+    *,
+    host: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    profile: str | None = None,
+    no_verify_ssl: bool | None = None,
+) -> APMClient:
+    """Build an APMClient; each argument overrides the matching value resolve_connection() finds.
 
-    Raises KeyError if a required variable is missing; run_main() turns that into
-    a friendly message.
+    Raises KeyError if a required value is still missing, or KeyringUnavailableError if a
+    profile's keyring-stored password can't be read; run_main() turns both into a friendly
+    message.
     """
-    host     = os.environ["APM_HOST"]
-    username = os.environ["APM_USERNAME"]
-    password = os.environ["APM_PASSWORD"]
-    no_ssl   = os.environ.get("APM_NO_VERIFY_SSL", "").lower() == "true"
-    return APMClient(host, username, password, verify_ssl=not no_ssl)
+    resolved = resolve_connection(
+        host=host, username=username, password=password,
+        profile=profile, no_verify_ssl=no_verify_ssl,
+    )
+    for env_name, value in (
+        ("APM_HOST", resolved.host),
+        ("APM_USERNAME", resolved.username),
+        ("APM_PASSWORD", resolved.password),
+    ):
+        if not value:
+            raise KeyError(env_name)
+    return APMClient(
+        resolved.host, resolved.username, resolved.password, verify_ssl=resolved.verify_ssl
+    )
 
 
 def run_main(coro: Coroutine[Any, Any, int | None]) -> NoReturn:
     """Run *coro* under asyncio with the error handling every example shares.
 
     Exits with the int the coroutine returns (0 if it returns None), maps APMError
-    to exit code 1, and prints a hint when a required environment variable is unset.
+    to exit code 1, and prints a hint when a required value is unset or unreadable.
     """
     try:
         result = asyncio.run(coro)
@@ -72,8 +87,20 @@ def run_main(coro: Coroutine[Any, Any, int | None]) -> NoReturn:
         sys.exit(130)
     except KeyError as e:
         var = e.args[0]
-        print(f"Missing environment variable: {var}", file=sys.stderr)
-        print(f"  Add it to .env or run: export {var}=<value>", file=sys.stderr)
+        print(f"Missing {var}.", file=sys.stderr)
+        print(
+            f"  Set it via `uv run --env-file .env ...` / export {var}=<value>, or "
+            "configure a profile: synology-apm-cli config set",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except KeyringUnavailableError as e:
+        print(f"Keyring error: {e}", file=sys.stderr)
+        print(
+            "  Set APM_PASSWORD directly, or run: "
+            "synology-apm-cli config set --save-password plaintext",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -193,25 +220,26 @@ def category_label(wl: MachineWorkload | M365Workload) -> str:
 # ── Pagination ──────────────────────────────────────────────────────────────
 
 async def paginate(
-    list_call: Callable[[int, int], Awaitable[tuple[list[T], int]]],
+    list_call: Callable[[int, int], Awaitable[tuple[list[T], int | None]]],
     *,
     page: int = 500,
-) -> tuple[list[T], int]:
+) -> tuple[list[T], int | None]:
     """Drain a paginated ``list(limit, offset) -> (items, total)`` SDK call.
 
     Returns (all_items, server_total) where server_total is the total reported on
-    the first page.
+    the first page (None if the endpoint does not report a reliable count, in
+    which case pagination stops once a page shorter than *page* is returned).
     """
     items: list[T] = []
     offset = 0
-    total = 0
+    total: int | None = 0
     while True:
         chunk, chunk_total = await list_call(page, offset)
         if offset == 0:
             total = chunk_total
         items.extend(chunk)
         offset += len(chunk)
-        if not chunk or offset >= chunk_total:
+        if not chunk or (chunk_total is not None and offset >= chunk_total):
             break
     return items, total
 
@@ -236,12 +264,14 @@ async def collect_machine_workloads(
     apm: APMClient, *, is_retired: bool, page: int = 500
 ) -> tuple[list[MachineWorkload], int]:
     """All machine workloads matching *is_retired* (True=retired only, False=protected only)."""
-    return await paginate(
+    items, total = await paginate(
         lambda limit, offset: apm.machine.workloads.list(
             is_retired=is_retired, limit=limit, offset=offset
         ),
         page=page,
     )
+    assert total is not None  # MachineWorkloadCollection.list() always reports a real total
+    return items, total
 
 
 async def collect_m365_workloads(
@@ -264,8 +294,8 @@ async def collect_m365_workloads(
 
     def _list_call(
         tenant: SaasTenant, service: M365WorkloadType
-    ) -> Callable[[int, int], Awaitable[tuple[list[M365Workload], int]]]:
-        async def _call(limit: int, offset: int) -> tuple[list[M365Workload], int]:
+    ) -> Callable[[int, int], Awaitable[tuple[list[M365Workload], int | None]]]:
+        async def _call(limit: int, offset: int) -> tuple[list[M365Workload], int | None]:
             return await apm.m365.workloads.list(
                 tenant_id=tenant.tenant_id, workload_type=service,
                 is_retired=is_retired, limit=limit, offset=offset,
@@ -275,6 +305,7 @@ async def collect_m365_workloads(
     for tenant in tenants:
         for service in services:
             items, sub_total = await paginate(_list_call(tenant, service), page=page)
+            assert sub_total is not None  # M365WorkloadCollection.list() always reports a real total
             results.extend(items)
             total += sub_total
     return results, total
@@ -345,6 +376,15 @@ def add_output_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-o", "--output", dest="output", choices=["table", "csv", "json"], default="table",
         help="Output format: table, csv, or json (default: table)",
+    )
+
+
+def add_profile_arg(parser: argparse.ArgumentParser) -> None:
+    """Add the standard --profile option (same flag/help text as synology-apm-cli and
+    synology-apm-mcp). Pass ``args.profile`` to ``make_client(profile=...)``."""
+    parser.add_argument(
+        "--profile", metavar="NAME", default=None,
+        help="Config profile to use (overrides APM_PROFILE env var)",
     )
 
 

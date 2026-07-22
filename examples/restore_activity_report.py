@@ -10,7 +10,7 @@ Usage:
     python restore_activity_report.py --date 2026-05-07
     python restore_activity_report.py --category m365 -o json
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -27,6 +27,7 @@ from typing import Any
 
 from _common import (
     add_output_arg,
+    add_profile_arg,
     fmt_dt,
     fmt_duration,
     make_client,
@@ -89,12 +90,13 @@ async def run(
     report_date: date,
     category: str,
     output_format: str,
+    profile: str | None = None,
 ) -> None:
     day_start = datetime(report_date.year, report_date.month, report_date.day).astimezone()
     day_end   = day_start + timedelta(days=1)
 
     print(f"Fetching restore activities for {report_date}...", file=sys.stderr)
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         completed, _ = await paginate(
             lambda limit, offset: apm.activities.restore.list(
                 since=day_start,
@@ -216,6 +218,7 @@ def main() -> None:
         help="Report date (default: yesterday)",
     )
     add_output_arg(parser)
+    add_profile_arg(parser)
     args = parser.parse_args()
 
     report_date = (
@@ -223,7 +226,7 @@ def main() -> None:
         else date.today() - timedelta(days=1)
     )
 
-    run_main(run(report_date, args.category, args.output))
+    run_main(run(report_date, args.category, args.output, profile=args.profile))
 
 
 if __name__ == "__main__":

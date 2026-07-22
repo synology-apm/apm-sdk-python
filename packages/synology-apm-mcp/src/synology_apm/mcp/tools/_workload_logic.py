@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from synology_apm.mcp._helpers import (
+    VersionResolution,
     clamp_limit,
     list_result,
     parse_dt_optional,
@@ -63,8 +64,14 @@ async def resolve_version(
     namespace: str,
     tenant_id: str | None = None,
     workload_type: str | None = None,
-) -> tuple[Any, Any]:
-    """Resolve a workload and one of its versions for either category."""
+) -> VersionResolution[Any]:
+    """Resolve a workload and one of its versions for either category.
+
+    The workload half is typed Any because it dispatches to either
+    resolve_machine_version() or resolve_m365_version() and none of this
+    module's callers use it (all discard it via `_, version = ...`); the
+    version half stays precisely WorkloadVersion.
+    """
     if cat.is_m365:
         if tenant_id is None:
             raise ValueError("tenant_id is required for M365 version resolution.")

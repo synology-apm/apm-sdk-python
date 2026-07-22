@@ -40,10 +40,5 @@ relies on (list vs. get field completeness, pagination, permission modes).
    - Sort by protected data descending
    - Include a totals row
 
-6. Note: `protected_data_bytes` represents the protected data size tracked by APM for that
-   workload. This skill computes estimates — actual billing depends on your organization's
+6. Note: this skill computes estimates — actual billing depends on your organization's
    pricing model.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

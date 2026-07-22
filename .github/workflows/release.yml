@@ -1,5 +1,5 @@
-# Builds and publishes synology-apm-sdk, synology-apm-cli, and synology-apm-mcp to PyPI,
-# and attaches pre-built CLI binaries (macOS/Windows) to the GitHub Release for the pushed tag.
+# Builds and publishes synology-apm-sdk, synology-apm-cli, and synology-apm-mcp to PyPI
+# for the pushed tag.
 
 name: Release
 
@@ -9,7 +9,7 @@ on:
       - "v*"
 
 permissions:
-  contents: read   # publish-* / build-binaries jobs elevate their own
+  contents: read   # publish-* jobs elevate their own
 
 concurrency:
   group: release
@@ -25,10 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
 
@@ -42,19 +42,19 @@ jobs:
         run: uv build --package synology-apm-mcp -o dist/synology-apm-mcp
 
       - name: Upload synology-apm-sdk dist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist-synology-apm-sdk
           path: dist/synology-apm-sdk/
 
       - name: Upload synology-apm-cli dist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist-synology-apm-cli
           path: dist/synology-apm-cli/
 
       - name: Upload synology-apm-mcp dist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist-synology-apm-mcp
           path: dist/synology-apm-mcp/
@@ -66,19 +66,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download synology-apm-sdk dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist-synology-apm-sdk
           path: dist/synology-apm-sdk
 
       - name: Download synology-apm-cli dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist-synology-apm-cli
           path: dist/synology-apm-cli
 
       - name: Download synology-apm-mcp dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist-synology-apm-mcp
           path: dist/synology-apm-mcp
@@ -116,13 +116,13 @@ jobs:
       id-token: write
     steps:
       - name: Download synology-apm-sdk dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist-synology-apm-sdk
           path: dist/synology-apm-sdk
 
       - name: Publish synology-apm-sdk to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
         with:
           packages-dir: dist/synology-apm-sdk
 
@@ -136,13 +136,13 @@ jobs:
       id-token: write
     steps:
       - name: Download synology-apm-cli dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist-synology-apm-cli
           path: dist/synology-apm-cli
 
       - name: Publish synology-apm-cli to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
         with:
           packages-dir: dist/synology-apm-cli
 
@@ -157,54 +157,12 @@ jobs:
       id-token: write
     steps:
       - name: Download synology-apm-mcp dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist-synology-apm-mcp
           path: dist/synology-apm-mcp
 
       - name: Publish synology-apm-mcp to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
         with:
           packages-dir: dist/synology-apm-mcp
-
-  build-binaries:
-    needs: build
-    permissions:
-      contents: write
-    strategy:
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Download synology-apm-sdk dist
-        uses: actions/download-artifact@v8
-        with:
-          name: dist-synology-apm-sdk
-          path: dist/synology-apm-sdk
-
-      - name: Download synology-apm-cli dist
-        uses: actions/download-artifact@v8
-        with:
-          name: dist-synology-apm-cli
-          path: dist/synology-apm-cli
-
-      - name: Build CLI binary (macOS)
-        if: runner.os == 'macOS'
-        run: bash scripts/build-cli-macos.sh dist/synology-apm-cli/synology_apm_cli-*-py3-none-any.whl
-
-      - name: Build CLI binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $wheel = Get-ChildItem dist/synology-apm-cli/synology_apm_cli-*-py3-none-any.whl | Select-Object -First 1
-          scripts/build-cli-windows.ps1 $wheel.FullName
-
-      - name: Upload binary to GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: dist/binaries/**/*.zip
-          make_latest: true
-          generate_release_notes: false

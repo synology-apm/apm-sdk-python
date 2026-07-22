@@ -147,7 +147,7 @@ class TestListActivityLogs:
             username="admin",
             description="Backup completed",
         )
-        mock_apm.logs.list_activity.return_value = ([entry], 0)
+        mock_apm.logs.list_activity.return_value = ([entry], None)
 
         raw = await call_tool(admin_server, "list_activity_logs", mock_ctx, server_id="srv-001")
         result = json.loads(raw)
@@ -159,7 +159,7 @@ class TestListActivityLogs:
 
 class TestListDriveLogs:
     @pytest.mark.asyncio
-    async def test_reports_reliable_total(self, mock_apm, mock_ctx, admin_server):
+    async def test_reports_real_total_and_truncated(self, mock_apm, mock_ctx, admin_server):
         bs = make_backup_server(server_type=BackupServerType.DP)
         mock_apm.backup_servers.get.return_value = bs
         mock_apm.logs.list_drive.return_value = ([_make_drive_log()], 5)
@@ -200,7 +200,7 @@ class TestListConnectionLogs:
             username="admin",
             description="Login failed",
         )
-        mock_apm.logs.list_connection.return_value = ([entry], 0)
+        mock_apm.logs.list_connection.return_value = ([entry], None)
 
         raw = await call_tool(admin_server, "list_connection_logs", mock_ctx, server_id="srv-001")
         result = json.loads(raw)
@@ -226,7 +226,7 @@ class TestListSystemLogs:
             username="admin",
             description="Disk failure detected",
         )
-        mock_apm.logs.list_system.return_value = ([entry], 0)
+        mock_apm.logs.list_system.return_value = ([entry], None)
 
         raw = await call_tool(admin_server, "list_system_logs", mock_ctx, server_id="srv-001")
         result = json.loads(raw)

@@ -2,12 +2,14 @@
 
 MCP server for [Synology ActiveProtect Manager (APM)](https://www.synology.com/en-global/dsm/feature/active-protect-manager), built on the `synology-apm-sdk`. Exposes APM backup and restore operations, protection plans, M365 workloads, infrastructure, activities, and logs as [Model Context Protocol](https://modelcontextprotocol.io/) tools and resources for LLM agents.
 
-## Prerequisites
+## Installation
 
-- uv (used as the `uvx` launcher) — see the
-  [installation instructions](https://docs.astral.sh/uv/getting-started/installation/) for your platform
-- A running APM instance with a valid account
-- Python 3.11 or later (installed automatically by `uvx`)
+No separate install step is required — every setup below runs `synology-apm-mcp` on demand
+via [`uv`](https://docs.astral.sh/uv/getting-started/installation/)'s `uvx` launcher
+(`"command": "uvx", "args": ["synology-apm-mcp"]`), which provisions Python 3.11+ and the
+package itself automatically. Install `uv` once for your platform (macOS, Windows, or Linux),
+then follow one of the client setups below. You'll also need a running APM instance and a
+valid account.
 
 ## Configure APM Credentials
 
@@ -64,12 +66,20 @@ Open **Settings → Developer**, click **Edit Config**, and add the following:
 1. Open **Plugins → Add marketplace**, and enter `synology-apm/apm-sdk-python` as the source.
 2. In **Plugins → Personal**, find **synology-apm-mcp** and click **Install**.
 
-The plugin installs with a blank template and connects using the `default`
-`synology-apm-cli` profile configured above. To use a different profile, open
-`~/.codex/config.toml` (shared with the Codex CLI/IDE extension) after installing and set it
-directly:
+This plugin connects using the `default` `synology-apm-cli` profile and `operator` mode.
+ChatGPT Desktop currently has no UI to change plugin settings after install — if you need a
+different profile or mode, install manually instead (see ChatGPT Desktop (manual config)
+below).
+
+## ChatGPT Desktop (manual config)
+
+Open `~/.codex/config.toml` (shared with the Codex CLI/IDE extension) and add the following:
 
 ```toml
+[mcp_servers.synology-apm]
+command = "uvx"
+args = ["synology-apm-mcp"]
+
 [mcp_servers.synology-apm.env]
 APM_PROFILE = "default"
 APM_MCP_MODE = "operator"
@@ -99,7 +109,7 @@ MCP-specific settings, with no `synology-apm-cli` equivalent:
 
 | Variable | Purpose |
 |----------|---------|
-| `APM_MCP_MODE` | Controls which tools are registered: `readonly`, `operator` (default), `manager`, or `admin`. See Operation Modes below. |
+| `APM_MCP_MODE` | Controls which tools are registered: `readonly`, `operator` (default), or `admin`. See Operation Modes below. |
 | `APM_MCP_AUDIT_LOG` | Path to a JSON-lines audit log file recording mutating operations. See Audit Log below. |
 
 ## Operation Modes
@@ -110,8 +120,7 @@ Set `APM_MCP_MODE` (default: `operator`) to control which tools are available:
 |------|-----------------|
 | `readonly` | Read-only queries: list/get workloads, plans, activities, logs, site info |
 | `operator` | Above + trigger backups, cancel activities, manage M365 exports |
-| `manager` | Above + lock/unlock backup versions |
-| `admin` | Full access: create/update/delete plans, workloads, infrastructure |
+| `admin` | Full access: lock/unlock backup versions, create/update/delete plans, workloads, infrastructure |
 
 Tools not available in the current mode are never registered on the server process: they
 are hidden from the agent's `tools/list` response and cannot be invoked via `tools/call`,

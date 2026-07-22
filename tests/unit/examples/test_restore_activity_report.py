@@ -42,7 +42,7 @@ _WL_A = "123e4567-e89b-12d3-a456-426614174001"
 
 
 def test_status_sets_partition_all_statuses() -> None:
-    assert _SUCCESS | _FAILED | _ONGOING == set(RestoreActivityStatus)
+    assert set(RestoreActivityStatus) == _SUCCESS | _FAILED | _ONGOING
 
 
 def test_status_sets_are_pairwise_disjoint() -> None:
@@ -52,18 +52,18 @@ def test_status_sets_are_pairwise_disjoint() -> None:
 
 
 def test_failed_results_are_the_failed_status_strings() -> None:
-    assert _FAILED_RESULTS == {"failed", "partial", "canceled"}
+    assert {"failed", "partial", "canceled"} == _FAILED_RESULTS
 
 
 def test_ongoing_results_are_the_ongoing_status_strings() -> None:
-    assert _ONGOING_RESULTS == {
+    assert {
         "preparing",
         "restoring",
         "canceling",
         "ready_for_migrate",
         "migrate_vm_manually",
         "migrating",
-    }
+    } == _ONGOING_RESULTS
 
 
 # ── _build_row — result field and key set ──────────────────────────────────────
@@ -477,12 +477,12 @@ def test_main_parses_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> Non
     run_mock, run_main_mock = _patch_entry_points(monkeypatch)
     monkeypatch.setattr(sys, "argv", [
         "restore_activity_report.py",
-        "--date", "2026-05-07", "--category", "m365", "-o", "json",
+        "--date", "2026-05-07", "--category", "m365", "-o", "json", "--profile", "lab",
     ])
 
     restore_activity_report.main()
 
-    run_mock.assert_called_once_with(date(2026, 5, 7), "m365", "json")
+    run_mock.assert_called_once_with(date(2026, 5, 7), "m365", "json", profile="lab")
     run_main_mock.assert_called_once_with(run_mock.return_value)
 
 
@@ -495,3 +495,4 @@ def test_main_defaults_to_yesterday_all_category_table(
     restore_activity_report.main()
 
     assert run_mock.call_args.args == (date.today() - timedelta(days=1), "all", "table")
+    assert run_mock.call_args.kwargs == {"profile": None}

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from aioresponses import aioresponses
+from aiointercept import aiointercept
 from yarl import URL
 
 from synology_apm.sdk.client import APMClient
@@ -101,7 +101,7 @@ LOGIN_URL = (
 
 
 async def test_aenter_calls_connect() -> None:
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         client = make_client()
@@ -113,7 +113,7 @@ async def test_aenter_calls_connect() -> None:
 
 async def test_aexit_calls_disconnect() -> None:
     logout_url = f"{BASE_URL}/api/v1/preference/logout"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         client = make_client()
@@ -125,7 +125,7 @@ async def test_aexit_calls_disconnect() -> None:
 
 async def test_async_with_pattern() -> None:
     logout_url = f"{BASE_URL}/api/v1/preference/logout"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(logout_url, payload=LOGOUT_OK)
@@ -137,7 +137,7 @@ async def test_async_with_pattern() -> None:
 async def test_context_manager_disconnects_on_exception() -> None:
     """Even when an exception is raised inside the with block, __aexit__ should still close the connection."""
     logout_url = f"{BASE_URL}/api/v1/preference/logout"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(logout_url, payload=LOGOUT_OK)
@@ -148,7 +148,7 @@ async def test_context_manager_disconnects_on_exception() -> None:
 
 
 async def test_connect_failure_propagates_authentication_error() -> None:
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload={"success": False, "error": {"code": 400}})
         client = make_client()
         with pytest.raises(AuthenticationError):
@@ -157,7 +157,7 @@ async def test_connect_failure_propagates_authentication_error() -> None:
 
 async def test_connect_raises_api_error_on_non_json_login_response() -> None:
     """connect() raises APIError when the login endpoint returns a non-JSON body."""
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, body=b"<html>Not an APM device</html>", status=200)
         client = make_client()
         with pytest.raises(APIError) as exc_info:
@@ -171,7 +171,7 @@ async def test_connect_raises_api_error_on_non_json_login_response() -> None:
 async def test_my_server_property_set_after_connect() -> None:
     """apm.my_server is populated after a successful connect()."""
     logout_url = f"{BASE_URL}/api/v1/preference/logout"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(logout_url, payload=LOGOUT_OK)
@@ -183,7 +183,7 @@ async def test_my_server_property_set_after_connect() -> None:
 
 async def test_connect_raises_not_management_server_when_not_apm() -> None:
     """connect() raises NotManagementServerError when get_me() returns 404 (not an APM host)."""
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, status=404, payload={"message": "not found"})
         client = make_client()
@@ -195,7 +195,7 @@ async def test_connect_raises_not_management_server_when_not_apm() -> None:
 async def test_connect_raises_not_management_server_when_replica_role() -> None:
     """connect() raises NotManagementServerError when the server's role is REPLICA."""
     replica_me = {**ME_OK, "role": "REPLICA"}
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=replica_me)
         client = make_client()
@@ -207,7 +207,7 @@ async def test_connect_raises_not_management_server_when_replica_role() -> None:
 async def test_connect_session_cleanup_on_management_server_error() -> None:
     """connect() calls logout when the management server check fails."""
     logout_url = f"{BASE_URL}/api/v1/preference/logout"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, status=404, payload={"message": "not found"})
         m.get(logout_url, payload=LOGOUT_OK)
@@ -220,7 +220,7 @@ async def test_connect_session_cleanup_on_management_server_error() -> None:
 async def test_connect_baseexception_cleanup_disconnects_and_reraises() -> None:
     """connect() BaseException handler disconnects the session and re-raises non-ResourceNotFound errors."""
     logout_url = f"{BASE_URL}/api/v1/preference/logout"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, status=500, payload={"message": "internal server error"})
         m.get(logout_url, payload=LOGOUT_OK)
@@ -234,7 +234,7 @@ async def test_download_file_saves_content(tmp_path: Path) -> None:
     """APMClient.download_file() saves the downloaded content to the specified path."""
     dest = tmp_path / "out.pst"
     download_url = f"{BASE_URL}/portal/download/token"
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         m.get(download_url, body=b"binary data")
@@ -250,7 +250,7 @@ async def test_download_file_saves_content(tmp_path: Path) -> None:
 
 async def test_get_site_info_returns_complete_site_info() -> None:
     """get_site_info() calls four endpoints in parallel then paginates backup servers for roles."""
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:
@@ -324,7 +324,7 @@ async def test_get_site_info_returns_complete_site_info() -> None:
 
 async def test_get_site_info_paginates_all_backup_server_pages() -> None:
     """get_site_info() should continue paging until LEADER and REPLICA are found or all pages exhausted."""
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:
@@ -370,7 +370,7 @@ async def test_get_site_info_paginates_all_backup_server_pages() -> None:
 
 async def test_get_site_info_no_management_server_when_none_found() -> None:
     """When no LEADER is present in the cluster list, primary_management_server should be None."""
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         m.get(ME_URL, payload=ME_OK)
         async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:

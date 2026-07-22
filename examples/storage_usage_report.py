@@ -14,7 +14,7 @@ Usage:
     python storage_usage_report.py -o csv
     python storage_usage_report.py -o json
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -33,6 +33,7 @@ from typing import Any
 from _common import (
     WORKLOAD_TYPE_ORDER,
     add_output_arg,
+    add_profile_arg,
     collect_m365_workloads,
     collect_machine_workloads,
     fmt_bytes,
@@ -385,9 +386,9 @@ def _print_json(
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-async def run(output_format: str) -> None:
+async def run(output_format: str, profile: str | None = None) -> None:
     print("Collecting data...", file=sys.stderr)
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         wl_rows, srv_rows, stor_rows = await asyncio.gather(
             _scan_workload_usage(apm),
             _scan_server_usage(apm),
@@ -405,8 +406,9 @@ async def run(output_format: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_output_arg(parser)
+    add_profile_arg(parser)
     args = parser.parse_args()
-    run_main(run(args.output))
+    run_main(run(args.output, profile=args.profile))
 
 
 if __name__ == "__main__":

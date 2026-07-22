@@ -38,7 +38,6 @@ async def _list_dp_server_logs(
     *,
     limit: int,
     offset: int,
-    reliable_total: bool,
     **extra_kwargs: Any,
 ) -> dict[str, Any]:
     """Shared body for the 4 list_*_logs tools: resolve the (non-NAS) server, call
@@ -48,16 +47,15 @@ async def _list_dp_server_logs(
     than the whole thing being expressed as list_tool(...)) so the outer run_tool()
     at each call site catches that ValueError too, not just errors from the list call.
 
-    reliable_total varies by log type (True only for drive logs, since that's the
-    only one APM reports a true total for) and is always passed explicitly by the
-    caller rather than defaulted here.
+    Whether the result's total is reliable varies by log type (True only for drive
+    logs, since that's the only one APM reports a true total for); list_result()
+    derives this directly from whether the coroutine's total is None, so it does
+    not need to be passed in here.
     """
     eff_limit = clamp_limit(limit)
     dp_server = await _resolve_dp_server(apm, server_id)
     coro = sdk_list_fn(dp_server, limit=eff_limit, offset=offset, **extra_kwargs)
-    if reliable_total:
-        return await list_result(coro, lambda x: x.to_dict(), offset=offset)
-    return await list_result(coro, lambda x: x.to_dict(), limit=eff_limit, reliable_total=False)
+    return await list_result(coro, lambda x: x.to_dict(), limit=eff_limit, offset=offset)
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
@@ -82,7 +80,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_tool(_list_dp_server_logs(
             apm, server_id, apm.logs.list_activity,
-            limit=limit, offset=offset, reliable_total=False,
+            limit=limit, offset=offset,
             levels=to_enum_list(LogLevel, levels),
             log_type=APMActivityLogType(log_type) if log_type else None,
             since=parse_dt_optional(since),
@@ -108,7 +106,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_tool(_list_dp_server_logs(
             apm, server_id, apm.logs.list_drive,
-            limit=limit, offset=offset, reliable_total=True,
+            limit=limit, offset=offset,
             levels=to_enum_list(LogLevel, levels),
             since=parse_dt_optional(since),
             until=parse_dt_optional(until),
@@ -133,7 +131,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_tool(_list_dp_server_logs(
             apm, server_id, apm.logs.list_connection,
-            limit=limit, offset=offset, reliable_total=False,
+            limit=limit, offset=offset,
             levels=to_enum_list(LogLevel, levels),
             since=parse_dt_optional(since),
             until=parse_dt_optional(until),
@@ -157,7 +155,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_tool(_list_dp_server_logs(
             apm, server_id, apm.logs.list_system,
-            limit=limit, offset=offset, reliable_total=False,
+            limit=limit, offset=offset,
             levels=to_enum_list(LogLevel, levels),
             since=parse_dt_optional(since),
             until=parse_dt_optional(until),

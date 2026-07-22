@@ -23,8 +23,8 @@ relies on (list vs. get field completeness, pagination, permission modes).
    - **Canceled** (`canceled`)
 
 4. For each failed/partial workload, call `get_backup_activity` and read its `log_entries`
-   array — each entry's `message` field holds the detail text (there is no separate
-   `error_message` field).
+   array (see [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#list-vs-get-field-completeness)
+   for the `message`-field detail).
 
 5. Present the report in this order:
    - Summary table: status counts by workload type (VM, PC, Exchange, OneDrive, ...)
@@ -34,7 +34,3 @@ relies on (list vs. get field completeness, pagination, permission modes).
 
 6. If the user asks to trigger catch-up backups for failed workloads, use the
    `catch-up-overdue-backups` skill.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

@@ -118,12 +118,12 @@ only states the rule a new tool must follow and where that rule lives.
 ### Mode gating
 
 - Every tool is registered via `@registrar.tool(required_mode=..., description=...)` (`_registrar.py`);
-  omitting the mode defaults to `readonly`. Modes are cumulative: `readonly < operator < manager < admin`.
+  omitting the mode defaults to `readonly`. Modes are cumulative: `readonly < operator < admin`.
   Gating happens only at registration — never re-check the mode inside a tool body.
 - **Choosing a mode for a new tool**: `readonly` for list/get queries; `operator` for triggering a routine,
-  already-anticipated action (backup, cancel, export); `manager` for version lock/unlock; `admin` for
-  anything that creates/updates/deletes a persistent configuration object, or permanently changes a
-  workload's lifecycle (retire, delete, change_plan).
+  already-anticipated action (backup, cancel, export); `admin` for version lock/unlock, and anything that
+  creates/updates/deletes a persistent configuration object, or permanently changes a workload's lifecycle
+  (retire, delete, change_plan).
 
 ### Destructive actions
 

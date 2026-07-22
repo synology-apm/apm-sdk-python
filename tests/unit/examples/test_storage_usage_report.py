@@ -761,11 +761,11 @@ def _patch_entry_points(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, Mag
 
 def test_main_parses_output_flag_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> None:
     run_mock, run_main_mock = _patch_entry_points(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["storage_usage_report.py", "-o", "csv"])
+    monkeypatch.setattr(sys, "argv", ["storage_usage_report.py", "-o", "csv", "--profile", "lab"])
 
     storage_usage_report.main()
 
-    run_mock.assert_called_once_with("csv")
+    run_mock.assert_called_once_with("csv", profile="lab")
     run_main_mock.assert_called_once_with(run_mock.return_value)
 
 
@@ -775,4 +775,4 @@ def test_main_default_output_is_table(monkeypatch: pytest.MonkeyPatch) -> None:
 
     storage_usage_report.main()
 
-    run_mock.assert_called_once_with("table")
+    run_mock.assert_called_once_with("table", profile=None)

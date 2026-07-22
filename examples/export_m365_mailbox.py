@@ -41,7 +41,7 @@ Common options (both subcommands):
     --concurrency N               max workloads in the export pipeline at once (default: 3)
     --download-concurrency M      max simultaneous downloads (default: 5)
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -62,6 +62,7 @@ from typing import Any
 from _common import (
     Progress,
     _remove_quietly,
+    add_profile_arg,
     fmt_bytes,
     fmt_duration,
     fmt_speed,
@@ -186,6 +187,7 @@ async def list_workloads(
         tenant_id=tenant_id, workload_type=domain.workload_type,
         is_retired=False, keyword=keyword, limit=1, offset=0,
     )
+    assert total is not None  # M365WorkloadCollection.list() always reports a real total
     if total == 0:
         return [], 0
 
@@ -351,7 +353,7 @@ async def download_job(
             os.makedirs(os.path.dirname(job.dest_path), exist_ok=True)
             await apm.download_file(url, job.dest_path)
             dl_end          = datetime.now()
-            job.bytes_saved = os.path.getsize(job.dest_path)
+            job.bytes_saved = await asyncio.to_thread(os.path.getsize, job.dest_path)
             job.outcome     = "ok"
             exp_secs = (job.ready_at - job.started_at).total_seconds() if job.ready_at and job.started_at else 0
             dl_secs  = (dl_end - job.dl_started_at).total_seconds()
@@ -610,8 +612,9 @@ async def run_export(
     all_jobs:     list[MailExportJob]     = []
     all_failures: list[MailExportFailure] = []
 
+    csv_path_abs = await asyncio.to_thread(os.path.abspath, csv_path)
     print(f"PST output : {domain.pst_layout(output_dir)}")
-    print(f"CSV report : {os.path.abspath(csv_path)}")
+    print(f"CSV report : {csv_path_abs}")
 
     confirm = f"\nAbout to export {len(workloads)} {domain.noun}(s){domain.extra_note}. Continue? [y/N] "
     if not yes and not await prompt_yes_no(confirm):
@@ -689,7 +692,7 @@ async def run_export(
         # Drain cancelled tasks (including the ticker) before the session closes.
         await asyncio.gather(*pipeline_tasks, ticker_task, return_exceptions=True)
 
-    return _finish(domain, all_jobs, all_failures, carried_rows, output_dir, csv_path)
+    return await asyncio.to_thread(_finish, domain, all_jobs, all_failures, carried_rows, output_dir, csv_path)
 
 
 def _finish(
@@ -909,6 +912,7 @@ async def run(
     download_concurrency: int,
     csv_path: str | None,
     resume_csv: str | None,
+    profile: str | None = None,
 ) -> int:
     skip_pairs: set[tuple[str, str]] | None = None
     pending_identities: set[str] = set()
@@ -930,7 +934,7 @@ async def run(
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         csv_path = os.path.join(output_dir, f"export_report_{ts}.csv")
 
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         mode_note = " (resume mode)" if resume_csv else (f" (keyword={keyword!r})" if keyword else "")
         print(f"Listing {domain.listing_label} for tenant {tenant_id}{mode_note}...")
         items, _ = await list_workloads(apm, domain, tenant_id, None if resume_csv else keyword)
@@ -997,6 +1001,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--download-concurrency", type=int, default=5, metavar="M",
         help="Max simultaneous downloads (default: 5)",
     )
+    add_profile_arg(parser)
 
 
 def main() -> None:
@@ -1042,6 +1047,7 @@ def main() -> None:
         download_concurrency=args.download_concurrency,
         csv_path=args.csv,
         resume_csv=args.resume,
+        profile=args.profile,
     ))
 
 

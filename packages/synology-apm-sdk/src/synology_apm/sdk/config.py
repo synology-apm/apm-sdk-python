@@ -10,6 +10,7 @@ Priority (high → low):
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 import tomllib
@@ -202,10 +203,8 @@ def save_config(config: AppConfig) -> None:
             os.fsync(f.fileno())
         os.replace(tmp_path, CONFIG_FILE)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 
@@ -217,7 +216,7 @@ class ResolvedConnection:
         host: Resolved host (hostname or ``host:port``, no scheme); empty string if unresolved.
         username: Resolved username; empty string if unresolved.
         password: Resolved password; may be an empty string (caller must handle this separately).
-        no_verify_ssl: Whether to skip TLS certificate verification.
+        verify_ssl: Whether to verify the server's TLS certificate.
         profile: Name of the profile consulted to resolve these settings (the caller-supplied
             or environment-selected profile, or :data:`DEFAULT_PROFILE`).
     """
@@ -225,8 +224,12 @@ class ResolvedConnection:
     host: str
     username: str
     password: str
-    no_verify_ssl: bool
+    verify_ssl: bool
     profile: str = DEFAULT_PROFILE
+
+    def is_complete(self) -> bool:
+        """Returns True when both host and username are set."""
+        return bool(self.host and self.username)
 
 
 def resolve_connection(
@@ -289,5 +292,5 @@ def resolve_connection(
     )
 
     return ResolvedConnection(
-        effective_host, effective_username, effective_password, effective_no_verify, effective_profile
+        effective_host, effective_username, effective_password, not effective_no_verify, effective_profile
     )

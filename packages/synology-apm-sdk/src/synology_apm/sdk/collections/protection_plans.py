@@ -20,6 +20,7 @@ from ..models.protection_plan import (
 from ._protection_plan_builders import _build_device_body, _build_m365_body
 from ._protection_plan_parsers import _parse_plan
 from ._shared import (
+    ListResult,
     _build_remote_location_cache,
     _create_plan_and_fetch,
     _delete_plan_checked,
@@ -103,7 +104,7 @@ async def _list_plans(
     name_contains: str | None,
     limit: int,
     offset: int,
-) -> tuple[list[ProtectionPlan], int]:
+) -> ListResult[ProtectionPlan]:
     """Fetch a page of plans for the given serviceType(s) and parse them."""
     params: dict[str, Any] = {"offset": offset, "limit": limit, "serviceType": service_types}
     if name_contains:
@@ -111,7 +112,7 @@ async def _list_plans(
     raw = await session.get("/api/v1/plan/backup_plan", params=params)
     plans_raw = raw.get("plans", [])
     cache = await _build_location_cache(session, plans_raw)
-    return [_parse_plan(p, cache) for p in plans_raw], raw.get("total", 0)
+    return ListResult([_parse_plan(p, cache) for p in plans_raw], raw.get("total"))
 
 
 async def _get_plan_by_name(
@@ -130,7 +131,7 @@ async def _get_plan_by_name(
             "serviceType": service_types,
         }
         raw = await session.get("/api/v1/plan/backup_plan", params=params)
-        return raw.get("plans", []), raw.get("total", 0)
+        return raw.get("plans", []), raw.get("total")
 
     async for p in _paginate(fetch):
         if p.get("spec", {}).get("name", "").lower() == q:
@@ -172,7 +173,7 @@ class ProtectionPlanCollection:
         name_contains: str | None = None,
         limit: int = 500,
         offset: int = 0,
-    ) -> tuple[list[ProtectionPlan], int]:
+    ) -> ListResult[ProtectionPlan]:
         """List Protection Plans; supports cross-category queries.
 
         Args:
@@ -265,7 +266,7 @@ class _BasePlanCollection:
         name_contains: str | None = None,
         limit: int = 500,
         offset: int = 0,
-    ) -> tuple[list[ProtectionPlan], int]:
+    ) -> ListResult[ProtectionPlan]:
         """List Protection Plans.
 
         Args:

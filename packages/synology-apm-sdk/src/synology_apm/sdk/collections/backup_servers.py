@@ -8,7 +8,7 @@ from ..enums import BackupServerRole, BackupServerType, ServerStatus
 from ..exceptions import InvalidOperationError, ResourceNotFoundError
 from ..models.backup_server import BackupServer
 from ..models.tiering_plan import TieringPlan
-from ._shared import _not_found_as, _paginate, _parse_tiering_status
+from ._shared import ListResult, _not_found_as, _paginate, _parse_tiering_status
 from .tiering_plans import _get_plans_bulk
 
 _SERVER_STATUS_MAP: dict[str, ServerStatus] = {
@@ -58,7 +58,7 @@ class BackupServerCollection:
         type_filter: list[BackupServerType] | None = None,
         limit: int = 500,
         offset: int = 0,
-    ) -> tuple[list[BackupServer], int]:
+    ) -> ListResult[BackupServer]:
         """List all backup servers in the cluster.
 
         Tiering plan name and destination are resolved concurrently for all servers
@@ -87,12 +87,12 @@ class BackupServerCollection:
                 else:
                     params.append(("status", _STATUS_FILTER_MAP[s]))
         if type_filter:
-            for t in dict.fromkeys(type_filter):  # deduplicate while preserving order
-                params.append(("type", _TYPE_FILTER_MAP[t]))
+            # deduplicate while preserving order
+            params.extend(("type", _TYPE_FILTER_MAP[t]) for t in dict.fromkeys(type_filter))
         raw = await self._session.get("/api/v1/infra/backup_server", params=params)
         servers_raw = raw.get("backupServers", [])
         tiering_cache = await _build_tiering_plan_cache(self._session, servers_raw)
-        return [_parse_backup_server(s, tiering_cache) for s in servers_raw], raw.get("total", 0)
+        return ListResult([_parse_backup_server(s, tiering_cache) for s in servers_raw], raw.get("total"))
 
     async def get_by_name(self, name: str) -> BackupServer:
         """Fetch a backup server by name (keyword search + exact match).
@@ -136,7 +136,7 @@ class BackupServerCollection:
                 "/api/v1/infra/backup_server",
                 params=[("offset", offset), ("limit", limit)],
             )
-            return raw.get("backupServers", []), raw.get("total", 0)
+            return raw.get("backupServers", []), raw.get("total")
 
         async for s in _paginate(fetch, page_size=500):
             role = _ROLE_MAP.get(s.get("role", ""))

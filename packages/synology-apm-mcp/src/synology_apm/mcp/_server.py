@@ -10,7 +10,7 @@ from fastmcp import FastMCP
 from synology_apm.mcp import resources
 from synology_apm.mcp._registrar import ToolRegistrar
 from synology_apm.mcp.tools import activity, infra, log, m365, machine, plans
-from synology_apm.sdk import APMClient, APMError
+from synology_apm.sdk import APMClient, APMError, ResolvedConnection
 
 
 class _FailedConnectionClient:
@@ -73,7 +73,7 @@ def tool_required_modes() -> dict[str, str]:
 
 
 def build_lifespan(
-    host: str, username: str, password: str, *, verify_ssl: bool, debug: bool, config_error: APMError | None = None
+    resolved: ResolvedConnection, *, debug: bool, config_error: APMError | None = None
 ) -> Callable[[FastMCP], Any]:
     """Build the lifespan callable used by run(): a persistent APMClient connection, or --
     if config_error is already known (no usable credentials were found, so a real connect
@@ -89,7 +89,10 @@ def build_lifespan(
             yield {"apm": _FailedConnectionClient(config_error)}
             return
         try:
-            async with APMClient(host, username, password, verify_ssl=verify_ssl, debug=debug) as apm:
+            async with APMClient(
+                resolved.host, resolved.username, resolved.password,
+                verify_ssl=resolved.verify_ssl, debug=debug,
+            ) as apm:
                 yield {"apm": apm}
         except APMError as exc:
             yield {"apm": _FailedConnectionClient(exc)}
@@ -98,18 +101,13 @@ def build_lifespan(
 
 
 def run(  # pragma: no cover
-    host: str,
-    username: str,
-    password: str,
+    resolved: ResolvedConnection,
     *,
-    verify_ssl: bool,
     debug: bool,
     mode: str,
     config_error: APMError | None = None,
 ) -> None:
     """Create a server with a persistent APMClient lifespan and run it (stdio transport)."""
-    lifespan = build_lifespan(
-        host, username, password, verify_ssl=verify_ssl, debug=debug, config_error=config_error
-    )
+    lifespan = build_lifespan(resolved, debug=debug, config_error=config_error)
     server = create_server(mode, lifespan=lifespan)
     server.run()

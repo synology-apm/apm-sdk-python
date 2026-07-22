@@ -36,21 +36,16 @@ lookup anywhere except the business `name` field you're setting on a plan (and `
 step built in (unlike the delete tools below). Confirm the exact change with the user before
 calling it.
 
-3. **Every `update_*` tool requires the complete desired field set on every call — there is no
-   partial-patch or keep-current-if-omitted behavior**, with two exceptions (see
-   [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#update-semantics-every-field-every-time)):
-   `update_machine_file_server`'s `login_password` accepts `None` to explicitly keep the current
-   password (APM does not expose it for re-reading, so there is no way to resupply it); and
-   `update_m365_auto_backup_rule`'s `exchange_group_ids`/`onedrive_group_ids`/`chat_group_ids`
-   use the opposite convention — omit a field to keep it unchanged, pass `[]` to clear it.
-   `update_machine_file_server`'s backup scope (`path` or `selectors`) has no such exception — it
-   must be resupplied on every call, and passing neither raises an error rather than silently
-   resetting the file server to a single unrestricted path; if the workload has more than one
-   selector or any `excluded_paths`, fetch `fs_config.selectors` via `get_machine_workload` and
-   pass it back unchanged as `selectors` unless you're deliberately changing scope. For every
-   other field on every `update_*` tool, take the current value from the `get_*` result in step 2
-   and resupply it unchanged for anything the user isn't asking to change — the tool will not fill
-   in anything on your behalf, and there is no hidden default to fall back on.
+3. **Every `update_*` tool requires the complete desired field set on every call** — see
+   [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#update-semantics-every-field-every-time)
+   for the general rule and its two exceptions. `update_machine_file_server`'s backup scope
+   (`path` or `selectors`) is not one of those exceptions — it must be resupplied on every call,
+   and passing neither raises an error rather than silently resetting the file server to a single
+   unrestricted path; if the workload has more than one selector or any `excluded_paths`, fetch
+   `fs_config.selectors` via `get_machine_workload` and pass it back unchanged as `selectors`
+   unless you're deliberately changing scope. For every other field on every `update_*` tool, take
+   the current value from the `get_*` result in step 2 and resupply it unchanged for anything the
+   user isn't asking to change.
 
 4. Present the exact before/after change to the user and confirm before calling the `update_*`
    tool — this workflow's only safety gate, since the tool itself won't ask.
@@ -69,13 +64,10 @@ user, then call it. Requires `admin` mode.
 ## Removing a resource
 
 `delete_remote_storage`, `delete_protection_plan`, `delete_retirement_plan`,
-`delete_tiering_plan`, and `delete_m365_auto_backup_rule` all use the destructive-action
-preview/confirm pattern described in
-[apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#destructive-action-preview-pattern): call
-first with `confirm=false` to get a preview, show it to the user, then call again with
-`confirm=true` only after explicit approval — never skip straight to `confirm=true`. Resolve the
-target's id first (per "Resolving the target resource" above; `delete_m365_auto_backup_rule`
-takes the `uid` found via `list_m365_auto_backup_rules`).
+`delete_tiering_plan`, and `delete_m365_auto_backup_rule` all use the
+[destructive-action preview/confirm pattern](../apm-mcp-conventions/SKILL.md#destructive-action-preview-pattern).
+Resolve the target's id first (per "Resolving the target resource" above;
+`delete_m365_auto_backup_rule` takes the `uid` found via `list_m365_auto_backup_rules`).
 
 `delete_remote_storage` fails if the storage is still referenced by an active tiering plan or
 retirement plan — resolve or reassign those references first (see

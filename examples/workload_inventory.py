@@ -13,7 +13,7 @@ Usage:
     python workload_inventory.py --category all
     python workload_inventory.py --category all --m365-service sharepoint -o csv
 
-Environment variables (can be set in .env):
+Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
     APM_USERNAME      account
     APM_PASSWORD      password
@@ -30,6 +30,7 @@ import sys
 from _common import (
     add_category_args,
     add_output_arg,
+    add_profile_arg,
     collect_m365_workloads,
     collect_machine_workloads,
     fmt_dt,
@@ -67,6 +68,7 @@ async def _get_version_count(
             _, total = await apm.m365.workloads.list_versions(wl, limit=1)
         else:
             _, total = await apm.machine.workloads.list_versions(wl, limit=1)
+        assert total is not None  # list_versions() always reports a real total
         return total
 
 
@@ -91,7 +93,7 @@ def _build_inventory(
         headers.append("version_count")
 
     rows: list[list[str | int | None]] = []
-    for wl, vc in zip(workloads, version_counts):
+    for wl, vc in zip(workloads, version_counts, strict=True):
         if isinstance(wl, M365Workload):
             cat_label  = "M365"
             tenant_col = tenant_names.get(wl.tenant_id, wl.tenant_id)
@@ -121,9 +123,10 @@ async def run(
     category: str,
     m365_services: list[M365WorkloadType] | None,
     output_format: str,
+    profile: str | None = None,
 ) -> None:
     print("Fetching workloads...", file=sys.stderr)
-    async with make_client() as apm:
+    async with make_client(profile=profile) as apm:
         workloads: list[MachineWorkload | M365Workload] = []
         tenant_names: dict[str, str] = {}  # tenant_id → display name (M365 only)
 
@@ -158,7 +161,7 @@ async def run(
         for row in rows:
             writer.writerow([("" if c is None else c) for c in row])
     elif output_format == "json":
-        json_rows = [dict(zip(headers, row)) for row in rows]
+        json_rows = [dict(zip(headers, row, strict=True)) for row in rows]
         print(json.dumps(json_rows, indent=2, ensure_ascii=False))
     else:
         _print_table(headers, rows)
@@ -182,6 +185,7 @@ def main() -> None:
         help=f"Max concurrent version-count requests (default: {_DEFAULT_CONCURRENCY})",
     )
     add_output_arg(parser)
+    add_profile_arg(parser)
     args = parser.parse_args()
 
     m365_services = resolve_m365_services(parser, args)
@@ -193,6 +197,7 @@ def main() -> None:
         category=args.category,
         m365_services=m365_services,
         output_format=args.output,
+        profile=args.profile,
     ))
 
 

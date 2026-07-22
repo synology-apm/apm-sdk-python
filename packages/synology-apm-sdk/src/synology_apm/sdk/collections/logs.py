@@ -8,7 +8,7 @@ from .._http import WebAPISession
 from ..enums import APMActivityLogType, LogLevel
 from ..models.backup_server import BackupServer
 from ..models.log import APMActivityLog, ConnectionLog, DriveLog, SystemLog
-from ._shared import _tunnel_headers
+from ._shared import ListResult, _tunnel_headers
 
 _LEVEL_API: dict[LogLevel, str] = {
     LogLevel.INFO: "LEVEL_INFORMATION",
@@ -83,14 +83,18 @@ class LogCollection:
         params: dict[str, Any],
         *,
         with_total: bool = False,
-    ) -> tuple[list[dict[str, Any]], int]:
-        """Fetch one page of a server-scoped log endpoint and return (raw entries, total)."""
+    ) -> ListResult[dict[str, Any]]:
+        """Fetch one page of a server-scoped log endpoint and return (raw entries, total).
+
+        total is None when with_total is False (the endpoint does not report a
+        reliable count for this log type).
+        """
         raw = await self._session.get(
             endpoint,
             params=params,
             headers=_tunnel_headers(server.namespace),
         )
-        return raw.get(resp_key, []), (raw.get("total", 0) if with_total else 0)
+        return ListResult(raw.get(resp_key, []), raw.get("total") if with_total else None)
 
     async def list_activity(
         self,
@@ -103,7 +107,7 @@ class LogCollection:
         keyword: str | None = None,
         limit: int = 25,
         offset: int = 0,
-    ) -> tuple[list[APMActivityLog], int]:
+    ) -> ListResult[APMActivityLog]:
         """List activity logs from the specified backup server.
 
         Args:
@@ -117,14 +121,14 @@ class LogCollection:
             offset: Pagination start offset (default 0).
 
         Returns:
-            (list of APMActivityLog, 0 — total count is not available for this log type)
+            (list of APMActivityLog, None — total count is not available for this log type)
         """
         params = _build_log_params(
             levels=levels, log_type=log_type, since=since, until=until,
             keyword=keyword, limit=limit, offset=offset,
         )
         entries_raw, total = await self._list_logs(server, "/api/v1/log/aem-log", "aemLogs", params)
-        return [_parse_activity_log(e) for e in entries_raw], total
+        return ListResult([_parse_activity_log(e) for e in entries_raw], total)
 
     async def list_drive(
         self,
@@ -137,7 +141,7 @@ class LogCollection:
         location: str | None = None,
         limit: int = 25,
         offset: int = 0,
-    ) -> tuple[list[DriveLog], int]:
+    ) -> ListResult[DriveLog]:
         """List drive information logs from the specified backup server.
 
         Args:
@@ -160,7 +164,7 @@ class LogCollection:
         entries_raw, total = await self._list_logs(
             server, "/api/v1/log/drive-log", "driveLogs", params, with_total=True,
         )
-        return [_parse_drive_log(e) for e in entries_raw], total
+        return ListResult([_parse_drive_log(e) for e in entries_raw], total)
 
     async def list_connection(
         self,
@@ -172,7 +176,7 @@ class LogCollection:
         keyword: str | None = None,
         limit: int = 25,
         offset: int = 0,
-    ) -> tuple[list[ConnectionLog], int]:
+    ) -> ListResult[ConnectionLog]:
         """List connection logs from the specified backup server.
 
         Args:
@@ -185,7 +189,7 @@ class LogCollection:
             offset: Pagination start offset (default 0).
 
         Returns:
-            (list of ConnectionLog, 0 — total count is not available for this log type)
+            (list of ConnectionLog, None — total count is not available for this log type)
         """
         params = _build_log_params(
             levels=levels, since=since, until=until, keyword=keyword,
@@ -194,7 +198,7 @@ class LogCollection:
         entries_raw, total = await self._list_logs(
             server, "/api/v1/log/connection-log", "connectionLogs", params,
         )
-        return [_parse_connection_log(e) for e in entries_raw], total
+        return ListResult([ConnectionLog(**_user_log_fields(e)) for e in entries_raw], total)
 
     async def list_system(
         self,
@@ -206,7 +210,7 @@ class LogCollection:
         keyword: str | None = None,
         limit: int = 25,
         offset: int = 0,
-    ) -> tuple[list[SystemLog], int]:
+    ) -> ListResult[SystemLog]:
         """List advanced system logs from the specified backup server.
 
         Args:
@@ -219,7 +223,7 @@ class LogCollection:
             offset: Pagination start offset (default 0).
 
         Returns:
-            (list of SystemLog, 0 — total count is not available for this log type)
+            (list of SystemLog, None — total count is not available for this log type)
         """
         params = _build_log_params(
             levels=levels, since=since, until=until, keyword=keyword,
@@ -228,7 +232,7 @@ class LogCollection:
         entries_raw, total = await self._list_logs(
             server, "/api/v1/log/general-log", "generalLogs", params,
         )
-        return [_parse_system_log(e) for e in entries_raw], total
+        return ListResult([SystemLog(**_user_log_fields(e)) for e in entries_raw], total)
 
 
 def _parse_activity_log(raw: dict[str, Any]) -> APMActivityLog:
@@ -253,16 +257,6 @@ def _parse_drive_log(raw: dict[str, Any]) -> DriveLog:
         location=raw.get("location", "-"),
         serial=raw.get("serial", "-"),
     )
-
-
-def _parse_connection_log(raw: dict[str, Any]) -> ConnectionLog:
-    """Convert a raw connection-log entry to ConnectionLog."""
-    return ConnectionLog(**_user_log_fields(raw))
-
-
-def _parse_system_log(raw: dict[str, Any]) -> SystemLog:
-    """Convert a raw general-log entry to SystemLog."""
-    return SystemLog(**_user_log_fields(raw))
 
 
 def _user_log_fields(raw: dict[str, Any]) -> dict[str, Any]:

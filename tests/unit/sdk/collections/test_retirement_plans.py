@@ -17,6 +17,7 @@ from tests.unit.sdk.conftest import (
     BASE_URL,
     assert_resource_error,
     connected_session,
+    request_json,
 )
 
 PLANS_URL = f"{BASE_URL}/api/v1/plan/archive_plan?offset=0&limit=500"
@@ -212,7 +213,7 @@ async def test_create_posts_body_and_returns_plan() -> None:
     _assert_sample_retirement_plan(plan)
 
     post_key = ("POST", URL(create_url))
-    body: dict[str, Any] = m.requests[post_key][0].kwargs["json"]
+    body = request_json(m, post_key)
     assert body["plan"]["name"] == "Keep 30 Days"
     assert body["plan"]["retention"]["keepDays"] == 30
     assert body["plan"]["retention"]["keepAll"] is False
@@ -230,7 +231,7 @@ async def test_create_keep_all_sends_correct_retention() -> None:
         await session.disconnect()
 
     post_key = ("POST", URL(create_url))
-    body = m.requests[post_key][0].kwargs["json"]
+    body = request_json(m, post_key)
     assert body["plan"]["retention"]["keepAll"] is True
 
 
@@ -277,7 +278,7 @@ async def test_update_puts_body_and_returns_plan() -> None:
 
     _assert_sample_retirement_plan(plan)
     put_key = ("PUT", URL(update_url))
-    body = m.requests[put_key][0].kwargs["json"]
+    body = request_json(m, put_key)
     assert body["plan"]["name"] == "Keep 30 Days"
     assert body["plan"]["retention"]["keepDays"] == 30
 

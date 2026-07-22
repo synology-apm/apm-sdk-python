@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "synology-apm-cli"
-version = "0.2.1"
+version = "0.3.0"
 description = "Command-line interface for Synology ActiveProtect Manager, built on synology-apm-sdk"
 readme = "README.md"
 license = "Apache-2.0"
@@ -23,8 +23,8 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "synology-apm-sdk==0.2.1",
-    "typer>=0.12,<0.26",
+    "synology-apm-sdk==0.3.0",
+    "typer>=0.12,<0.28",
     "rich>=13.0",
 ]
 

@@ -38,7 +38,3 @@ relies on (list vs. get field completeness, pagination, permission modes).
 
 7. If the user asks about a specific restore or workload, call `get_restore_activity` by
    `activity_id` for full detail.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

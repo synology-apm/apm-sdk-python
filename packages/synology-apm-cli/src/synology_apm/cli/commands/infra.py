@@ -33,8 +33,8 @@ from synology_apm.cli._serializers import (
     hypervisor_to_csv_row,
     server_to_csv_row,
 )
-from synology_apm.cli._validate import _resolve_tiering_plan, validate_name_or_id_args
-from synology_apm.cli.errors import err_console
+from synology_apm.cli._validate import _resolve_tiering_plan, resolve_by_name_or_id, validate_name_or_id_args
+from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.cli.output import (
     ListOutputFormat,
     OutputFormat,
@@ -286,11 +286,9 @@ async def server_get(
     """
     validate_name_or_id_args(ctx, name, server_id, exclusive_msg="<name> cannot be used with --id")
     async with apm_session(ctx) as apm:
-        if server_id is not None:
-            server = await apm.backup_servers.get(server_id)
-        else:
-            assert name is not None
-            server = await apm.backup_servers.get_by_name(name)
+        server = await resolve_by_name_or_id(
+            name, server_id, apm.backup_servers.get, apm.backup_servers.get_by_name,
+        )
 
     if dispatch_output(server, output, BackupServer.to_dict):
         return
@@ -384,16 +382,14 @@ async def server_change_plan(
     validate_name_or_id_args(ctx, name, server_id, exclusive_msg="<name> cannot be used with --id")
     if plan and remove:
         err_console.print("[red]✗[/red] --plan and --remove are mutually exclusive")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR)
     if not plan and not remove:
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
     async with apm_session(ctx, abortable=True) as apm:
-        if server_id is not None:
-            server = await apm.backup_servers.get(server_id)
-        else:
-            assert name is not None
-            server = await apm.backup_servers.get_by_name(name)
+        server = await resolve_by_name_or_id(
+            name, server_id, apm.backup_servers.get, apm.backup_servers.get_by_name,
+        )
         resolved_plan = await _resolve_tiering_plan(apm, plan) if plan else None
 
         current = server.tiering_plan_name or "None"
@@ -488,11 +484,9 @@ async def remote_storage_get(
     """
     validate_name_or_id_args(ctx, name, storage_id, exclusive_msg="<name> cannot be used with --id")
     async with apm_session(ctx) as apm:
-        if storage_id is not None:
-            remote_storage = await apm.remote_storages.get(storage_id)
-        else:
-            assert name is not None
-            remote_storage = await apm.remote_storages.get_by_name(name)
+        remote_storage = await resolve_by_name_or_id(
+            name, storage_id, apm.remote_storages.get, apm.remote_storages.get_by_name,
+        )
 
     if dispatch_output(remote_storage, output, RemoteStorage.to_dict):
         return
@@ -577,11 +571,9 @@ async def hypervisor_get(
     """
     validate_name_or_id_args(ctx, name, hypervisor_id, exclusive_msg="<name> cannot be used with --id")
     async with apm_session(ctx) as apm:
-        if hypervisor_id is not None:
-            hypervisor = await apm.hypervisors.get(hypervisor_id)
-        else:
-            assert name is not None
-            hypervisor = await apm.hypervisors.get_by_name(name)
+        hypervisor = await resolve_by_name_or_id(
+            name, hypervisor_id, apm.hypervisors.get, apm.hypervisors.get_by_name,
+        )
 
     if dispatch_output(hypervisor, output, Hypervisor.to_dict):
         return

@@ -11,7 +11,7 @@ from typing import Any
 
 from synology_apm.mcp._errors import sdk_error_to_dict
 
-_LEVELS: dict[str, int] = {"readonly": 0, "operator": 1, "manager": 2, "admin": 3}
+_LEVELS: dict[str, int] = {"readonly": 0, "operator": 1, "admin": 2}
 
 DESTRUCTIVE_PREVIEW_SUFFIX = "When confirm=false (default), returns a preview. Pass confirm=true to execute."
 """Append to a destructive tool's description= so every confirm/preview tool

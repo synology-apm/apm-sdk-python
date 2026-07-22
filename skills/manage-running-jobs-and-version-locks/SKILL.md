@@ -19,8 +19,9 @@ relies on (list vs. get field completeness, pagination, permission modes).
    activity (e.g. from a report produced by `daily-backup-report` or
    `analyze-restore-activities`), cancel it directly by id with `cancel_backup_activity` or
    `cancel_restore_activity` instead — no workload lookup needed.
-2. All four cancel tools require `operator` mode or higher. If the call fails with a permission
-   error, tell the user which mode is required rather than retrying.
+2. All four cancel tools require `operator` mode or higher (see
+   [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#permission-modes) for what to do on a
+   permission error).
 3. Report the outcome; a job that already finished before the cancel call reaches the server is
    not an error — just report its final status.
 
@@ -32,13 +33,11 @@ relies on (list vs. get field completeness, pagination, permission modes).
 5. Call `lock_machine_version`/`lock_m365_version` to prevent a version from being
    auto-deleted by its plan's retention policy, or `unlock_machine_version`/`unlock_m365_version`
    to release that hold and let normal retention apply again.
-6. Both require `manager` mode or higher. If the call fails with a permission error, tell the
-   user which mode is required rather than retrying.
+6. Both require `admin` mode.
 7. Report the outcome, including the version's timestamp so the user can confirm it's the one
    they meant.
 
 ## See also
 
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes
 - [daily-backup-report](../daily-backup-report/SKILL.md), [catch-up-overdue-backups](../catch-up-overdue-backups/SKILL.md), [analyze-restore-activities](../analyze-restore-activities/SKILL.md) — likely places a stuck or unwanted running job first surfaces
 - [reassign-or-retire-workload](../reassign-or-retire-workload/SKILL.md) — for moving a workload to a different plan or taking it out of protection entirely, rather than controlling one job or version

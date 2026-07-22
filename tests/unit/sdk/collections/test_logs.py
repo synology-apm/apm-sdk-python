@@ -72,7 +72,7 @@ async def test_list_activity_parses_fields() -> None:
         collection = LogCollection(session)
         logs, total = await collection.list_activity(SAMPLE_SERVER)
 
-    assert total == 0
+    assert total is None
     assert len(logs) == 1
     e = logs[0]
     assert e.level == LogLevel.WARNING
@@ -163,7 +163,7 @@ async def test_list_activity_empty() -> None:
         logs, total = await collection.list_activity(SAMPLE_SERVER)
 
     assert logs == []
-    assert total == 0
+    assert total is None
 
 
 # ── list_drive() ───────────────────────────────────────────────────────────────
@@ -229,7 +229,7 @@ async def test_list_connection_parses_fields() -> None:
         collection = LogCollection(session)
         logs, total = await collection.list_connection(SAMPLE_SERVER)
 
-    assert total == 0
+    assert total is None
     e = logs[0]
     assert e.level == LogLevel.INFO
     assert e.username == "admin"
@@ -257,7 +257,7 @@ async def test_list_system_parses_fields() -> None:
         collection = LogCollection(session)
         logs, total = await collection.list_system(SAMPLE_SERVER)
 
-    assert total == 0
+    assert total is None
     e = logs[0]
     assert e.level == LogLevel.INFO
     assert e.username == "SYSTEM"

@@ -10,7 +10,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any, Generic, NamedTuple, TypeVar
 
 from .._http import WebAPISession, _get_all_detail_codes, _has_detail_code
 from ..enums import (
@@ -82,6 +82,20 @@ _VERIFY_SUPPORTED_TYPES: frozenset[MachineWorkloadType] = frozenset({
 _T = TypeVar("_T")
 
 
+class ListResult(NamedTuple, Generic[_T]):
+    """Paginated list result; unpacks positionally as `(items, total)`.
+
+    Attributes:
+        items: The page of items returned.
+        total: Total count of all matching items, or None when the underlying
+               data source cannot report a reliable count (see the calling
+               method's docstring for when that applies).
+    """
+
+    items: list[_T]
+    total: int | None
+
+
 # ── Pagination helper ─────────────────────────────────────────────────────────
 
 
@@ -150,7 +164,7 @@ async def _build_remote_location_cache(
     results = await asyncio.gather(
         *[_fetch_remote_storage_location(session, d) for d in dest_ids]
     )
-    return {k: v for k, v in zip(dest_ids, results) if v is not None}
+    return {k: v for k, v in zip(dest_ids, results, strict=True) if v is not None}
 
 
 # ── Plan error helpers ────────────────────────────────────────────────────────
@@ -343,7 +357,7 @@ class _VersionMixin:
         offset: int = 0,
         since: datetime | None = None,
         until: datetime | None = None,
-    ) -> tuple[list[WorkloadVersion], int]:
+    ) -> ListResult[WorkloadVersion]:
         """List backup version history for a Workload (descending order, newest first).
 
         Args:
@@ -354,7 +368,7 @@ class _VersionMixin:
             until:    Return only versions created before this time.
 
         Returns:
-            Tuple of (versions, total) where total is the count of all
+            ListResult of (versions, total) where total is the count of all
             matching versions (before limit/offset are applied).
         """
         params: list[tuple[str, str | int]] = [
@@ -376,9 +390,9 @@ class _VersionMixin:
             params=params,
         )
         wl_type = self._version_wl_type(workload)
-        return (
+        return ListResult(
             [_parse_version(v, workload.workload_id, wl_type) for v in raw.get("versions", [])],
-            raw.get("total", 0),
+            raw.get("total"),
         )
 
     async def get_latest_version(self, workload: Workload) -> WorkloadVersion:
@@ -483,7 +497,7 @@ def _resolve_copy_reason(status: str, reason: str | None = None) -> CopyReason |
     Returns None for non-error states (NONE, DOING, COMPLETED, NOT_ENABLED, NO_VERSIONS_TO_COPY).
     """
     if status == "SKIPPED_WORKLOAD":
-        return _COPY_REASON_SKIPPED_MAP.get(reason or "", None)
+        return _COPY_REASON_SKIPPED_MAP.get(reason or "")
     return _COPY_REASON_MAP.get(status)
 
 
@@ -737,6 +751,33 @@ def _check_not_retired(workload: Workload) -> None:
         )
 
 
+def _raise_first_batch_error(
+    errors: list[dict[str, Any]],
+    workload: Workload,
+    *,
+    default_message: str,
+    response_body: Any,
+) -> None:
+    """Raise InvalidOperationError from the first error of a batch-mutation response.
+
+    Used by Machine/M365 workload delete() and _put_plan_change() after a batch
+    delete/change-plan request; errors is a flat list of {"message", "errorCode"}
+    dicts — callers normalize their endpoint's own response shape to this before
+    calling (e.g. unwrapping each entry's nested "error" key). No-op when errors
+    is empty.
+    """
+    if not errors:
+        return
+    err = errors[0]
+    raise InvalidOperationError(
+        err.get("message", default_message),
+        resource_type="Workload",
+        resource_id=workload.workload_id,
+        error_code=err.get("errorCode"),
+        response_body=response_body,
+    )
+
+
 def _check_change_plan_preconditions(workload: Workload, plan: ProtectionPlan | RetirementPlan) -> None:
     """Validate the workload/plan-type/category combination accepted by change_plan()."""
     if isinstance(plan, RetirementPlan):
@@ -775,7 +816,7 @@ async def _resolve_namespace_to_server_id(session: WebAPISession, namespace: str
             "/api/v1/infra/backup_server",
             params={"offset": offset, "limit": limit},
         )
-        return raw.get("backupServers", []), raw.get("total", 0)
+        return raw.get("backupServers", []), raw.get("total")
 
     async for server in _paginate(fetch, page_size=500):
         if server.get("namespace") == namespace:

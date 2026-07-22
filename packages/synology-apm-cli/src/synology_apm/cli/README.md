@@ -32,7 +32,6 @@ exact display strings and table-column definitions live next to the code that re
    - [synology-apm-cli log — Backup Server Logs](#synology-apm-cli-log--backup-server-logs)
 - [Status and Color Conventions](#status-and-color-conventions)
 - [Error Handling](#error-handling)
-- [CLI → SDK Mapping Table](#cli--sdk-mapping-table)
 
 ---
 
@@ -63,8 +62,8 @@ When adding or modifying commands, follow the conventions of existing commands (
 
 - **Error handling / session setup**: SDK calls run inside `async with apm_session(ctx) as apm:` (`synology_apm.cli._helpers`), which stacks `apm_error_handler()` → optional `api_spinner` → `get_client()` in one context manager. List commands pass `spinner="Fetching ..."`; destructive commands pass `abortable=True` so a declined confirmation exits cleanly with `EXIT_CANCEL`. Do not hand-nest `apm_error_handler()` / `api_spinner()` / `get_client()` in commands.
 - **Output dispatch**: non-table output is dispatched via `dispatch_list_output()` / `dispatch_output()` (`synology_apm.cli.output`); returning `True` ends early; `to_csv_row` fields must align with the table columns (not the JSON fields).
-- **Workload resolution and argument validation**: when the search (`<NAME>`) and direct (`--id` / `--namespace`) modes are mutually exclusive, use `validate_*()` from `synology_apm.cli._validate` along with `WorkloadRef.resolve_machine()` / `.resolve_m365()`; once the M365 tenant is automatically resolved, report it via `print_resolved_tenant()`. Similarly, when `--id`/`--version-id` is omitted and `get_latest_version()` is used to resolve the version, report it via `print_resolved_version()`.
-- **Plan resolution (`--plan`)**: any `--plan <id or name>` option is resolved via the shared `_resolve_plan(apm, plan_arg, is_retired=...)` helper in `synology_apm.cli._validate` — UUID-shaped values are looked up with `.get()`, otherwise with `.get_by_name()`, dispatched to `RetirementPlanCollection` or `ProtectionPlanCollection` based on the `is_retired` flag (always `True` for `retire`, since retiring a workload always assigns a Retirement Plan regardless of the workload's state; the resolved workload's `is_retired` for `change-plan`; the command's `--retired` flag for the list filter). The repeatable `--plan` filter on `machine list` / `m365 <scope> list` resolves every value through `_resolve_plans(apm, plan_args, is_retired=...)`, which maps `_resolve_plan()` over the list (returning `None` when no `--plan` was given). **Exception**: `infra server change-plan --plan` resolves against Tiering Plans via the separate `_resolve_tiering_plan(apm, plan_arg)` helper (same UUID-or-name dispatch, targeting `TieringPlanCollection`), not the shared `_resolve_plan()`.
+- **Workload resolution and argument validation**: when the search (`<NAME>`) and direct (`--id` / `--namespace`) modes are mutually exclusive, use `validate_*()` from `synology_apm.cli._validate` along with `WorkloadRef.resolve_machine()` / `.resolve_m365()` — do not hand-roll the dispatch (see their docstrings for the resolution details). Any value the CLI auto-fills on the user's behalf (the M365 tenant when `--tenant-id` is omitted; the version when `--id`/`--version-id` is omitted) must be reported back to the user via `print_resolved_tenant()` / `print_resolved_version()`.
+- **Plan resolution (`--plan`)**: any `--plan <id or name>` option is resolved via the shared `_resolve_plan()` helper in `synology_apm.cli._validate` (see its docstring for the id-vs-name dispatch) — do not reimplement this inline. Which plan type it targets follows the operation, not user input: always a Retirement Plan for `retire` (retiring a workload always assigns one, regardless of its current state), the resolved workload's current state for `change-plan`, and the command's `--retired` flag for list filters. The repeatable `--plan` filter on `machine list` / `m365 <scope> list` maps the same helper over every value via `_resolve_plans()`. **Exception**: `infra server change-plan --plan` resolves against Tiering Plans through the separate `_resolve_tiering_plan()` helper, not `_resolve_plan()` — always use the domain-appropriate helper.
 - **Stderr**: always use `err_console` (`synology_apm.cli.errors`); do not create a separate `Console(stderr=True)`.
 - **Missing required arguments**: declare as `Optional` at the Typer layer; the function checks for `None` internally and prints `ctx.get_help()`, then exits with 0.
 - **Global connection options that feed `resolve_connection()`'s priority cascade** (`--host`/`--username`/`--password`/`--profile`/`--no-verify-ssl`): declare with a `None` default, never a concrete value — a `None` means "not given" and lets the environment-variable/config-file fallback take effect, while an explicit value at any tier (CLI flag, env var, or config file) always wins over a lower-priority tier regardless of direction. Defaulting one of these options to a concrete value (e.g. `False`) instead of `None` silently breaks the cascade for that option, since the CLI would then always "explicitly" pass that default and the option could never fall through to the env var or config file.
@@ -487,7 +486,6 @@ for the profile.
 ### machine — Device Workload Management
 
 Manages device backup Workloads (PC, Physical Server, VM, File Server).
-Corresponds to the SDK's `apm.machine.workloads` (`MachineWorkloadCollection`).
 
 Subcommands that support search mode (`get` / `version list` / `version get` / `version lock` / `version unlock`) by default search only protected Workloads; adding `--retired` searches retired Workloads instead. In direct mode (`--id`/`--workload-id` + `--namespace`), `--retired` has no effect.
 
@@ -495,9 +493,9 @@ Subcommands that support search mode (`get` / `version list` / `version get` / `
 probes retired workloads; if the workload is already retired, the error is `Workload
 '<name>' is already retired.` (exit 1) instead of a not-found error.
 
-`change-plan`: the plan type `--plan` is resolved against is auto-detected from the
-workload's current state — a Protection Plan for an active Workload, a Retirement Plan for
-an already-retired one (add `--retired` in search mode to look up a retired Workload by name).
+`change-plan`: which plan type `--plan` resolves against follows the [Plan
+resolution](#development-conventions) rule (based on the workload's current state); in search
+mode, add `--retired` to look up an already-retired Workload by name.
 
 `version get`: `--id` (Version ID) is optional; the latest version is fetched automatically
 if omitted (reported on stderr as `(Using version: <id>, created at <time>)`). Its detail
@@ -508,7 +506,7 @@ view reuses the same `Activity Detail` body as `synology-apm-cli activity backup
 
 ### saas — SaaS Tenant Overview
 
-`synology-apm-cli saas list` lists all connected SaaS tenants (M365 + GWS). Corresponds to the SDK's `apm.saas.list()` (`SaasCollection`).
+`synology-apm-cli saas list` lists all connected SaaS tenants (M365 + GWS).
 
 ---
 
@@ -516,17 +514,16 @@ view reuses the same `Activity Detail` body as `synology-apm-cli activity backup
 
 Manages Microsoft 365 SaaS backup Workloads, divided into six subcommand groups by service
 type — each behaves like the corresponding `machine` command (same search/direct modes,
-confirmation flows, and version subcommands), with the differences below. Corresponds to
-the SDK's `apm.m365.workloads` (`M365WorkloadCollection`).
+confirmation flows, and version subcommands), with the differences below.
 
-| Subcommand | Service Type | M365WorkloadType | Search-mode `<NAME>` matches |
-|--------|---------|---------------|---------|
-| `exchange` | Mailbox (Exchange) | EXCHANGE | UPN |
-| `onedrive` | OneDrive | ONEDRIVE | UPN |
-| `chat` | Teams Chat | CHAT | UPN |
-| `group` | Group Exchange | GROUP | Group mailbox email |
-| `sharepoint` | SharePoint Sites | SHAREPOINT | Site name |
-| `teams` | Teams Channels | TEAMS | Team name |
+| Subcommand | Service Type | Search-mode `<NAME>` matches |
+|--------|---------|---------|
+| `exchange` | Mailbox (Exchange) | UPN |
+| `onedrive` | OneDrive | UPN |
+| `chat` | Teams Chat | UPN |
+| `group` | Group Exchange | Group mailbox email |
+| `sharepoint` | SharePoint Sites | Site name |
+| `teams` | Teams Channels | Team name |
 
 The Tenant ID (`-t`/`--tenant-id`) can be obtained via `synology-apm-cli saas list`; when
 omitted, the first M365 tenant is used automatically (reported on stderr as `(Using tenant:
@@ -552,7 +549,6 @@ Applies to the `exchange` and `group` subcommand groups, which share one impleme
 |------|---------|-------|
 | Identifier | UPN | Group email |
 | `--archive-mailbox` | Supported | Hidden and silently ignored (no archive-mailbox concept for a group mailbox) |
-| SDK collection | `apm.m365.exchange_export` | `apm.m365.group_export` |
 
 `download` starts a new export and waits for it to become downloadable (no `--id`), or
 downloads an already-started one directly (`--id`):
@@ -614,10 +610,8 @@ FS/M365) are exactly the kind of detail worth reading there rather than duplicat
 
 #### `synology-apm-cli activity backup cancel` / `activity restore cancel`
 
-The CLI first calls `list()` to obtain the Activity object, then calls
-`cancel(activity)`; the SDK routes to the correct cancel endpoint based on the activity's
-category. `--yes` skips the confirmation prompt; exit code 1 if the activity is not found
-(or already completed); exit code 4 if the user declines.
+`--yes` skips the confirmation prompt; exit code 1 if the activity is not found (or already
+completed); exit code 4 if the user declines.
 
 #### `synology-apm-cli activity restore get`
 
@@ -783,56 +777,3 @@ faster fix:
 The "Configured profiles found" block and the `--profile <name>` flag on the `config set`
 line only appear when relevant (no other profiles exist / a non-default profile was
 requested); otherwise the message is the same, without that block.
-
----
-
-## CLI → SDK Mapping Table
-
-Rows marked *plan resolution* resolve `--plan` (UUID → `.get()`, otherwise `.get_by_name()`) against `ProtectionPlanCollection` / `RetirementPlanCollection` as described in the [Development Conventions](#development-conventions) "Plan resolution" bullet — based on `--retired` for list filters, always a Retirement Plan for `retire`, and the workload's current state for `change-plan`. In the export rows, `<Export>` denotes `ExchangeExportCollection` (`exchange`) or `GroupExportCollection` (`group`).
-
-| Command | Corresponding SDK |
-|------|---------|
-| `synology-apm-cli config set/show/clear` | — |
-| `synology-apm-cli machine list --type [pc\|ps\|vm\|fs] --plan --status --verify-status` | *plan resolution* → `MachineWorkloadCollection.list()` |
-| `synology-apm-cli machine get` | `MachineWorkloadCollection.get_by_name()` (search) / `MachineWorkloadCollection.get()` (direct) |
-| `synology-apm-cli machine backup` | `MachineWorkloadCollection.backup_now()` |
-| `synology-apm-cli machine cancel` | `MachineWorkloadCollection.cancel_backup()` |
-| `synology-apm-cli machine retire --plan` | *plan resolution* → `MachineWorkloadCollection.retire()` |
-| `synology-apm-cli machine change-plan --plan` | *plan resolution* → `MachineWorkloadCollection.change_plan()` |
-| `synology-apm-cli machine version list` | `MachineWorkloadCollection.list_versions()` |
-| `synology-apm-cli machine version get [--id]` | `MachineWorkloadCollection.get_version()` or `get_latest_version()` + `BackupActivityCollection.get_by_version()` |
-| `synology-apm-cli machine version lock --id` | `MachineWorkloadCollection.get_version()` → `lock_version(version)` |
-| `synology-apm-cli machine version unlock --id` | `MachineWorkloadCollection.get_version()` → `unlock_version(version)` |
-| `synology-apm-cli activity backup list/get/cancel` | `BackupActivityCollection` |
-| `synology-apm-cli activity restore list/get/cancel` | `RestoreActivityCollection` |
-| `synology-apm-cli infra server list` | `BackupServerCollection.list()` |
-| `synology-apm-cli infra server get` | `BackupServerCollection.get()` (direct) / `BackupServerCollection.get_by_name()` (search) |
-| `synology-apm-cli infra server change-plan` | `BackupServerCollection.get()` or `get_by_name()` + `TieringPlanCollection.get()` or `get_by_name()` + `BackupServerCollection.change_tiering_plan()` |
-| `synology-apm-cli infra storage list` | `RemoteStorageCollection.list()` |
-| `synology-apm-cli infra storage get` | `RemoteStorageCollection.get()` (direct) / `RemoteStorageCollection.get_by_name()` (search) |
-| `synology-apm-cli infra hypervisor list` | `HypervisorCollection.list()` |
-| `synology-apm-cli infra hypervisor get` | `HypervisorCollection.get()` (direct) / `HypervisorCollection.get_by_name()` (search) |
-| `synology-apm-cli infra info` | `APMClient.get_site_info()` |
-| `synology-apm-cli saas list` | `SaasCollection.list()` |
-| `synology-apm-cli m365 <scope> list [-t] --plan --status` | *plan resolution* → `M365WorkloadCollection.list()` + `SaasCollection.get_m365_tenant()` |
-| `synology-apm-cli m365 <scope> get/backup/cancel` | `M365WorkloadCollection` |
-| `synology-apm-cli m365 <scope> retire --plan` | *plan resolution* → `M365WorkloadCollection.retire()` |
-| `synology-apm-cli m365 <scope> change-plan --plan` | *plan resolution* → `M365WorkloadCollection.change_plan()` |
-| `synology-apm-cli m365 <scope> version list/get/lock/unlock` | same as the `machine version` rows above, on `M365WorkloadCollection` |
-| `synology-apm-cli m365 (exchange\|group) export list` | `<Export>.list(wl)` |
-| `synology-apm-cli m365 (exchange\|group) export cancel --id` | `<Export>.list(wl)` → `cancel(activity)` |
-| `synology-apm-cli m365 (exchange\|group) export download` (auto-start) | `<Export>.start()` → `ready_to_download=True`: `get_download_url_by_ready_result()`; `ready_to_download=False`: poll `get_activity_by_result()` until downloadable → `get_download_url_by_ready_result(start_result)`; then `APMClient.download_file()` |
-| `synology-apm-cli m365 (exchange\|group) export download --id` | `<Export>.list(wl)` → `get_download_url_by_activity()` + `APMClient.download_file()` |
-| `synology-apm-cli plan protection list [--category machine\|m365]` | `ProtectionPlanCollection.list(category=)` |
-| `synology-apm-cli plan protection get NAME` | `ProtectionPlanCollection.get_by_name(name)` (cross-category keyword search + exact match) |
-| `synology-apm-cli plan protection get --id` | `ProtectionPlanCollection.get(plan_id)` |
-| `synology-apm-cli plan retirement list` | `RetirementPlanCollection.list()` |
-| `synology-apm-cli plan retirement get NAME` | `RetirementPlanCollection.get_by_name()` (keyword search + exact match) |
-| `synology-apm-cli plan retirement get --id` | `RetirementPlanCollection.get()` |
-| `synology-apm-cli plan tiering list` | `TieringPlanCollection.list()` |
-| `synology-apm-cli plan tiering get NAME` | `TieringPlanCollection.get_by_name()` (keyword search + exact match) |
-| `synology-apm-cli plan tiering get --id` | `TieringPlanCollection.get()` |
-| `synology-apm-cli log activity list` | `LogCollection.list_activity()` (BackupServer resolved via search/direct mode; DP only) |
-| `synology-apm-cli log drive list` | `LogCollection.list_drive()` (BackupServer resolved via search/direct mode; DP only) |
-| `synology-apm-cli log connection list` | `LogCollection.list_connection()` (BackupServer resolved via search/direct mode; DP only) |
-| `synology-apm-cli log system list` | `LogCollection.list_system()` (BackupServer resolved via search/direct mode; DP only) |

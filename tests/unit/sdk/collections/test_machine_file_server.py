@@ -1,6 +1,6 @@
 """Unit tests for MachineWorkloadCollection: VM/PC/PS/FS workload variants, add_file_server,
-update_file_server, delete, get_verification_video_url, MachineCollection properties,
-verify-status / backup-server parsing, fs_config parsing.
+get_verification_video_url, MachineCollection properties, verify-status / backup-server
+parsing.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from aioresponses import aioresponses
+from aiointercept import aiointercept
 
 from synology_apm.sdk.collections.machine import MachineCollection, MachineWorkloadCollection
 from synology_apm.sdk.enums import (
@@ -21,14 +21,12 @@ from synology_apm.sdk.enums import (
     WorkloadCategory,
     WorkloadStatus,
 )
-from synology_apm.sdk.exceptions import APIError, DuplicateWorkloadError, InvalidOperationError
+from synology_apm.sdk.exceptions import APIError, DuplicateWorkloadError
 from synology_apm.sdk.models.protection_plan import ProtectionPlan
 from synology_apm.sdk.models.version import WorkloadVersion
 from synology_apm.sdk.models.workload import (
     FileServerAddRequest,
-    FileServerConfig,
     FileServerPathSelector,
-    FileServerUpdateRequest,
     MachineWorkload,
 )
 from tests.unit.sdk.conftest import (
@@ -403,7 +401,7 @@ async def test_pc_running_reads_backup_progress_from_cache() -> None:
         "status": {"lastBackupTime": "0", "usage": "0", "jobStatus": "RUNNING"},
         "cache": {"progress": 45.7, "processedSuccessCount": 200},
     }
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(LIST_URL, payload={"workloads": [running_workload], "total": 1})
@@ -432,7 +430,7 @@ async def test_fs_running_reads_items_backed_up_from_cache() -> None:
         "status": {"lastBackupTime": "0", "usage": "0", "jobStatus": "RUNNING"},
         "cache": {"progress": 60.0, "processedSuccessCount": 1234},
     }
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(LIST_URL, payload={"workloads": [running_fs], "total": 1})
@@ -489,7 +487,7 @@ async def test_pc_running_with_no_cache_field_defaults_to_zero_progress() -> Non
         "spec": {"workloadType": "PC", "workloadName": "TestPC", "protectStatus": "PROTECT_STATUS_PROTECTED"},
         "status": {"lastBackupTime": "0", "usage": "0", "jobStatus": "RUNNING"},
     }
-    with aioresponses() as m:
+    async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
         await session.connect()
         m.get(LIST_URL, payload={"workloads": [running_no_cache], "total": 1})
@@ -863,452 +861,3 @@ async def test_list_parses_unknown_verify_status_returns_none() -> None:
         await session.disconnect()
 
     assert workloads[0].verify_status is None
-
-
-# ── fs_config parsing ──────────────────────────────────────────────────────
-
-SAMPLE_FS_RAW: dict[str, Any] = {
-    "id": "fs-id-001",
-    "namespace": NAMESPACE,
-    "spec": {
-        "workloadType": "FS",
-        "workloadName": "192.0.2.10",
-        "planRef": {"kind": "BackupPlan", "uid": "plan-uuid-001", "namespace": ""},
-        "configFs": {
-            "hostIp": "192.0.2.10",
-            "hostPort": 445,
-            "osName": "smb",
-            "loginUser": "admin",
-            "loginPassword": "",
-            "remoteSessionList": '[{"selected_path":"","filtered_paths":["docker"]}]',
-            "agentlessEnableWindowsVss": True,
-            "connectionTimeout": 120,
-        },
-    },
-    "status": {"lastBackupTime": "0", "usage": "0"},
-    "planName": "Daily Backup",
-}
-
-
-async def test_fs_workload_parses_fs_config_from_spec() -> None:
-    """FS workload list result has fs_config populated from spec.configFs."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"workloads": [SAMPLE_FS_RAW], "total": 1}
-        workloads, _ = await collection.list()
-
-    wl = workloads[0]
-    assert wl.workload_type == MachineWorkloadType.FS
-    cfg = wl.fs_config
-    assert cfg is not None
-    assert cfg.host_ip == "192.0.2.10"
-    assert cfg.host_port == 445
-    assert cfg.server_type == FileServerType.SMB
-    assert cfg.login_user == "admin"
-    assert cfg.enable_vss is True
-    assert cfg.connection_timeout_seconds == 120
-    assert cfg.selectors == (FileServerPathSelector(path="", excluded_paths=("docker",)),)
-
-
-async def test_fs_workload_fs_config_none_when_configfs_absent() -> None:
-    """FS workload with no configFs in spec gets fs_config=None."""
-    raw = {**SAMPLE_FS_RAW, "spec": {k: v for k, v in SAMPLE_FS_RAW["spec"].items() if k != "configFs"}}
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"workloads": [raw], "total": 1}
-        workloads, _ = await collection.list()
-
-    assert workloads[0].fs_config is None
-
-
-async def test_fs_workload_parses_selector_with_excluded_paths() -> None:
-    """remoteSessionList with filtered_paths parses into excluded_paths on the selector."""
-    raw = {
-        **SAMPLE_FS_RAW,
-        "spec": {
-            **SAMPLE_FS_RAW["spec"],
-            "configFs": {
-                **SAMPLE_FS_RAW["spec"]["configFs"],
-                "remoteSessionList": '[{"selected_path":"","filtered_paths":["docker","tmp"]}]',
-            },
-        },
-    }
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"workloads": [raw], "total": 1}
-        workloads, _ = await collection.list()
-
-    cfg = workloads[0].fs_config
-    assert cfg is not None
-    assert cfg.selectors == (FileServerPathSelector(path="", excluded_paths=("docker", "tmp")),)
-
-
-async def test_fs_workload_parses_multiple_selectors() -> None:
-    """remoteSessionList with two entries parses into two FileServerPathSelector objects."""
-    sessions_json = json.dumps([
-        {"selected_path": "share1", "filtered_paths": []},
-        {"selected_path": "share2", "filtered_paths": ["archive"]},
-    ])
-    raw = {
-        **SAMPLE_FS_RAW,
-        "spec": {
-            **SAMPLE_FS_RAW["spec"],
-            "configFs": {**SAMPLE_FS_RAW["spec"]["configFs"], "remoteSessionList": sessions_json},
-        },
-    }
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"workloads": [raw], "total": 1}
-        workloads, _ = await collection.list()
-
-    cfg = workloads[0].fs_config
-    assert cfg is not None
-    assert cfg.selectors == (
-        FileServerPathSelector(path="share1"),
-        FileServerPathSelector(path="share2", excluded_paths=("archive",)),
-    )
-
-
-async def test_fs_workload_empty_remote_session_list_defaults_to_whole_machine() -> None:
-    """Empty remoteSessionList ('[]') defaults to a single whole-machine selector."""
-    raw = {
-        **SAMPLE_FS_RAW,
-        "spec": {
-            **SAMPLE_FS_RAW["spec"],
-            "configFs": {**SAMPLE_FS_RAW["spec"]["configFs"], "remoteSessionList": "[]"},
-        },
-    }
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"workloads": [raw], "total": 1}
-        workloads, _ = await collection.list()
-
-    cfg = workloads[0].fs_config
-    assert cfg is not None
-    assert cfg.selectors == (FileServerPathSelector(path=""),)
-
-
-async def test_non_fs_workload_fs_config_is_none() -> None:
-    """PC workload gets fs_config=None."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"workloads": [SAMPLE_WORKLOAD], "total": 1}
-        workloads, _ = await collection.list()
-
-    assert workloads[0].fs_config is None
-
-
-# ── update_file_server() ───────────────────────────────────────────────────
-
-FS_WORKLOAD_OBJ = MachineWorkload(
-    workload_id="fs-id-001",
-    name="192.0.2.10",
-    category=WorkloadCategory.MACHINE,
-    namespace=NAMESPACE,
-    last_backup_at=None,
-    is_retired=False,
-    protected_data_bytes=0,
-    status=WorkloadStatus.NO_BACKUPS,
-    plan=ProtectionPlan(plan_id="plan-uuid-001", name="Daily Backup", category=WorkloadCategory.MACHINE),
-    workload_type=MachineWorkloadType.FS,
-    agent_version=None,
-    fs_config=FileServerConfig(
-        host_ip="192.0.2.10",
-        host_port=445,
-        server_type=FileServerType.SMB,
-        login_user="admin",
-        enable_vss=False,
-        connection_timeout_seconds=180,
-        selectors=(FileServerPathSelector(path=""),),
-    ),
-)
-
-CURRENT_SPEC: dict[str, Any] = {
-    "workloadType": "FS",
-    "workloadName": "192.0.2.10",
-    "configFs": {
-        "hostIp": "192.0.2.10",
-        "hostPort": 445,
-        "osName": "smb",
-        "loginUser": "admin",
-        "loginPassword": "",
-        "remoteSessionList": '[{"selected_path":"","filtered_paths":[]}]',
-        "agentlessEnableWindowsVss": False,
-        "connectionTimeout": 180,
-        "extraField": "should-be-preserved",
-    },
-    "planRef": {"kind": "BackupPlan", "uid": "plan-uuid-001", "namespace": ""},
-}
-
-
-async def test_update_file_server_fetches_spec_then_puts() -> None:
-    """update_file_server() issues GET then PUT to the correct paths."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-    req = FileServerUpdateRequest(host_ip="192.0.2.10", login_user="admin", login_password=None)
-
-    with (
-        patch.object(session, "get", new_callable=AsyncMock) as mock_get,
-        patch.object(session, "put", new_callable=AsyncMock) as mock_put,
-    ):
-        mock_get.return_value = {"spec": dict(CURRENT_SPEC)}
-        mock_put.return_value = {"success": True, "error": None}
-        await collection.update_file_server(FS_WORKLOAD_OBJ, req)
-
-    mock_get.assert_called_once()
-    get_path = mock_get.call_args[0][0]
-    assert get_path == f"/api/v1/workload/device_workload/{FS_WORKLOAD_OBJ.workload_id}"
-
-    mock_put.assert_called_once()
-    put_path = mock_put.call_args[0][0]
-    assert put_path == f"/api/v1/workload/device_workload/{FS_WORKLOAD_OBJ.workload_id}"
-
-    put_body = mock_put.call_args[1]["json"]
-    assert "opcode" not in put_body.get("spec", {})
-
-
-async def test_update_file_server_merges_configfs_fields() -> None:
-    """update_file_server() overwrites updated fields while preserving others (e.g. extraField)."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-    req = FileServerUpdateRequest(
-        host_ip="192.0.2.11",
-        login_user="newuser",
-        login_password="newpass",
-        host_port=139,
-        enable_vss=True,
-        connection_timeout_seconds=60,
-    )
-
-    with (
-        patch.object(session, "get", new_callable=AsyncMock) as mock_get,
-        patch.object(session, "put", new_callable=AsyncMock) as mock_put,
-    ):
-        mock_get.return_value = {"spec": dict(CURRENT_SPEC)}
-        mock_put.return_value = {"success": True, "error": None}
-        await collection.update_file_server(FS_WORKLOAD_OBJ, req)
-
-    put_cfg = mock_put.call_args[1]["json"]["spec"]["configFs"]
-    assert put_cfg["hostIp"] == "192.0.2.11"
-    assert put_cfg["loginUser"] == "newuser"
-    assert put_cfg["loginPassword"] == "newpass"
-    assert put_cfg["hostPort"] == 139
-    assert put_cfg["agentlessEnableWindowsVss"] is True
-    assert put_cfg["connectionTimeout"] == 60
-    assert put_cfg["extraField"] == "should-be-preserved"
-
-
-async def test_update_file_server_builds_correct_remote_session_list() -> None:
-    """update_file_server() serializes selectors into remoteSessionList correctly."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-    req = FileServerUpdateRequest(
-        host_ip="192.0.2.10",
-        login_user="admin",
-        login_password=None,
-        selectors=(
-            FileServerPathSelector(path="share1"),
-            FileServerPathSelector(path="share2", excluded_paths=("archive",)),
-        ),
-    )
-
-    with (
-        patch.object(session, "get", new_callable=AsyncMock) as mock_get,
-        patch.object(session, "put", new_callable=AsyncMock) as mock_put,
-    ):
-        mock_get.return_value = {"spec": dict(CURRENT_SPEC)}
-        mock_put.return_value = {"success": True, "error": None}
-        await collection.update_file_server(FS_WORKLOAD_OBJ, req)
-
-    raw_sessions = mock_put.call_args[1]["json"]["spec"]["configFs"]["remoteSessionList"]
-    sessions = json.loads(raw_sessions)
-    assert sessions == [
-        {"selected_path": "share1", "filtered_paths": []},
-        {"selected_path": "share2", "filtered_paths": ["archive"]},
-    ]
-
-
-async def test_update_file_server_whole_machine_selector() -> None:
-    """update_file_server() with path='' sends selected_path='' filtered_paths=[]."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-    req = FileServerUpdateRequest(
-        host_ip="192.0.2.10",
-        login_user="admin",
-        login_password=None,
-        selectors=(FileServerPathSelector(path=""),),
-    )
-
-    with (
-        patch.object(session, "get", new_callable=AsyncMock) as mock_get,
-        patch.object(session, "put", new_callable=AsyncMock) as mock_put,
-    ):
-        mock_get.return_value = {"spec": dict(CURRENT_SPEC)}
-        mock_put.return_value = {"success": True, "error": None}
-        await collection.update_file_server(FS_WORKLOAD_OBJ, req)
-
-    raw_sessions = mock_put.call_args[1]["json"]["spec"]["configFs"]["remoteSessionList"]
-    sessions = json.loads(raw_sessions)
-    assert sessions == [{"selected_path": "", "filtered_paths": []}]
-
-
-async def test_update_file_server_none_password_sends_empty_string_to_api() -> None:
-    """update_file_server() with login_password=None sends loginPassword='' (keep-existing sentinel)."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-    req = FileServerUpdateRequest(host_ip="192.0.2.10", login_user="admin", login_password=None)
-
-    with (
-        patch.object(session, "get", new_callable=AsyncMock) as mock_get,
-        patch.object(session, "put", new_callable=AsyncMock) as mock_put,
-    ):
-        mock_get.return_value = {"spec": dict(CURRENT_SPEC)}
-        mock_put.return_value = {"success": True, "error": None}
-        await collection.update_file_server(FS_WORKLOAD_OBJ, req)
-
-    put_cfg = mock_put.call_args[1]["json"]["spec"]["configFs"]
-    assert put_cfg["loginPassword"] == ""
-
-
-async def test_update_file_server_raises_for_non_fs_workload() -> None:
-    """update_file_server() raises InvalidOperationError when workload_type is not FS."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-    req = FileServerUpdateRequest(host_ip="192.0.2.10", login_user="u", login_password="p")
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        with pytest.raises(InvalidOperationError) as exc_info:
-            await collection.update_file_server(SAMPLE_WL_OBJ, req)
-    mock_get.assert_not_called()
-
-    assert_resource_error(exc_info, resource_type="Workload", resource_id=SAMPLE_WL_OBJ.workload_id)
-
-
-def test_update_file_server_empty_string_password_raises_value_error() -> None:
-    """FileServerUpdateRequest raises ValueError at construction when login_password is empty string."""
-    with pytest.raises(ValueError, match="login_password"):
-        FileServerUpdateRequest(host_ip="192.0.2.10", login_user="admin", login_password="")
-
-
-def test_update_file_server_whitespace_only_password_raises_value_error() -> None:
-    """FileServerUpdateRequest raises ValueError at construction when login_password is whitespace only."""
-    with pytest.raises(ValueError, match="login_password"):
-        FileServerUpdateRequest(host_ip="192.0.2.10", login_user="admin", login_password="   ")
-
-
-async def test_update_file_server_raises_duplicate_on_conflict_response() -> None:
-    """update_file_server() raises DuplicateWorkloadError when PUT raises APIError with code 7001."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-    req = FileServerUpdateRequest(host_ip="192.0.2.3", login_user="u", login_password="p")
-
-    conflict_body = {"success": False, "error": {"errorCode": 7001, "message": "fs workload already exists"}}
-
-    with (
-        patch.object(session, "get", new_callable=AsyncMock) as mock_get,
-        patch.object(session, "put", new_callable=AsyncMock) as mock_put,
-    ):
-        mock_get.return_value = {"spec": dict(CURRENT_SPEC)}
-        mock_put.side_effect = APIError("fs workload already exists", error_code=7001, response_body=conflict_body)
-        with pytest.raises(DuplicateWorkloadError) as exc_info:
-            await collection.update_file_server(FS_WORKLOAD_OBJ, req)
-
-    assert_resource_error(exc_info, resource_type="file_server", resource_id="192.0.2.3")
-    assert exc_info.value.error_code == 7001
-
-
-async def test_update_file_server_raises_api_error_on_other_failure() -> None:
-    """update_file_server() re-raises APIError from PUT when the error code is not 7001."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-    req = FileServerUpdateRequest(host_ip="192.0.2.10", login_user="u", login_password="p")
-
-    failure_body = {"success": False, "error": {"errorCode": 9999, "message": "unexpected error"}}
-
-    with (
-        patch.object(session, "get", new_callable=AsyncMock) as mock_get,
-        patch.object(session, "put", new_callable=AsyncMock) as mock_put,
-    ):
-        mock_get.return_value = {"spec": dict(CURRENT_SPEC)}
-        mock_put.side_effect = APIError("unexpected error", error_code=9999, response_body=failure_body)
-        with pytest.raises(APIError) as exc_info:
-            await collection.update_file_server(FS_WORKLOAD_OBJ, req)
-
-    assert exc_info.value.error_code == 9999
-
-
-# ── delete() ───────────────────────────────────────────────────────────────
-
-
-async def test_delete_sends_correct_request() -> None:
-    """delete() sends DELETE with the correct path and workloadRefs body."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    success_resp = {
-        "succeeded": {"namespaceWorkloadListMap": {}},
-        "failed": {"entries": []},
-    }
-    with patch.object(session, "delete", new_callable=AsyncMock) as mock_delete:
-        mock_delete.return_value = success_resp
-        await collection.delete(FS_WORKLOAD_OBJ)
-
-    mock_delete.assert_called_once()
-    path = mock_delete.call_args[0][0]
-    assert path == "/api/v1/workload/device_workload/batch"
-    body = mock_delete.call_args[1]["json"]
-    assert body == {"workloadRefs": [{"uid": FS_WORKLOAD_OBJ.workload_id, "namespace": NAMESPACE}]}
-
-
-async def test_delete_works_for_non_fs_workload() -> None:
-    """delete() sends the correct request for any workload type, not just FS."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    success_resp = {"succeeded": {"namespaceWorkloadListMap": {}}, "failed": {"entries": []}}
-    with patch.object(session, "delete", new_callable=AsyncMock) as mock_delete:
-        mock_delete.return_value = success_resp
-        await collection.delete(SAMPLE_WL_OBJ)
-
-    mock_delete.assert_called_once()
-    body = mock_delete.call_args[1]["json"]
-    assert body == {"workloadRefs": [{"uid": SAMPLE_WL_OBJ.workload_id, "namespace": SAMPLE_WL_OBJ.namespace}]}
-
-
-async def test_delete_raises_on_failed_entries() -> None:
-    """delete() raises InvalidOperationError when the response contains failed entries."""
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    failed_resp = {
-        "succeeded": {"namespaceWorkloadListMap": {}},
-        "failed": {
-            "entries": [
-                {
-                    "error": {"errorCode": 7018, "message": "workload is initializing"},
-                    "workloadUid": FS_WORKLOAD_OBJ.workload_id,
-                    "namespace": NAMESPACE,
-                }
-            ]
-        },
-    }
-    with patch.object(session, "delete", new_callable=AsyncMock) as mock_delete:
-        mock_delete.return_value = failed_resp
-        with pytest.raises(InvalidOperationError) as exc_info:
-            await collection.delete(FS_WORKLOAD_OBJ)
-
-    assert_resource_error(exc_info, resource_type="Workload", resource_id=FS_WORKLOAD_OBJ.workload_id)
-    assert exc_info.value.error_code == 7018
-    assert "initializing" in exc_info.value.message

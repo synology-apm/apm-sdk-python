@@ -54,7 +54,3 @@ relies on (list vs. get field completeness, pagination, permission modes).
 9. Present a final report: mailbox name, export status, download URL (if ready) or failure
    reason (if failed) — note that each URL is time-limited, so tell the user to download
    promptly rather than treating the report as a permanent link list.
-
-## See also
-
-- [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) — list vs. get field completeness, pagination convention, permission modes

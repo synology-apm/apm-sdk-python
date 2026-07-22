@@ -561,4 +561,4 @@ def patch_make_client(
     apm: MagicMock,
 ) -> None:
     """Point a script module's ``make_client`` at a fake APM client."""
-    monkeypatch.setattr(module, "make_client", lambda: apm)
+    monkeypatch.setattr(module, "make_client", lambda **kwargs: apm)

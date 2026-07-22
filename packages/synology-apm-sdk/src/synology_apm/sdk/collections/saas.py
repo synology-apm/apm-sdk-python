@@ -7,6 +7,7 @@ from .._http import WebAPISession
 from ..enums import WorkloadCategory
 from ..exceptions import ResourceNotFoundError
 from ..models.saas import SaasTenant
+from ._shared import ListResult
 
 
 class SaasCollection:
@@ -47,7 +48,7 @@ class SaasCollection:
             protected_data_bytes=0,
         )
 
-    async def list(self, limit: int = 500, offset: int = 0) -> tuple[list[SaasTenant], int]:
+    async def list(self, limit: int = 500, offset: int = 0) -> ListResult[SaasTenant]:
         """List all connected SaaS tenants (M365 + GWS).
 
         Args:
@@ -68,15 +69,12 @@ class SaasCollection:
             "sortBy": "NAME_ASC",
         }
         raw = await self._session.post("/api/v1/application/cloudapp", json=body)
-        tenants: list[SaasTenant] = []
-
-        for entry in raw.get("m365", []):
-            tenants.append(_parse_m365_tenant(entry))
-        for entry in raw.get("gw", []):
-            tenants.append(_parse_gws_tenant(entry))
+        tenants: list[SaasTenant] = [_parse_m365_tenant(entry) for entry in raw.get("m365", [])]
+        tenants.extend(_parse_gws_tenant(entry) for entry in raw.get("gw", []))
 
         # cloudapp endpoint returns total as string — server-side bug
-        return tenants, int(raw.get("total", 0))
+        raw_total = raw.get("total")
+        return ListResult(tenants, int(raw_total) if raw_total is not None else None)
 
 
 def _parse_m365_tenant(entry: dict[str, Any]) -> SaasTenant:

@@ -39,6 +39,7 @@ from tests.unit.sdk.conftest import (
     BASE_URL,
     assert_resource_error,
     connected_session,
+    request_json,
 )
 
 # ── MachinePlanCollection.create() / update() / delete() ─────────────────────
@@ -55,7 +56,7 @@ async def test_machine_create_posts_body_and_returns_plan() -> None:
     _assert_sample_machine_plan(plan)
 
     post_key = ("POST", URL(PLAN_CREATE_URL))
-    body: dict[str, Any] = m.requests[post_key][0].kwargs["json"]
+    body = request_json(m, post_key)
     assert body["plan"]["name"] == "Daily Backup"
     assert body["plan"]["serviceType"] == "DEVICE"
     assert body["plan"]["retention"]["keepDays"] == 30
@@ -170,7 +171,7 @@ async def test_machine_create_event_flags_emitted_for_pc_tasks() -> None:
         await col.create(request)
         await session.disconnect()
 
-    post_body: dict[str, Any] = m.requests[("POST", URL(PLAN_CREATE_URL))][0].kwargs["json"]
+    post_body = request_json(m, ("POST", URL(PLAN_CREATE_URL)))
     task_list = post_body["plan"]["configDevice"]["task"]
     pc_win = next(t for t in task_list if t["workloadType"] == "PC" and t["osType"] == "WINDOWS")
     assert pc_win["schedule"]["logOff"] is True
@@ -209,7 +210,7 @@ async def test_machine_create_schedule_and_event_emits_correct_schedule_type() -
         await col.create(request)
         await session.disconnect()
 
-    post_body: dict[str, Any] = m.requests[("POST", URL(PLAN_CREATE_URL))][0].kwargs["json"]
+    post_body = request_json(m, ("POST", URL(PLAN_CREATE_URL)))
     task_list = post_body["plan"]["configDevice"]["task"]
     pc_win_task = next(t for t in task_list if t["workloadType"] == "PC" and t["osType"] == "WINDOWS")
     sched = pc_win_task["schedule"]
@@ -246,7 +247,7 @@ async def test_machine_update_schedule_and_event_emits_correct_schedule_type() -
         await col.update(PLAN_ID, request)
         await session.disconnect()
 
-    put_body: dict[str, Any] = m.requests[("PUT", URL(update_url))][0].kwargs["json"]
+    put_body = request_json(m, ("PUT", URL(update_url)))
     task_list = put_body["plan"]["configDevice"]["task"]
     pc_win_task = next(t for t in task_list if t["workloadType"] == "PC" and t["osType"] == "WINDOWS")
     sched = pc_win_task["schedule"]
@@ -268,7 +269,7 @@ async def test_machine_update_puts_body_and_returns_plan() -> None:
 
     _assert_sample_machine_plan(plan)
     put_key = ("PUT", URL(update_url))
-    body = m.requests[put_key][0].kwargs["json"]
+    body = request_json(m, put_key)
     assert body["plan"]["name"] == "Daily Backup"
     assert body["plan"]["serviceType"] == "DEVICE"
     assert body["plan"]["retention"]["keepDays"] == 30
@@ -337,7 +338,7 @@ async def test_m365_create_posts_body_and_returns_plan() -> None:
         await session.disconnect()
 
     post_key = ("POST", URL(PLAN_CREATE_URL))
-    body: dict[str, Any] = m.requests[post_key][0].kwargs["json"]
+    body = request_json(m, post_key)
     assert body["plan"]["serviceType"] == "M365"
     assert body["plan"]["name"] == "M365 Daily"
     assert body["plan"]["configM365"]["schedule"]["runHour"] == 9
@@ -369,7 +370,7 @@ async def test_m365_update_puts_body_and_returns_plan() -> None:
         await session.disconnect()
 
     put_key = ("PUT", URL(update_url))
-    body: dict[str, Any] = m.requests[put_key][0].kwargs["json"]
+    body = request_json(m, put_key)
     assert body["plan"]["name"] == "M365 Daily"
     assert body["plan"]["serviceType"] == "M365"
     assert body["plan"]["retention"]["keepDays"] == 30
@@ -431,7 +432,7 @@ async def test_machine_create_event_only_emits_event_scheduletype() -> None:
         await col.create(request)
         await session.disconnect()
 
-    post_body: dict[str, Any] = m.requests[("POST", URL(PLAN_CREATE_URL))][0].kwargs["json"]
+    post_body = request_json(m, ("POST", URL(PLAN_CREATE_URL)))
     task_list = post_body["plan"]["configDevice"]["task"]
     pc_win_task = next(t for t in task_list if t["workloadType"] == "PC" and t["osType"] == "WINDOWS")
     sched = pc_win_task["schedule"]
@@ -599,7 +600,7 @@ async def test_machine_create_builds_keep_days_retention_body() -> None:
         await col.create(request)
         await session.disconnect()
 
-    post_body: dict[str, Any] = m.requests[("POST", URL(PLAN_CREATE_URL))][0].kwargs["json"]
+    post_body = request_json(m, ("POST", URL(PLAN_CREATE_URL)))
     retention = post_body["plan"]["retention"]
     assert retention["keepAll"] is False
     assert retention["keepDays"] == 14
@@ -626,7 +627,7 @@ async def test_machine_create_builds_keep_advanced_retention_body() -> None:
         await col.create(request)
         await session.disconnect()
 
-    post_body: dict[str, Any] = m.requests[("POST", URL(PLAN_CREATE_URL))][0].kwargs["json"]
+    post_body = request_json(m, ("POST", URL(PLAN_CREATE_URL)))
     retention = post_body["plan"]["retention"]
     assert retention["keepAll"] is False
     assert retention["keepDays"] == 30
@@ -654,7 +655,7 @@ async def test_machine_create_builds_manual_schedule_body() -> None:
         await col.create(request)
         await session.disconnect()
 
-    post_body: dict[str, Any] = m.requests[("POST", URL(PLAN_CREATE_URL))][0].kwargs["json"]
+    post_body = request_json(m, ("POST", URL(PLAN_CREATE_URL)))
     main_sched = post_body["plan"]["configDevice"]["mainSchedule"]
     assert main_sched["scheduleType"] == "NONE"
     assert main_sched["repeatType"] == "DAILY"

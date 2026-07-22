@@ -5,7 +5,6 @@ import typer
 
 from synology_apm.cli._async import run_async
 from synology_apm.cli._display import (
-    BACKUP_SCOPE_LABELS,
     fmt_backup_activity_status,
     fmt_bytes,
     fmt_datetime,
@@ -14,6 +13,7 @@ from synology_apm.cli._display import (
     fmt_restore_activity_status,
     fmt_restore_type,
     fmt_verify_status,
+    print_activity_detail,
     print_list_footer,
     render_log_table,
 )
@@ -225,33 +225,9 @@ async def backup_get(
     if dispatch_output(act, output, activity_to_dict):
         return
 
-    status_label = fmt_backup_activity_status(act)
-
     console.print(f"[bold]Activity Detail — {act.workload_name}[/bold]")
     console.print("─" * 44)
-    console.print(f"Status:          {status_label}")
-    console.print(f"Workload:        {act.workload_name}")
-    console.print(f"Plan:            {act.plan_name or '-'}")
-    if act.backup_scope:
-        scope_label = BACKUP_SCOPE_LABELS.get(act.backup_scope, act.backup_scope.value)
-        console.print(f"Backup Scope:    {scope_label}")
-    console.print()
-    console.print(f"Start:           {fmt_datetime(act.started_at)}")
-    console.print(f"End:             {fmt_datetime(act.finished_at)}")
-    console.print(f"Duration:        {fmt_duration(act.duration_seconds)}")
-    console.print()
-    change_str  = fmt_bytes(act.data_change_bytes)  if act.data_change_bytes  is not None else "-"
-    deduped_str = fmt_bytes(act.data_deduped_bytes)
-    console.print(f"Data Change:     {change_str}")
-    console.print(f"Transferred:     {fmt_bytes(act.data_transferred_bytes)}")
-    console.print(f"Actual Capacity Used: {deduped_str}")
-    if act.processed_success_count is not None:
-        console.print(
-            f"Processed items: {act.processed_success_count} succeeded, "
-            f"{act.processed_warning_count} warning, "
-            f"{act.processed_error_count} error"
-        )
-    render_log_table(console, act.log_entries)
+    print_activity_detail(console, act, show_workload=True)
 
 
 @_backup_app.command("cancel")

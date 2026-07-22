@@ -170,7 +170,7 @@ async def _run_restore(ctx: SmokeContext, machine_workloads: list[MachineWorkloa
         for step, reason in (
             ("activity.restore.list[machine_workload_filter]", "No Machine Workloads found"),
             ("activity.restore.list[bogus_workload_filter]", "No Machine Workloads found"),
-            ("activity.restore.check[bogus_workload_raises]", "No Machine Workloads found"),
+            ("activity.restore.check[bogus_workload_empty]", "No Machine Workloads found"),
         ):
             ctx.skip(DOMAIN, step, reason)
     else:
@@ -181,21 +181,20 @@ async def _run_restore(ctx: SmokeContext, machine_workloads: list[MachineWorkloa
             lambda: apm.activities.restore.list(workload=w0, history=True, limit=10),
         )
 
-        bogus = dataclasses.replace(w0, workload_id="bogus-workload-id-00000000")
-        exc = await ctx.call_expect_error(
+        # Both fields invalidated to match the (workload_id, namespace) combination
+        # confirmed live to trigger the API's workload-not-found signal (errorCode 1002).
+        bogus = dataclasses.replace(w0, workload_id=_ZERO_UUID, namespace=_ZERO_UUID)
+        bogus_result = await ctx.call(
             DOMAIN, "activity.restore.list[bogus_workload_filter]",
             lambda: apm.activities.restore.list(workload=bogus, history=True, limit=10),
-            ResourceNotFoundError,
-            note="A bogus workload reference must raise ResourceNotFoundError for restore list.",
         )
-        if isinstance(exc, ResourceNotFoundError):
-            ctx.check(
-                DOMAIN, "activity.restore.check[bogus_workload_raises]",
-                exc.resource_type == "Workload" and exc.resource_id == bogus.workload_id,
-            )
+        if bogus_result is None:
+            ctx.check(DOMAIN, "activity.restore.check[bogus_workload_empty]", False)
         else:
+            bogus_activities, bogus_total = bogus_result
             ctx.check(
-                DOMAIN, "activity.restore.check[bogus_workload_raises]", False,
+                DOMAIN, "activity.restore.check[bogus_workload_empty]",
+                bogus_activities == [] and bogus_total == 0,
             )
 
     if not restore_activities:

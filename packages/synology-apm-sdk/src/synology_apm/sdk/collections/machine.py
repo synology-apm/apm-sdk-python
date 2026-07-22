@@ -27,6 +27,7 @@ from ..models.workload import (
 )
 from ._shared import (
     _MACHINE_WORKLOAD_TYPE_MAP,
+    ListResult,
     _build_location_info,
     _build_workload_plan_ref,
     _check_active_for_write,
@@ -37,6 +38,7 @@ from ._shared import (
     _paginate,
     _parse_ts_optional,
     _parse_verify_status,
+    _raise_first_batch_error,
     _tunnel_headers,
     _VersionMixin,
 )
@@ -79,6 +81,12 @@ def _raise_fs_duplicate(resource_id: str, error_code: int, response_body: object
         error_code=error_code,
         response_body=response_body,
     )
+
+
+def _batch_errors_from_failed(resp: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Flatten the device-workload batch response's {"failed": {"entries": [{"error": {...}}]}} shape."""
+    entries = ((resp or {}).get("failed") or {}).get("entries", [])
+    return [e.get("error", {}) for e in entries]
 
 
 
@@ -138,7 +146,7 @@ class MachineWorkloadCollection(_VersionMixin):
         verify_status: list[VerifyStatus] | None = None,
         limit: int = 500,
         offset: int = 0,
-    ) -> tuple[list[MachineWorkload], int]:
+    ) -> ListResult[MachineWorkload]:
         """List device Workloads with optional filtering.
 
         Args:
@@ -176,15 +184,13 @@ class MachineWorkloadCollection(_VersionMixin):
             ("filter.offset", offset),
             ("filter.isFilterBasedOnNonWorkloadType", "true"),
         ]
-        for wt in workload_types or ():
-            param_pairs.append(("filter.workloadType", wt.name))
+        param_pairs.extend(("filter.workloadType", wt.name) for wt in workload_types or ())
         if name_contains:
             param_pairs.append(("filter.keyword", name_contains))
         param_pairs.append(("filter.protectStatus", _machine_protect_status(is_retired)))
         if namespace:
             param_pairs.append(("filter.namespace", namespace))
-        for p in plan or ():
-            param_pairs.append(("filter.planId", p.plan_id))
+        param_pairs.extend(("filter.planId", p.plan_id) for p in plan or ())
         if hypervisor_id:
             param_pairs.append(("filter.filterVm.inventoryId", hypervisor_id))
         for s in status or ():
@@ -192,8 +198,7 @@ class MachineWorkloadCollection(_VersionMixin):
                 param_pairs.append(("filter.jobStatus", _STATUS_TO_JOB_STATUS[s]))
             else:
                 param_pairs.append(("filter.latestVersionResult", _STATUS_TO_LVR[s]))
-        for vs in verify_status or ():
-            param_pairs.append(("filter.verifyStatus", _VERIFY_STATUS_TO_API[vs]))
+        param_pairs.extend(("filter.verifyStatus", _VERIFY_STATUS_TO_API[vs]) for vs in verify_status or ())
 
         raw = await self._session.get(
             "/api/v2/workload/device_workload", params=param_pairs
@@ -201,7 +206,7 @@ class MachineWorkloadCollection(_VersionMixin):
         workloads: list[MachineWorkload] = [
             _parse_workload(w) for w in raw.get("workloads", [])
         ]
-        return workloads, raw.get("total", 0)
+        return ListResult(workloads, raw.get("total"))
 
     async def get(self, workload_id: str, namespace: str) -> MachineWorkload:
         """Fetch a device Workload by ID (direct lookup, no list scan).
@@ -247,7 +252,7 @@ class MachineWorkloadCollection(_VersionMixin):
                 ("filter.protectStatus", _machine_protect_status(is_retired)),
             ]
             raw = await self._session.get("/api/v2/workload/device_workload", params=param_pairs)
-            return raw.get("workloads", []), None
+            return raw.get("workloads", []), raw.get("total")
 
         async for raw_wl in _paginate(fetch):
             wl = _parse_workload(raw_wl)
@@ -465,16 +470,12 @@ class MachineWorkloadCollection(_VersionMixin):
             "/api/v1/workload/device_workload/batch",
             json={"workloadRefs": [{"uid": workload.workload_id, "namespace": workload.namespace}]},
         )
-        failed_entries = ((resp or {}).get("failed") or {}).get("entries", [])
-        if failed_entries:
-            err = failed_entries[0].get("error", {})
-            raise InvalidOperationError(
-                err.get("message", "Workload delete failed"),
-                resource_type="Workload",
-                resource_id=workload.workload_id,
-                error_code=err.get("errorCode"),
-                response_body=resp,
-            )
+        _raise_first_batch_error(
+            _batch_errors_from_failed(resp),
+            workload,
+            default_message="Workload delete failed",
+            response_body=resp,
+        )
 
     async def change_plan(self, workload: MachineWorkload, plan: ProtectionPlan | RetirementPlan) -> None:
         """Change the Protection Plan or Retirement Plan assigned to a Workload.
@@ -501,16 +502,12 @@ class MachineWorkloadCollection(_VersionMixin):
                 "planId": plan_id,
             },
         )
-        failed_entries = ((resp or {}).get("failed") or {}).get("entries", [])
-        if failed_entries:
-            err = failed_entries[0].get("error", {})
-            raise InvalidOperationError(
-                err.get("message", "Workload plan change failed"),
-                resource_type="Workload",
-                resource_id=workload.workload_id,
-                error_code=err.get("errorCode"),
-                response_body=resp,
-            )
+        _raise_first_batch_error(
+            _batch_errors_from_failed(resp),
+            workload,
+            default_message="Workload plan change failed",
+            response_body=resp,
+        )
 
 
 # ── FS helpers ────────────────────────────────────────────────────────────
