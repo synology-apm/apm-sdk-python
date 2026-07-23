@@ -108,13 +108,13 @@ def test_fmt_retention_keep_all() -> None:
     r = ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_ALL)
     assert fmt_retention(r) == "Keep all"
 
-def test_fmt_retention_keep_days_singular() -> None:
-    r = ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=1)
-    assert fmt_retention(r) == "1 day"
-
-def test_fmt_retention_keep_days_plural() -> None:
-    r = ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=30)
-    assert fmt_retention(r) == "30 days"
+@pytest.mark.parametrize("days,expected", [
+    (1, "1 day"),
+    (30, "30 days"),
+], ids=["singular", "plural"])
+def test_fmt_retention_keep_days(days: int, expected: str) -> None:
+    r = ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=days)
+    assert fmt_retention(r) == expected
 
 def test_fmt_retention_keep_versions() -> None:
     r = ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_VERSIONS, versions=10)
@@ -259,20 +259,15 @@ def test_fmt_restore_activity_status(
 
 # ── parse_time_filter ───────────────────────────────────────────────────────────────
 
-def test_parse_time_filter_hours() -> None:
-    result = parse_time_filter("2h")
+@pytest.mark.parametrize("time_filter,low_seconds,high_seconds", [
+    ("2h", 1.9 * 3600, 2.1 * 3600),
+    ("7d", 6.9 * 86400, 7.1 * 86400),
+    ("30m", 29 * 60, 31 * 60),
+], ids=["hours", "days", "minutes"])
+def test_parse_time_filter_relative_units(time_filter: str, low_seconds: float, high_seconds: float) -> None:
+    result = parse_time_filter(time_filter)
     diff = datetime.now(tz=UTC) - result
-    assert 1.9 * 3600 < diff.total_seconds() < 2.1 * 3600
-
-def test_parse_time_filter_days() -> None:
-    result = parse_time_filter("7d")
-    diff = datetime.now(tz=UTC) - result
-    assert 6.9 * 86400 < diff.total_seconds() < 7.1 * 86400
-
-def test_parse_time_filter_minutes() -> None:
-    result = parse_time_filter("30m")
-    diff = datetime.now(tz=UTC) - result
-    assert 29 * 60 < diff.total_seconds() < 31 * 60
+    assert low_seconds < diff.total_seconds() < high_seconds
 
 def test_parse_time_filter_iso8601() -> None:
     result = parse_time_filter("2026-04-21T00:00:00+00:00")
@@ -421,38 +416,24 @@ def test_print_list_footer_unknown_total_shows_count_only() -> None:
 _TODAY = _dt.date.today().strftime("%Y%m%d")
 
 
-def test_auto_download_filename_primary_mailbox() -> None:
+@pytest.mark.parametrize("name,archive_mailbox,expected", [
+    ("jon snow", False, f"jon_snow_{_TODAY}_mailbox.pst"),
+    ("alice@contoso.com", True, f"alice_contoso.com_{_TODAY}_archive_mailbox.pst"),
+    ("Alice (Admin)", False, f"Alice__Admin_{_TODAY}_mailbox.pst"),
+    ("", False, f"export_{_TODAY}_mailbox.pst"),
+], ids=["primary_mailbox", "archive_mailbox", "special_chars_replaced", "empty_name_falls_back"])
+def test_auto_download_filename(name: str, archive_mailbox: bool, expected: str) -> None:
     from synology_apm.cli.commands.m365_export import _auto_download_filename
-    assert _auto_download_filename("jon snow", archive_mailbox=False) == f"jon_snow_{_TODAY}_mailbox.pst"
+    assert _auto_download_filename(name, archive_mailbox=archive_mailbox) == expected
 
 
-def test_auto_download_filename_archive_mailbox() -> None:
-    from synology_apm.cli.commands.m365_export import _auto_download_filename
-    assert _auto_download_filename("alice@contoso.com", archive_mailbox=True) == (
-        f"alice_contoso.com_{_TODAY}_archive_mailbox.pst"
-    )
-
-
-def test_auto_download_filename_special_chars_replaced() -> None:
-    from synology_apm.cli.commands.m365_export import _auto_download_filename
-    assert _auto_download_filename("Alice (Admin)", archive_mailbox=False) == (
-        f"Alice__Admin_{_TODAY}_mailbox.pst"
-    )
-
-
-def test_auto_download_filename_empty_name_falls_back() -> None:
-    from synology_apm.cli.commands.m365_export import _auto_download_filename
-    assert _auto_download_filename("", archive_mailbox=False) == f"export_{_TODAY}_mailbox.pst"
-
-
-def test_auto_download_filename_by_id_uses_execution_id() -> None:
+@pytest.mark.parametrize("name,execution_id,expected", [
+    ("jon snow", "192", "jon_snow_192.pst"),
+    ("", "99", "export_99.pst"),
+], ids=["uses_execution_id", "empty_name_falls_back"])
+def test_auto_download_filename_by_id(name: str, execution_id: str, expected: str) -> None:
     from synology_apm.cli.commands.m365_export import _auto_download_filename_by_id
-    assert _auto_download_filename_by_id("jon snow", "192") == "jon_snow_192.pst"
-
-
-def test_auto_download_filename_by_id_empty_name_falls_back() -> None:
-    from synology_apm.cli.commands.m365_export import _auto_download_filename_by_id
-    assert _auto_download_filename_by_id("", "99") == "export_99.pst"
+    assert _auto_download_filename_by_id(name, execution_id) == expected
 
 
 # ── fmt_bytes — PB range ──────────────────────────────────────────────────────
@@ -606,14 +587,13 @@ def _make_location(name: str, vault: str | None) -> VersionLocation:
     return VersionLocation(namespace="ns", location_info=info, location_id="v1")
 
 
-def test_fmt_location_name_without_vault() -> None:
-    loc = _make_location("apm-server-01", vault=None)
-    assert fmt_location_name(loc) == "apm-server-01"
-
-
-def test_fmt_location_name_with_vault() -> None:
-    loc = _make_location("apm-server-01", vault="MyVault")
-    assert fmt_location_name(loc) == "apm-server-01 (MyVault)"
+@pytest.mark.parametrize("vault,expected", [
+    (None, "apm-server-01"),
+    ("MyVault", "apm-server-01 (MyVault)"),
+], ids=["without_vault", "with_vault"])
+def test_fmt_location_name(vault: str | None, expected: str) -> None:
+    loc = _make_location("apm-server-01", vault=vault)
+    assert fmt_location_name(loc) == expected
 
 
 # ── fmt_backup_copy ───────────────────────────────────────────────────────────
@@ -623,16 +603,14 @@ class _FakeWorkloadWithCopy:
         self.backup_copy_destination = loc
 
 
-def test_fmt_backup_copy_with_vault() -> None:
-    loc = LocationInfo(is_remote_storage=True, identifier="ns", name="S3-Vault", endpoint="", vault="CorpVault")
+@pytest.mark.parametrize("is_remote_storage,name,vault,expected", [
+    (True, "S3-Vault", "CorpVault", "S3-Vault (CorpVault)"),
+    (False, "APM-Server-02", None, "APM-Server-02"),
+], ids=["with_vault", "without_vault"])
+def test_fmt_backup_copy(is_remote_storage: bool, name: str, vault: str | None, expected: str) -> None:
+    loc = LocationInfo(is_remote_storage=is_remote_storage, identifier="ns", name=name, endpoint="", vault=vault)
     wl = _FakeWorkloadWithCopy(loc)
-    assert fmt_backup_copy(wl) == "S3-Vault (CorpVault)"  # type: ignore[arg-type]
-
-
-def test_fmt_backup_copy_without_vault() -> None:
-    loc = LocationInfo(is_remote_storage=False, identifier="ns", name="APM-Server-02", endpoint="", vault=None)
-    wl = _FakeWorkloadWithCopy(loc)
-    assert fmt_backup_copy(wl) == "APM-Server-02"  # type: ignore[arg-type]
+    assert fmt_backup_copy(wl) == expected  # type: ignore[arg-type]
 
 
 def test_fmt_backup_copy_none_returns_dash() -> None:

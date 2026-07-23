@@ -245,26 +245,16 @@ class TestCoerceJsonEncodedList:
         value = ["mon", "wed"]
         assert coerce_json_encoded_list(value) is value
 
-    def test_malformed_json_string_passes_through_unchanged(self):
+    @pytest.mark.parametrize(
+        "raw",
+        ["[1,2", '{"a":1}', '"just a string"', "42"],
+        ids=["malformed_json", "json_object", "json_quoted_string", "json_number"],
+    )
+    def test_non_list_value_passes_through_unchanged(self, raw):
         """So real pydantic validation still reports the original error downstream."""
         from synology_apm.mcp._helpers import coerce_json_encoded_list
 
-        assert coerce_json_encoded_list("[1,2") == "[1,2"
-
-    def test_json_object_string_passes_through_unchanged(self):
-        from synology_apm.mcp._helpers import coerce_json_encoded_list
-
-        assert coerce_json_encoded_list('{"a":1}') == '{"a":1}'
-
-    def test_json_quoted_string_passes_through_unchanged(self):
-        from synology_apm.mcp._helpers import coerce_json_encoded_list
-
-        assert coerce_json_encoded_list('"just a string"') == '"just a string"'
-
-    def test_json_number_string_passes_through_unchanged(self):
-        from synology_apm.mcp._helpers import coerce_json_encoded_list
-
-        assert coerce_json_encoded_list("42") == "42"
+        assert coerce_json_encoded_list(raw) == raw
 
 
 class TestResolveMachineVersion:

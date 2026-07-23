@@ -67,20 +67,20 @@ _API_TYPE_TO_TYPE: dict[str, M365WorkloadType] = {v: k for k, v in _TYPE_TO_API_
 
 def _parse_m365_workload(raw: dict[str, Any]) -> M365Workload | None:
     """Convert a single object from POST /api/v1/workload/m365_workload to the SDK model."""
-    api_type: str = raw.get("workloadType", "")
+    api_type: str = raw.get("workloadType") or ""
     workload_type = _API_TYPE_TO_TYPE.get(api_type)
     if workload_type is None:
         return None
 
-    entity_meta: dict[str, Any] = raw.get("entityMeta", {})
-    spec: dict[str, Any] = entity_meta.get("spec", {})
+    entity_meta: dict[str, Any] = raw.get("entityMeta") or {}
+    spec: dict[str, Any] = entity_meta.get("spec") or {}
 
-    workload_id: str = raw.get("uid", "")
-    namespace: str = raw.get("namespace", "")
-    tenant_id: str = spec.get("tenantId", "")
-    plan_id: str = raw.get("planId", "")
-    plan_name: str = raw.get("planName", "")
-    plan_type: str = raw.get("planType", "")
+    workload_id: str = raw.get("uid") or ""
+    namespace: str = raw.get("namespace") or ""
+    tenant_id: str = spec.get("tenantId") or ""
+    plan_id: str = raw.get("planId") or ""
+    plan_name: str = raw.get("planName") or ""
+    plan_type: str = raw.get("planType") or ""
     is_retired: bool = plan_type == "ARCHIVE"
     plan = _build_workload_plan_ref(
         plan_id, plan_name, is_archive=is_retired, category=WorkloadCategory.M365
@@ -88,13 +88,10 @@ def _parse_m365_workload(raw: dict[str, Any]) -> M365Workload | None:
 
     last_backup_at = _parse_ts_optional(raw.get("lastBackupTime"))
 
-    usage_raw = raw.get("backupUsage", "0")
-    protected_data_bytes = int(usage_raw) if usage_raw else 0
+    protected_data_bytes = int(raw.get("backupUsage") or 0)
+    backup_copy_data_bytes = int(raw.get("copyUsage") or 0)
 
-    copy_usage_raw = raw.get("copyUsage", "0")
-    backup_copy_data_bytes = int(copy_usage_raw) if copy_usage_raw else 0
-
-    _backup_status = raw.get("backupStatus", "")
+    _backup_status = raw.get("backupStatus") or ""
     backup_progress: int | None = None
     items_backed_up: int | None
     workload_status: WorkloadStatus
@@ -118,34 +115,34 @@ def _parse_m365_workload(raw: dict[str, Any]) -> M365Workload | None:
     info: M365UserInfo | M365SiteInfo | M365TeamInfo | M365GroupInfo
     if workload_type in (M365WorkloadType.EXCHANGE, M365WorkloadType.ONEDRIVE, M365WorkloadType.CHAT):
         user_info: dict[str, Any] = spec.get("userInfo") or {}
-        info = M365UserInfo(user_principal_name=user_info.get("email", ""))
-        name = user_info.get("userName", "") or user_info.get("email", "")
+        info = M365UserInfo(user_principal_name=user_info.get("email") or "")
+        name = user_info.get("userName") or user_info.get("email") or ""
     elif workload_type == M365WorkloadType.SHAREPOINT:
         site_info: dict[str, Any] = spec.get("siteInfo") or {}
         info = M365SiteInfo(
-            site_url=site_info.get("url", ""),
-            site_name=site_info.get("siteName", ""),
+            site_url=site_info.get("url") or "",
+            site_name=site_info.get("siteName") or "",
         )
-        name = site_info.get("siteName", "")
+        name = site_info.get("siteName") or ""
     elif workload_type == M365WorkloadType.TEAMS:
         team_info: dict[str, Any] = spec.get("teamInfo") or {}
         info = M365TeamInfo(
-            team_id=team_info.get("id", ""),
-            team_name=team_info.get("name", ""),
-            web_url=team_info.get("webUrl", ""),
+            team_id=team_info.get("id") or "",
+            team_name=team_info.get("name") or "",
+            web_url=team_info.get("webUrl") or "",
         )
-        name = team_info.get("name", "")
+        name = team_info.get("name") or ""
     else:  # GROUP_EXCHANGE
         group_info: dict[str, Any] = spec.get("groupInfo") or {}
         info = M365GroupInfo(
-            group_id=group_info.get("id", ""),
-            display_name=group_info.get("displayName", ""),
-            mail=group_info.get("mail", ""),
+            group_id=group_info.get("id") or "",
+            display_name=group_info.get("displayName") or "",
+            mail=group_info.get("mail") or "",
         )
-        name = group_info.get("displayName", "")
+        name = group_info.get("displayName") or ""
 
-    server_info: dict[str, Any] = raw.get("backupServerInfo", {}) or {}
-    copy_info: dict[str, Any] = raw.get("backupCopyServerInfo", {}) or {}
+    server_info: dict[str, Any] = raw.get("backupServerInfo") or {}
+    copy_info: dict[str, Any] = raw.get("backupCopyServerInfo") or {}
     backup_server = _build_location_info(server_info)
     backup_copy_destination = _build_location_info(copy_info)
 
@@ -264,7 +261,7 @@ class M365WorkloadCollection(_VersionMixin):
         )
 
         workloads: list[M365Workload] = []
-        for w in raw.get("m365Workloads", []):
+        for w in raw.get("m365Workloads") or []:
             parsed = _parse_m365_workload(w)
             if parsed is not None:
                 workloads.append(parsed)
@@ -302,7 +299,7 @@ class M365WorkloadCollection(_VersionMixin):
                 "/api/v1/workload/m365_workload",
                 json={"filter": filter_body},
             )
-            for w in raw.get("m365Workloads", []):
+            for w in raw.get("m365Workloads") or []:
                 parsed = _parse_m365_workload(w)
                 if parsed is not None:
                     return parsed
@@ -344,7 +341,7 @@ class M365WorkloadCollection(_VersionMixin):
                 "/api/v1/workload/m365_workload",
                 json={"filter": filter_body},
             )
-            return raw.get("m365Workloads", []), raw.get("total")
+            return raw.get("m365Workloads") or [], raw.get("total")
 
         async for w in _paginate(fetch):
             parsed = _parse_m365_workload(w)

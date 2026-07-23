@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock
 
+import pytest
+
 from synology_apm.sdk.enums import BackupServerRole, BackupServerType, ServerStatus, WorkloadStatType
 from synology_apm.sdk.models.backup_server import BackupServer
 from synology_apm.sdk.models.system import (
@@ -116,12 +118,24 @@ def test_system_info_shows_sections_and_storage() -> None:
     assert "60.0%" in result.output
 
 
-def test_system_info_shows_url_with_non_standard_port() -> None:
-    """When port is non-443, the URL should include the port number."""
+@pytest.mark.parametrize("site_uuid,external_address,port,expected_substrings", [
+    (
+        "uuid-port", "apm.corp.com", "10443",
+        ["https://apm.corp.com:10443", "https://apm.corp.com:10443/portal"],
+    ),
+    (
+        "uuid-no-addr", "", "",
+        ["Management Center:  -", "Recovery Portal:    -"],
+    ),
+], ids=["non_standard_port", "empty_address"])
+def test_system_info_url_rendering(
+    site_uuid: str, external_address: str, port: str, expected_substrings: list[str]
+) -> None:
+    """infra info should render the Management Center/Recovery Portal URL from external_address and port."""
     site = SiteInfo(
-        site_uuid="uuid-port",
-        external_address="apm.corp.com",
-        port="10443",
+        site_uuid=site_uuid,
+        external_address=external_address,
+        port=port,
         primary_management_server=SAMPLE_MGMT,
         secondary_management_server=None,
         site_storage=SAMPLE_STORAGE,
@@ -130,8 +144,8 @@ def test_system_info_shows_url_with_non_standard_port() -> None:
     result = invoke_cli(_make_mock_apm(site=site), ["infra", "info"])
 
     assert result.exit_code == 0, result.output
-    assert "https://apm.corp.com:10443" in result.output
-    assert "https://apm.corp.com:10443/portal" in result.output
+    for expected in expected_substrings:
+        assert expected in result.output
 
 
 def test_system_info_shows_secondary_management_server() -> None:
@@ -238,24 +252,6 @@ def test_system_info_external_address_no_port() -> None:
     assert result.exit_code == 0, result.output
     assert "https://apm.corp.com" in result.output
     assert "https://apm.corp.com:" not in result.output
-
-
-def test_system_info_empty_address_shows_dash() -> None:
-    """When external_address is empty, Management Center and Recovery Portal should show '-'."""
-    site = SiteInfo(
-        site_uuid="uuid-no-addr",
-        external_address="",
-        port="",
-        primary_management_server=SAMPLE_MGMT,
-        secondary_management_server=None,
-        site_storage=SAMPLE_STORAGE,
-        workload_usage=SAMPLE_WORKLOAD_USAGE,
-    )
-    result = invoke_cli(_make_mock_apm(site=site), ["infra", "info"])
-
-    assert result.exit_code == 0, result.output
-    assert "Management Center:  -" in result.output
-    assert "Recovery Portal:    -" in result.output
 
 
 def test_system_info_shows_workload_usage_summary() -> None:

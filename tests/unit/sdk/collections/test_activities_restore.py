@@ -9,6 +9,11 @@ import pytest
 from aiointercept import aiointercept
 
 from synology_apm.sdk._http import WebAPISession
+from synology_apm.sdk.collections._activity_parsers import (
+    _parse_destination_inventory,
+    _parse_restore_activity,
+    _parse_restore_from_info,
+)
 from synology_apm.sdk.collections.activities import RestoreActivityCollection
 from synology_apm.sdk.enums import (
     ActivityWorkloadType,
@@ -32,6 +37,7 @@ from tests.unit.sdk.conftest import (
     connected_session,
     make_restore_activity_raw,
     make_session,
+    null_out,
 )
 
 RESTORE_BASE_URL = f"{BASE_URL}/api/v2/activity/restore/activities"
@@ -210,25 +216,17 @@ async def test_destination_inventory_none_when_machine_info_absent() -> None:
     assert act.destination_inventory is None
 
 
-async def test_destination_inventory_none_on_invalid_json() -> None:
-    act = await _list_single_restore_activity(spec={"machineInfo": {"additionalInfo": "{not valid json"}})
-    assert act.destination_inventory is None
-
-
-async def test_destination_inventory_none_when_additional_info_empty() -> None:
-    act = await _list_single_restore_activity(spec={"machineInfo": {"additionalInfo": ""}})
-    assert act.destination_inventory is None
-
-
-async def test_destination_inventory_none_when_json_not_object() -> None:
-    act = await _list_single_restore_activity(spec={"machineInfo": {"additionalInfo": "[]"}})
-    assert act.destination_inventory is None
-
-
-async def test_destination_inventory_none_when_inventory_name_missing() -> None:
-    act = await _list_single_restore_activity(
-        spec={"machineInfo": {"additionalInfo": '{"inventory_addr": "192.0.2.40"}'}}
-    )
+@pytest.mark.parametrize("additional_info", [
+    "{not valid json",
+    "",
+    "[]",
+    '{"inventory_addr": "192.0.2.40"}',
+], ids=["invalid_json", "empty_string", "json_not_object", "inventory_name_missing"])
+async def test_destination_inventory_none_when_additional_info_unusable(additional_info: str) -> None:
+    """destination_inventory should be None whenever machineInfo.additionalInfo cannot be
+    parsed into a usable inventory name (invalid JSON, empty string, non-object JSON, or a
+    parsed object missing the inventory name field)."""
+    act = await _list_single_restore_activity(spec={"machineInfo": {"additionalInfo": additional_info}})
     assert act.destination_inventory is None
 
 
@@ -827,3 +825,90 @@ async def test_restore_parser_uses_duration_time_when_present() -> None:
     with patch.object(session, "get", AsyncMock(return_value={"activities": [_RESTORE_WITH_DURATION_TIME], "total": 1})):
         acts, _ = await collection.list()
     assert acts[0].duration_seconds == 300
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Null vs. absent JSON field handling (see SDK README "Null vs. Absent JSON
+# Field Handling") -- parser functions called directly with every touched
+# field set to explicit JSON null simultaneously.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_parse_restore_activity_survives_null_fields() -> None:
+    """_parse_restore_activity must not crash when restoreStatus/executionId/restoreType are
+    JSON null, and when the whole spec/status objects are JSON null."""
+    raw = null_out(
+        make_restore_activity_raw()["activity"],
+        "status.restoreStatus", "spec.executionId", "spec.restoreType",
+    )
+    act = _parse_restore_activity(raw)
+    assert act.execution_id == ""
+    assert act.status == RestoreActivityStatus.RESTORING  # "" not in map -> default
+    assert act.restore_type is None
+
+    raw2 = null_out(make_restore_activity_raw()["activity"], "spec", "status")
+    act2 = _parse_restore_activity(raw2)
+    assert act2.execution_id == ""
+    assert act2.status == RestoreActivityStatus.RESTORING
+    assert act2.restore_type is None
+    assert act2.restore_from_info is None
+    assert act2.destination_inventory is None
+
+
+def test_parse_restore_from_info_survives_null_fields() -> None:
+    """_parse_restore_from_info must not crash when destinationType/hostname/address/
+    containerName are all JSON null."""
+    raw = {
+        "destinationType": None,
+        "hostname": None,
+        "address": None,
+        "containerName": None,
+    }
+    info = _parse_restore_from_info(raw)
+    assert info is not None
+    assert info.is_remote_storage is False  # (None or "APPLIANCE") != "APPLIANCE" -> False
+    assert info.name == ""
+    assert info.endpoint == ""
+    assert info.vault is None
+
+
+def test_parse_destination_inventory_survives_null_fields() -> None:
+    """_parse_destination_inventory must not crash when inventory_addr/inventory_type inside
+    the JSON-encoded additionalInfo string are JSON null."""
+    machine_info = {
+        "additionalInfo": (
+            '{"inventory_name": "esxi1.example.com", '
+            '"inventory_addr": null, "inventory_type": null}'
+        ),
+    }
+    hv = _parse_destination_inventory(machine_info)
+    assert hv is not None
+    assert hv.hostname == "esxi1.example.com"
+    assert hv.address == ""
+    assert hv.host_type == HypervisorType.UNKNOWN
+
+
+async def test_restore_get_survives_null_detail_logs() -> None:
+    """The log API's detailLogs key present as JSON null (not absent or an empty list) must
+    not crash get(); log_entries falls back to an empty tuple."""
+    async with connected_session() as (session, m):
+        m.get(RESTORE_RECENT_URL, payload={"activities": [SAMPLE_RESTORE_ACTIVITY_RAW], "total": 1})
+        m.get(re.compile(r".*/api/v1/log/detail-log.*"), payload={"detailLogs": None})
+        act = await RestoreActivityCollection(session).get("rst-uid-001")
+        await session.disconnect()
+
+    assert act.log_entries == ()
+
+
+async def test_restore_get_survives_null_activities_page() -> None:
+    """A JSON-null "activities" key on a _find_by_id() page (distinct from list()'s own
+    top-level null-activities handling) must not crash get(); the page is treated as empty
+    and the search proceeds to the next list method."""
+    async with connected_session() as (session, m):
+        m.get(re.compile(r".*listMethod=RECENT.*"), payload={"activities": None, "total": 0})
+        m.get(re.compile(r".*listMethod=HISTORY.*"), payload={"activities": [SAMPLE_RESTORE_ACTIVITY_RAW], "total": 1})
+        m.get(re.compile(r".*/api/v1/log/detail-log.*"), payload={"detailLogs": []})
+        act = await RestoreActivityCollection(session).get("rst-uid-001")
+        await session.disconnect()
+
+    assert act.activity_id == "rst-uid-001"

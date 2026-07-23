@@ -8,6 +8,15 @@ from typing import Any
 import pytest
 from yarl import URL
 
+from synology_apm.sdk.collections._protection_plan_parsers import (
+    _parse_backup_window,
+    _parse_db_config,
+    _parse_pc_config,
+    _parse_ps_config,
+    _parse_task_config,
+    _parse_task_schedule,
+    _parse_vm_config,
+)
 from synology_apm.sdk.collections.protection_plans import MachinePlanCollection
 from synology_apm.sdk.enums import (
     BackupServerType,
@@ -32,9 +41,12 @@ from synology_apm.sdk.models.protection_plan import (
     EventTriggerConfig,
     MachineBackupWindow,
     MachineDbConfig,
+    MachinePcConfig,
     MachinePlanCreateRequest,
+    MachinePsConfig,
     MachineTaskConfig,
     MachineTaskSchedule,
+    MachineVmConfig,
     ProtectionPlan,
     ProtectionRetentionPolicy,
     ProtectionSchedule,
@@ -635,3 +647,132 @@ def test_build_backup_window_rejects_out_of_range_hour() -> None:
 
     with pytest.raises(ValueError, match="out of range 0-23"):
         _build_backup_window_dict(window)
+
+
+# ── null vs. absent JSON field handling ─────────────────────────────────────
+#
+# One test per parser function, each covering every field that function's
+# null-safety touches at once — see the SDK README's "Null vs. Absent JSON Field
+# Handling". Parser functions are pure and called directly, no HTTP mocking needed.
+
+
+def test_parse_vm_config_survives_null_fields() -> None:
+    """_parse_vm_config() with enableVerification/verificationPolicy/enableDatastoreAware/
+    datastoreReservedPercentage all JSON null (keys present, values null — distinct
+    from absent keys) must not crash; falls back to the documented defaults."""
+    raw = {
+        "enableVerification": None, "verificationPolicy": None,
+        "enableDatastoreAware": None, "datastoreReservedPercentage": None,
+    }
+    config = _parse_vm_config(raw)
+    assert config == MachineVmConfig(
+        enable_verification=False,
+        verification_video_duration_seconds=120,
+        enable_datastore_usage_detection=False,
+        datastore_min_free_space_percent=10,
+    )
+
+
+def test_parse_pc_config_survives_null_fields() -> None:
+    """_parse_pc_config() with shutdownAfterComplete/wakeUp/windowsWorkingState all
+    JSON null must not crash; falls back to the documented defaults (all False)."""
+    raw = {"shutdownAfterComplete": None, "wakeUp": None, "windowsWorkingState": None}
+    config = _parse_pc_config(raw)
+    assert config == MachinePcConfig(
+        shutdown_after_backup=False, wake_for_backup=False, prevent_sleep_during_backup=False,
+    )
+
+
+def test_parse_ps_config_survives_null_fields() -> None:
+    """_parse_ps_config() with enableVerification/verificationPolicy/shutdownAfterComplete/
+    wakeUp/windowsWorkingState all JSON null must not crash; falls back to the
+    documented defaults."""
+    raw = {
+        "enableVerification": None, "verificationPolicy": None,
+        "shutdownAfterComplete": None, "wakeUp": None, "windowsWorkingState": None,
+    }
+    config = _parse_ps_config(raw)
+    assert config == MachinePsConfig(
+        enable_verification=False,
+        verification_video_duration_seconds=120,
+        shutdown_after_backup=False,
+        wake_for_backup=False,
+        prevent_sleep_during_backup=False,
+    )
+
+
+def test_parse_db_config_survives_null_fields() -> None:
+    """_parse_db_config() with logsProcessing/mssqlServer/oracleServer all JSON null
+    (keys present, values null — distinct from an absent key) must not crash;
+    db_config falls back to the documented default log settings."""
+    raw = {"disableDbBackup": False, "logsProcessing": None, "mssqlServer": None, "oracleServer": None}
+    config = _parse_db_config(raw)
+    assert config == MachineDbConfig(
+        action_on_error=DbActionOnError.CONTINUE,
+        mssql_log_setting=MssqlLogSetting.DO_NOT_TRUNCATE,
+        oracle_log_setting=OracleLogSetting.DO_NOT_DELETE,
+    )
+
+
+def test_parse_backup_window_survives_null_fields() -> None:
+    """_parse_backup_window() with enabled/data both JSON null must not crash (a null
+    data string would otherwise blow up the len()/indexing loop); falls back to
+    disabled with no allowed hours."""
+    raw = {"enabled": None, "data": None}
+    window = _parse_backup_window(raw)
+    assert window == MachineBackupWindow(enabled=False, allowed_hours={})
+
+
+def test_parse_task_schedule_survives_null_fields() -> None:
+    """_parse_task_schedule() with scheduleType/logOff/screenLock/startup/periodBase/
+    periodLength all JSON null must not crash. A null scheduleType still falls
+    through to the time-based branch; when at least one event flag is true despite
+    the others being null, min_interval falls back to the documented 1-hour default."""
+    time_based_raw = {
+        "scheduleType": None, "logOff": None, "screenLock": None, "startup": None,
+        "periodBase": None, "periodLength": None,
+        "repeatType": "DAILY", "repeatHour": 0, "runHour": 9, "runMin": 0,
+    }
+    time_based = _parse_task_schedule(time_based_raw)
+    assert time_based.time_schedule is not None
+    assert time_based.time_schedule.frequency == ScheduleFrequency.DAILY
+    assert time_based.time_schedule.start_time == time(9, 0)
+    assert time_based.event_trigger is None
+
+    event_raw = {
+        "scheduleType": "EVENT", "logOff": True, "screenLock": None, "startup": None,
+        "periodBase": None, "periodLength": None,
+    }
+    event_based = _parse_task_schedule(event_raw)
+    assert event_based.time_schedule is None
+    assert event_based.event_trigger is not None
+    assert event_based.event_trigger.on_sign_out is True
+    assert event_based.event_trigger.on_lock is False
+    assert event_based.event_trigger.min_interval == timedelta(hours=1)
+
+
+def test_parse_task_config_survives_null_fields() -> None:
+    """_parse_task_config() with workloadType/osType/agentScope's sourceType/
+    customVolume/enableBackupExternal all JSON null, and (separately) a JSON null
+    schedule while use_main_schedule=False, must not crash; falls back to the
+    documented defaults."""
+    raw = {
+        "workloadType": None, "osType": None, "useMainSchedule": True,
+        "agentScope": {"sourceType": None, "customVolume": None, "enableBackupExternal": None},
+    }
+    config = _parse_task_config(raw)
+    assert config.workload_type == MachineWorkloadType.PC
+    assert config.os_type == MachineOsType.NONE
+    assert config.scope == MachineTaskScope.ENTIRE_MACHINE
+    assert config.custom_volumes == ()
+    assert config.include_external_drives is False
+    assert config.schedule is None
+
+    raw_null_schedule = {
+        "workloadType": "PC", "osType": "WINDOWS", "useMainSchedule": False, "schedule": None,
+    }
+    config_null_schedule = _parse_task_config(raw_null_schedule)
+    assert config_null_schedule.schedule is not None
+    assert config_null_schedule.schedule.time_schedule is not None
+    assert config_null_schedule.schedule.time_schedule.frequency == ScheduleFrequency.DAILY
+    assert config_null_schedule.schedule.event_trigger is None

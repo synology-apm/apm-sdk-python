@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import keyring.errors
+import pytest
 
 from synology_apm.cli.commands.config import PasswordDecision, _resolve_password_decision
 from synology_apm.cli.main import app
@@ -128,32 +129,24 @@ def test_config_set_saves_host_and_username() -> None:
     assert profile.no_verify_ssl is False
 
 
-def test_config_set_prompts_for_host_when_not_provided() -> None:
-    """config set without --host should prompt the user for a host."""
+@pytest.mark.parametrize("provided_args,stdin_input,expected_prompt", [
+    (["--username", "admin"], "apm.corp.com\n\nn\n", "APM host"),
+    (["--host", "apm.corp.com"], "admin\n\nn\n", "Username"),
+], ids=["host", "username"])
+def test_config_set_prompts_for_missing_field(
+    provided_args: list[str], stdin_input: str, expected_prompt: str
+) -> None:
+    """config set should prompt the user for whichever of --host/--username is not provided."""
     cfg = AppConfig()
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config"):
         result = runner.invoke(
             app,
-            ["config", "set", "--username", "admin"],
-            input="apm.corp.com\n\nn\n",  # host, blank password, no SSL
+            ["config", "set", *provided_args],
+            input=stdin_input,
         )
     assert result.exit_code == 0
-    assert "APM host" in result.output
-
-
-def test_config_set_prompts_for_username_when_not_provided() -> None:
-    """config set without --username should prompt the user for a username."""
-    cfg = AppConfig()
-    with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
-         patch("synology_apm.cli.commands.config.save_config"):
-        result = runner.invoke(
-            app,
-            ["config", "set", "--host", "apm.corp.com"],
-            input="admin\n\nn\n",  # username, blank password, no SSL
-        )
-    assert result.exit_code == 0
-    assert "Username" in result.output
+    assert expected_prompt in result.output
 
 
 def test_config_set_shows_password_plaintext_warning() -> None:
@@ -416,23 +409,19 @@ def test_config_clear_warns_when_keyring_backend_fails() -> None:
 # ── config set --no-input ──────────────────────────────────────────────────
 
 
-def test_config_set_no_input_missing_host_errors() -> None:
-    """config set with --no-input and no --host exits with an error."""
+@pytest.mark.parametrize("provided_args,expected_error", [
+    (["--username", "admin"], "--host is required"),
+    (["--host", "apm.corp.com"], "--username is required"),
+], ids=["host", "username"])
+def test_config_set_no_input_missing_field_errors(
+    provided_args: list[str], expected_error: str
+) -> None:
+    """config set with --no-input should error when --host or --username is missing."""
     with patch("synology_apm.cli.commands.config.load_config", return_value=AppConfig()), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save:
-        result = runner.invoke(app, ["--no-input", "config", "set", "--username", "admin"])
+        result = runner.invoke(app, ["--no-input", "config", "set", *provided_args])
     assert result.exit_code != 0
-    assert "--host is required" in result.output
-    mock_save.assert_not_called()
-
-
-def test_config_set_no_input_missing_username_errors() -> None:
-    """config set with --no-input and no --username exits with an error."""
-    with patch("synology_apm.cli.commands.config.load_config", return_value=AppConfig()), \
-         patch("synology_apm.cli.commands.config.save_config") as mock_save:
-        result = runner.invoke(app, ["--no-input", "config", "set", "--host", "apm.corp.com"])
-    assert result.exit_code != 0
-    assert "--username is required" in result.output
+    assert expected_error in result.output
     mock_save.assert_not_called()
 
 

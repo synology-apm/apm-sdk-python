@@ -16,6 +16,7 @@ from synology_apm.sdk.collections.m365_mail_export import (
     ExchangeExportCollection,
     GroupExportCollection,
     M365ExportStartResult,
+    _parse_export_activity,
 )
 from synology_apm.sdk.enums import M365ExportStatus, M365WorkloadType, WorkloadCategory, WorkloadStatus
 from synology_apm.sdk.exceptions import ResourceNotReadyError
@@ -25,7 +26,7 @@ from synology_apm.sdk.models.protection_plan import ProtectionPlan
 from synology_apm.sdk.models.version import VersionLocation
 from synology_apm.sdk.models.version import WorkloadVersion as _WV
 from synology_apm.sdk.models.workload import M365GroupInfo, M365UserInfo, M365Workload
-from tests.unit.sdk.conftest import BASE_URL, assert_resource_error, make_session
+from tests.unit.sdk.conftest import BASE_URL, assert_resource_error, make_session, null_out
 
 TENANT_ID = "tenant-aaa-001"
 EXCHANGE_WORKLOAD_UID = "wl-m365-uid-001"
@@ -312,6 +313,61 @@ async def test_exchange_export_list_source_name_is_entire_mailbox_when_root_fold
     assert activities[0].source_name == "Entire mailbox"
 
 
+# ── _parse_export_activity: null vs. absent JSON field handling ──────────────
+#
+# Called directly (not through list()) per the project's null-field testing convention —
+# it's a standalone parser function, so there's no need to drive it through a mocked
+# HTTP round-trip.
+
+
+def test_parse_export_activity_survives_null_spec_and_status() -> None:
+    """spec/status JSON null (key present, value null — distinct from an absent key) must
+    not crash _parse_export_activity(); every field they contribute falls back to its
+    empty/unknown default. uid/namespace come from the top-level object and are unaffected."""
+    raw = null_out(SAMPLE_EXCHANGE_EXPORT_ACTIVITY, "spec", "status")
+
+    act = _parse_export_activity(raw)
+
+    assert act.activity_id == SAMPLE_EXCHANGE_EXPORT_ACTIVITY["uid"]
+    assert act.namespace == EXCHANGE_NAMESPACE
+    assert act.execution_id == ""
+    assert act.workload_id == ""
+    assert act.workload_namespace == ""
+    assert act.source_name == ""
+    assert act.is_archive_mail is False
+    assert act.status == M365ExportStatus.UNKNOWN
+    assert act.started_at is None
+    assert act.finished_at is None
+    assert act.version_timestamp is None
+
+
+def test_parse_export_activity_survives_null_nested_fields() -> None:
+    """Fields nested inside a present spec/status (including spec.workload — subsumes the
+    former test_exchange_export_list_survives_null_workload_ref scenario) as JSON null must
+    not crash _parse_export_activity(); each falls back to its empty/unknown default."""
+    raw = null_out(
+        SAMPLE_EXCHANGE_EXPORT_ACTIVITY,
+        "uid", "namespace",
+        "spec.executionId", "spec.workload", "spec.sourceName",
+        "spec.isArchiveMail", "spec.versionTimestamp",
+        "status.exportStatus", "status.startTime", "status.endTime",
+    )
+
+    act = _parse_export_activity(raw)
+
+    assert act.activity_id == ""
+    assert act.namespace == ""
+    assert act.execution_id == ""
+    assert act.workload_id == ""
+    assert act.workload_namespace == ""
+    assert act.source_name == ""
+    assert act.is_archive_mail is False
+    assert act.status == M365ExportStatus.UNKNOWN
+    assert act.started_at is None
+    assert act.finished_at is None
+    assert act.version_timestamp is None
+
+
 @pytest.mark.asyncio
 async def test_exchange_export_list_source_name_is_entire_archive_mailbox_when_root_and_archive() -> None:
     """ExchangeExportCollection.list() sets source_name to 'Entire archive mailbox' when isRootFolder and isArchiveMail."""
@@ -376,6 +432,76 @@ async def test_export_list_sends_tunnel_header(
     mock_get.assert_called_once()
     headers = mock_get.call_args[1]["headers"]
     assert headers["x-syno-tunnel-route"] == expected_namespace
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collection_class,workload", [
+    (ExchangeExportCollection, SAMPLE_M365_EXCHANGE_WL_OBJ),
+    (GroupExportCollection, SAMPLE_M365_GROUP_WL_OBJ),
+])
+async def test_export_list_survives_null_activities_key(
+    collection_class: type[ExchangeExportCollection] | type[GroupExportCollection],
+    workload: M365Workload,
+) -> None:
+    """activities JSON null (key present, value null — distinct from an absent key) must
+    not crash list(); it is treated as an empty page instead of raising."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    col = collection_class(session)
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"activities": None, "total": 0}
+        activities, total = await col.list(workload)
+
+    assert activities == []
+    assert total == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collection_class,activity", [
+    (ExchangeExportCollection, _make_exchange_export_activity()),
+    (GroupExportCollection, _make_group_export_activity()),
+])
+async def test_export_get_download_url_by_activity_survives_null_url(
+    collection_class: type[ExchangeExportCollection] | type[GroupExportCollection],
+    activity: M365ExportActivity,
+) -> None:
+    """url JSON null in the download-token response must not crash
+    get_download_url_by_activity(); it falls back to an empty string."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    col = collection_class(session)
+
+    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"url": None}
+        url = await col.get_download_url_by_activity(activity)
+
+    assert url == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collection_class,start_result", [
+    (ExchangeExportCollection, _make_exchange_start_result()),
+    (GroupExportCollection, _make_group_start_result()),
+])
+async def test_export_get_download_url_by_ready_result_survives_null_url(
+    collection_class: type[ExchangeExportCollection] | type[GroupExportCollection],
+    start_result: M365ExportStartResult,
+) -> None:
+    """url JSON null in the download-token response must not crash
+    get_download_url_by_ready_result(); it falls back to an empty string."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    col = collection_class(session)
+
+    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"url": None}
+        url = await col.get_download_url_by_ready_result(start_result)
+
+    assert url == ""
 
 
 @pytest.mark.asyncio
@@ -862,6 +988,71 @@ async def test_exchange_export_start_raises_not_found_when_folder_list_empty() -
 
     assert exc_info.value.resource_type == "MailboxFolder"
     assert exc_info.value.resource_id == version.version_id
+
+
+@pytest.mark.asyncio
+async def test_exchange_export_start_raises_not_found_when_folder_list_is_null() -> None:
+    """folderList JSON null (key present, value null — distinct from an absent key) must
+    not crash start(); it is treated the same as an empty list (ResourceNotFoundError)."""
+    from unittest.mock import AsyncMock, patch
+
+    from synology_apm.sdk.collections.m365_mail_export import ExchangeExportCollection
+    from synology_apm.sdk.exceptions import ResourceNotFoundError
+
+    session = make_session()
+    col = ExchangeExportCollection(session)
+    version = _make_exchange_export_version()
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"folderList": None}
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await col.start(SAMPLE_M365_EXCHANGE_WL_OBJ, version)
+
+    assert exc_info.value.resource_type == "MailboxFolder"
+    assert exc_info.value.resource_id == version.version_id
+
+
+@pytest.mark.asyncio
+async def test_exchange_export_start_survives_null_folder_id() -> None:
+    """A folderList entry whose id is JSON null must not crash start(); the root folder id
+    falls back to an empty string in the start_export request body."""
+    from unittest.mock import AsyncMock, patch
+
+    from synology_apm.sdk.collections.m365_mail_export import ExchangeExportCollection
+
+    session = make_session()
+    col = ExchangeExportCollection(session)
+    version = _make_exchange_export_version()
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get, \
+         patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_get.return_value = {"folderList": [{"id": None, "name": "Top of Information Store"}]}
+        mock_post.return_value = {"provideLink": True, "taskExecutionId": "100"}
+        await col.start(SAMPLE_M365_EXCHANGE_WL_OBJ, version)
+
+    post_body = mock_post.call_args[1]["json"]
+    assert post_body["mailFolderList"] == [{"id": ""}]
+
+
+@pytest.mark.asyncio
+async def test_exchange_export_start_survives_null_task_execution_id() -> None:
+    """taskExecutionId JSON null in the start_export response must not crash start(); the
+    resulting M365ExportStartResult.execution_id falls back to an empty string."""
+    from unittest.mock import AsyncMock, patch
+
+    from synology_apm.sdk.collections.m365_mail_export import ExchangeExportCollection
+
+    session = make_session()
+    col = ExchangeExportCollection(session)
+    version = _make_exchange_export_version()
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get, \
+         patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_get.return_value = {"folderList": [{"id": "folder-1"}]}
+        mock_post.return_value = {"provideLink": True, "taskExecutionId": None}
+        result = await col.start(SAMPLE_M365_EXCHANGE_WL_OBJ, version)
+
+    assert result.execution_id == ""
 
 
 @pytest.mark.asyncio

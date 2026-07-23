@@ -53,14 +53,14 @@ async def _build_location_cache(
     seen: set[str] = set()
 
     for p in plans_raw:
-        bc = p.get("spec", {}).get("backupCopy") or {}
+        bc = (p.get("spec") or {}).get("backupCopy") or {}
         if not (bc.get("enabled") and bc.get("destination")):
             continue
         dest_id = bc["destination"]
         if dest_id in seen:
             continue
         seen.add(dest_id)
-        dest_type = bc.get("destinationType", _DEST_TYPE_APPLIANCE)
+        dest_type = bc.get("destinationType") or _DEST_TYPE_APPLIANCE
         if dest_type == _DEST_TYPE_APPLIANCE:
             appliance_namespaces.add(dest_id)
         else:
@@ -76,17 +76,17 @@ async def _build_location_cache(
             "/api/v1/infra/backup_server",
             params={"limit": _BACKUP_SERVER_MAX_COUNT, "offset": 0},
         )
-        for s in raw.get("backupServers", []):
-            ns = s.get("namespace", "")
+        for s in raw.get("backupServers") or []:
+            ns = s.get("namespace") or ""
             if ns not in appliance_namespaces:
                 continue
-            name = s.get("status", {}).get("hostName", "")
+            name = (s.get("status") or {}).get("hostName") or ""
             if name:
                 cache[ns] = LocationInfo(
                     is_remote_storage=False,
                     identifier=ns,
                     name=name,
-                    endpoint=s.get("spec", {}).get("addr", ""),
+                    endpoint=(s.get("spec") or {}).get("addr") or "",
                     vault=None,
                 )
 
@@ -110,7 +110,7 @@ async def _list_plans(
     if name_contains:
         params["keyword"] = name_contains
     raw = await session.get("/api/v1/plan/backup_plan", params=params)
-    plans_raw = raw.get("plans", [])
+    plans_raw = raw.get("plans") or []
     cache = await _build_location_cache(session, plans_raw)
     return ListResult([_parse_plan(p, cache) for p in plans_raw], raw.get("total"))
 
@@ -131,10 +131,10 @@ async def _get_plan_by_name(
             "serviceType": service_types,
         }
         raw = await session.get("/api/v1/plan/backup_plan", params=params)
-        return raw.get("plans", []), raw.get("total")
+        return raw.get("plans") or [], raw.get("total")
 
     async for p in _paginate(fetch):
-        if p.get("spec", {}).get("name", "").lower() == q:
+        if ((p.get("spec") or {}).get("name") or "").lower() == q:
             cache = await _build_location_cache(session, [p])
             return _parse_plan(p, cache)
     raise ResourceNotFoundError(
@@ -148,7 +148,7 @@ async def _get_plan_by_id(session: WebAPISession, plan_id: str) -> ProtectionPla
     """Fetch a single plan by UUID and parse it."""
     with _not_found_as(_RESOURCE_TYPE, plan_id, detail_code=4001):
         raw = await session.get(f"/api/v1/plan/backup_plan/{plan_id}")
-    plan_raw = raw if "id" in raw else raw.get("plan", raw)
+    plan_raw = raw if "id" in raw else raw.get("plan") or raw
     cache = await _build_location_cache(session, [plan_raw])
     return _parse_plan(plan_raw, cache)
 

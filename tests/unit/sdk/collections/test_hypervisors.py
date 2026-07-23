@@ -5,13 +5,14 @@ from typing import Any
 
 import pytest
 
-from synology_apm.sdk.collections.hypervisors import HypervisorCollection
+from synology_apm.sdk.collections.hypervisors import HypervisorCollection, _parse_hypervisor
 from synology_apm.sdk.enums import HypervisorType
 from synology_apm.sdk.exceptions import ResourceNotFoundError
 from tests.unit.sdk.conftest import (
     BASE_URL,
     assert_resource_error,
     connected_session,
+    null_out,
 )
 
 LIST_URL = f"{BASE_URL}/api/v1/inventory"
@@ -62,6 +63,19 @@ async def test_list_returns_hypervisors() -> None:
 async def test_list_empty() -> None:
     async with connected_session() as (session, m):
         m.get(LIST_URL, payload={"inventories": []})
+        collection = HypervisorCollection(session)
+        hypervisors, total = await collection.list()
+        await session.disconnect()
+
+    assert hypervisors == []
+    assert total == 0
+
+
+async def test_list_survives_null_inventories_key() -> None:
+    """A JSON-null "inventories" key (present but null -- distinct from an absent key or an
+    empty list) must not crash list(); it degrades to an empty result."""
+    async with connected_session() as (session, m):
+        m.get(LIST_URL, payload={"inventories": None})
         collection = HypervisorCollection(session)
         hypervisors, total = await collection.list()
         await session.disconnect()
@@ -125,31 +139,17 @@ async def test_get_not_found_http_404_raises_with_resource_fields() -> None:
 # ── get_by_name() ──────────────────────────────────────────────────────────
 
 
-async def test_get_by_name_hostname() -> None:
+@pytest.mark.parametrize("name", [
+    "esxi1.example.com",
+    "ESXI1.EXAMPLE.COM",
+    "192.0.2.40",
+], ids=["hostname", "hostname_case_insensitive", "address"])
+async def test_get_by_name_matches_hostname_or_address(name: str) -> None:
+    """get_by_name() should match by hostname (case-insensitively) or by address."""
     async with connected_session() as (session, m):
         m.get(LIST_URL, payload={"inventories": [SAMPLE_HYPERVISOR_RAW]})
         collection = HypervisorCollection(session)
-        h = await collection.get_by_name("esxi1.example.com")
-        await session.disconnect()
-
-    assert h.hypervisor_id == HV_ID
-
-
-async def test_get_by_name_case_insensitive() -> None:
-    async with connected_session() as (session, m):
-        m.get(LIST_URL, payload={"inventories": [SAMPLE_HYPERVISOR_RAW]})
-        collection = HypervisorCollection(session)
-        h = await collection.get_by_name("ESXI1.EXAMPLE.COM")
-        await session.disconnect()
-
-    assert h.hypervisor_id == HV_ID
-
-
-async def test_get_by_name_address() -> None:
-    async with connected_session() as (session, m):
-        m.get(LIST_URL, payload={"inventories": [SAMPLE_HYPERVISOR_RAW]})
-        collection = HypervisorCollection(session)
-        h = await collection.get_by_name("192.0.2.40")
+        h = await collection.get_by_name(name)
         await session.disconnect()
 
     assert h.hypervisor_id == HV_ID
@@ -198,3 +198,36 @@ async def test_host_type_mapping(api_val: str, expected: HypervisorType) -> None
         await session.disconnect()
 
     assert hypervisors[0].host_type == expected
+
+
+# ── Null vs. absent JSON field handling ────────────────────────────────────
+# (see SDK README "Null vs. Absent JSON Field Handling")
+
+
+def test_parse_hypervisor_survives_null_fields() -> None:
+    """_parse_hypervisor must not crash when every touched field is JSON null; all
+    falsy-typed fields fall back to their documented safe defaults."""
+    raw = null_out(
+        SAMPLE_HYPERVISOR_RAW,
+        "id", "spec.hostType", "spec.hostName", "spec.hostAddr",
+        "spec.authUser", "spec.description", "spec.portWebapi", "spec.version",
+    )
+    hv = _parse_hypervisor(raw)
+    assert hv.hypervisor_id == ""
+    assert hv.hostname == ""
+    assert hv.address == ""
+    assert hv.host_type == HypervisorType.UNKNOWN
+    assert hv.account == ""
+    assert hv.description == ""
+    assert hv.port == 0
+    assert hv.version == ""
+
+    raw2 = null_out(SAMPLE_HYPERVISOR_RAW, "spec")
+    hv2 = _parse_hypervisor(raw2)
+    assert hv2.hostname == ""
+    assert hv2.address == ""
+    assert hv2.host_type == HypervisorType.UNKNOWN
+    assert hv2.account == ""
+    assert hv2.description == ""
+    assert hv2.port == 0
+    assert hv2.version == ""

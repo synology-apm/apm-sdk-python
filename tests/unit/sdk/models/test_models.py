@@ -137,19 +137,16 @@ def make_location(*, is_remote: bool = False) -> VersionLocation:
 
 # ── Workload.is_backing_up ─────────────────────────────────────────────────
 
-def test_is_backing_up_false_when_no_progress() -> None:
-    wl = make_machine_wl(backup_progress=None)
-    assert wl.is_backing_up is False
-
-
-def test_is_backing_up_true_when_progress_set() -> None:
-    wl = make_machine_wl(backup_progress=42)
-    assert wl.is_backing_up is True
-
-
-def test_is_backing_up_true_when_progress_zero() -> None:
-    wl = make_machine_wl(backup_progress=0)
-    assert wl.is_backing_up is True
+@pytest.mark.parametrize("backup_progress,expected", [
+    (None, False),
+    (42, True),
+    (0, True),
+], ids=["no_progress", "progress_set", "progress_zero"])
+def test_is_backing_up_reflects_backup_progress(backup_progress: int | None, expected: bool) -> None:
+    """is_backing_up should be False only when backup_progress is None -- a progress of 0
+    still counts as actively backing up."""
+    wl = make_machine_wl(backup_progress=backup_progress)
+    assert wl.is_backing_up is expected
 
 
 def test_is_backing_up_true_when_items_backed_up_set() -> None:

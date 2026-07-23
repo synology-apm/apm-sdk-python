@@ -86,11 +86,11 @@ _EXPORT_STATUS_MAP: dict[str, M365ExportStatus] = {
 
 def _parse_export_activity(raw: dict[str, Any]) -> M365ExportActivity:
     """Convert a single object from the export activities list API to the SDK model."""
-    spec: dict[str, Any] = raw.get("spec", {})
-    status_obj: dict[str, Any] = raw.get("status", {})
-    workload_ref: dict[str, Any] = spec.get("workload", {})
+    spec: dict[str, Any] = raw.get("spec") or {}
+    status_obj: dict[str, Any] = raw.get("status") or {}
+    workload_ref: dict[str, Any] = spec.get("workload") or {}
 
-    status_raw = status_obj.get("exportStatus", "")
+    status_raw = status_obj.get("exportStatus") or ""
     status = _EXPORT_STATUS_MAP.get(status_raw, M365ExportStatus.UNKNOWN)
 
     started_at = _parse_ts_optional(status_obj.get("startTime"))
@@ -100,17 +100,17 @@ def _parse_export_activity(raw: dict[str, Any]) -> M365ExportActivity:
     )
 
     return M365ExportActivity(
-        activity_id=raw.get("uid", ""),
-        execution_id=spec.get("executionId", ""),
-        namespace=raw.get("namespace", ""),
-        workload_id=workload_ref.get("uid", ""),
-        workload_namespace=workload_ref.get("namespace", ""),
+        activity_id=raw.get("uid") or "",
+        execution_id=spec.get("executionId") or "",
+        namespace=raw.get("namespace") or "",
+        workload_id=workload_ref.get("uid") or "",
+        workload_namespace=workload_ref.get("namespace") or "",
         source_name=(
             "Entire archive mailbox" if spec.get("isRootFolder") and spec.get("isArchiveMail")
             else "Entire mailbox" if spec.get("isRootFolder")
-            else spec.get("sourceName", "")
+            else spec.get("sourceName") or ""
         ),
-        is_archive_mail=bool(spec.get("isArchiveMail", False)),
+        is_archive_mail=bool(spec.get("isArchiveMail") or False),
         status=status,
         started_at=started_at,
         finished_at=finished_at,
@@ -153,7 +153,7 @@ class _BaseM365ExportCollection:
             },
             headers=_tunnel_headers(workload.namespace),
         )
-        activities = [_parse_export_activity(a) for a in raw.get("activities", [])]
+        activities = [_parse_export_activity(a) for a in raw.get("activities") or []]
         return ListResult(activities, raw.get("total"))
 
     async def cancel(self, activity: M365ExportActivity) -> None:
@@ -217,7 +217,7 @@ class _BaseM365ExportCollection:
             },
             headers=_tunnel_headers(activity.namespace),
         )
-        return str(result.get("url", ""))
+        return str(result.get("url") or "")
 
     async def get_download_url_by_ready_result(
         self,
@@ -269,7 +269,7 @@ class _BaseM365ExportCollection:
             },
             headers=_tunnel_headers(location.namespace),
         )
-        return str(raw.get("url", ""))
+        return str(raw.get("url") or "")
 
     async def get_activity_by_result(
         self,
@@ -318,14 +318,14 @@ class _BaseM365ExportCollection:
             },
             headers=_tunnel_headers(location.namespace),
         )
-        folder_list = folders_raw.get("folderList", [])
+        folder_list = folders_raw.get("folderList") or []
         if not folder_list:
             raise ResourceNotFoundError(
                 "No mailbox folders found for this version.",
                 resource_type="MailboxFolder",
                 resource_id=version.version_id,
             )
-        return str(folder_list[0].get("id", ""))
+        return str(folder_list[0].get("id") or "")
 
 
 class ExchangeExportCollection(_BaseM365ExportCollection):
@@ -411,7 +411,7 @@ class ExchangeExportCollection(_BaseM365ExportCollection):
             headers=_tunnel_headers(location.namespace),
         )
         return M365ExportStartResult(
-            execution_id=str(raw.get("taskExecutionId", "")),
+            execution_id=str(raw.get("taskExecutionId") or ""),
             ready_to_download=not bool(raw.get("provideLink", True)),
             export_name=export_name,
             location=location,
@@ -500,7 +500,7 @@ class GroupExportCollection(_BaseM365ExportCollection):
             headers=_tunnel_headers(location.namespace),
         )
         return M365ExportStartResult(
-            execution_id=str(raw.get("taskExecutionId", "")),
+            execution_id=str(raw.get("taskExecutionId") or ""),
             ready_to_download=not bool(raw.get("provideLink", True)),
             export_name=export_name,
             location=location,

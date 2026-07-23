@@ -8,7 +8,19 @@ import pytest
 from aiointercept import aiointercept
 from yarl import URL
 
-from synology_apm.sdk.collections.protection_plans import MachinePlanCollection
+from synology_apm.sdk.collections._protection_plan_parsers import (
+    _parse_backup_copy_status,
+    _parse_plan,
+    _parse_retention,
+    _parse_schedule,
+)
+from synology_apm.sdk.collections.protection_plans import (
+    MachinePlanCollection,
+    _build_location_cache,
+    _get_plan_by_id,
+    _get_plan_by_name,
+    _list_plans,
+)
 from synology_apm.sdk.enums import (
     CopyReason,
     RetentionType,
@@ -18,6 +30,7 @@ from synology_apm.sdk.enums import (
     WorkloadCategory,
 )
 from synology_apm.sdk.exceptions import PlanNameConflictError, ResourceNotFoundError
+from synology_apm.sdk.models.location import LocationInfo
 from tests.unit.sdk.collections._plan_fixtures import (
     PLAN_ID,
     SAMPLE_PLAN_WITH_SCHEDULE,
@@ -31,6 +44,7 @@ from tests.unit.sdk.conftest import (
     assert_resource_error,
     connected_session,
     make_session,
+    null_out,
 )
 
 PLANS_URL = f"{BASE_URL}/api/v1/plan/backup_plan?offset=0&limit=500&serviceType=DEVICE"
@@ -399,47 +413,6 @@ async def test_list_deduplicates_destination_lookups() -> None:
 
     servers_key = ("GET", URL(servers_url))
     assert len(m.requests[servers_key]) == 1
-
-
-async def test_list_survives_null_backup_copy() -> None:
-    """A plan whose backupCopy is JSON null must not crash list(); it yields backup_copy_policy=None
-    while a sibling plan with a valid APPLIANCE copy destination is still resolved."""
-    session = make_session()
-    servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
-    list_url = f"{BASE_URL}/api/v1/plan/backup_plan?offset=0&limit=500&serviceType=DEVICE"
-
-    async with aiointercept(mock_external_urls=True) as m:
-        m.get(LOGIN_URL, payload=LOGIN_OK)
-        await session.connect()
-
-        m.get(list_url, payload={
-            "plans": [SAMPLE_PLAN_NULL_COPY, SAMPLE_PLAN_WITH_COPY_APPLIANCE], "total": 2,
-        })
-        m.get(servers_url, payload={"backupServers": [BACKUP_SERVER_RAW], "total": 1})
-
-        plans = make_collections(session)
-        result, total = await plans.list()
-        await session.disconnect()
-
-    assert total == 2
-    null_plan = next(p for p in result if p.plan_id == "null-copy-plan-001")
-    copy_plan = next(p for p in result if p.plan_id == "copy-plan-001")
-    assert null_plan.backup_copy_policy is None
-    assert copy_plan.backup_copy_policy is not None
-    assert copy_plan.backup_copy_policy.destination.name == "My NAS"
-
-
-async def test_get_survives_null_backup_copy() -> None:
-    """get() of a plan whose backupCopy is JSON null must not crash; backup_copy_policy is None."""
-    async with connected_session() as (session, m):
-
-        m.get(f"{BASE_URL}/api/v1/plan/backup_plan/{PLAN_ID}", payload=SAMPLE_PLAN_NULL_COPY)
-        plans = make_collections(session)
-        plan = await plans.get(PLAN_ID)
-        await session.disconnect()
-
-    assert plan.name == "Null Copy Plan"
-    assert plan.backup_copy_policy is None
 
 
 async def test_list_backup_copy_policy_none_when_lookup_fails() -> None:
@@ -934,3 +907,252 @@ async def test_get_parses_vm_pc_ps_config() -> None:
     assert plan.ps_config.enable_verification is False
     assert plan.ps_config.shutdown_after_backup is False
     assert plan.ps_config.prevent_sleep_during_backup is True
+
+
+# ── null vs. absent JSON field handling ─────────────────────────────────────
+#
+# One test per parser/helper function, each covering every field that function's
+# null-safety touches at once — see the SDK README's "Null vs. Absent JSON Field
+# Handling". Parser functions are pure and called directly; the remaining tests
+# cover lines that only live inside an async collection-helper body.
+
+
+def test_parse_retention_survives_null_fields() -> None:
+    """_parse_retention() with every keepDays/keepVersions/gfs* field JSON null (keys
+    present, values null — distinct from absent keys) must not crash; falls back to
+    the same RetentionType.NONE default as an empty retention object."""
+    raw = {
+        "keepDays": None, "keepVersions": None,
+        "gfsDays": None, "gfsWeeks": None, "gfsMonths": None, "gfsYears": None,
+    }
+    policy = _parse_retention(raw)
+    assert policy.retention_type == RetentionType.NONE
+    assert policy.days is None
+    assert policy.versions is None
+    assert policy.gfs is None
+
+
+def test_parse_schedule_survives_null_fields() -> None:
+    """_parse_schedule() with repeatType/repeatHour/runHour/runMin/runWeekday all JSON
+    null must not crash; a null repeatType falls back to the DAILY branch and a null
+    runWeekday falls back to an empty weekdays tuple."""
+    daily_raw = {
+        "scheduleType": "SCHEDULE", "repeatType": None,
+        "repeatHour": None, "runHour": None, "runMin": None,
+    }
+    sched = _parse_schedule(daily_raw)
+    assert sched.frequency == ScheduleFrequency.DAILY
+    assert sched.start_time == time(0, 0)
+    assert sched.weekdays == ()
+
+    weekly_raw = {
+        "scheduleType": "SCHEDULE", "repeatType": "WEEKLY",
+        "repeatHour": None, "runHour": None, "runMin": None, "runWeekday": None,
+    }
+    weekly_sched = _parse_schedule(weekly_raw)
+    assert weekly_sched.frequency == ScheduleFrequency.WEEKLY
+    assert weekly_sched.start_time == time(0, 0)
+    assert weekly_sched.weekdays == ()
+
+
+def test_parse_backup_copy_status_survives_null_fields() -> None:
+    """_parse_backup_copy_status() with copyStatus/pendingVersionCount/remainingBytes/
+    skippedWorkloadCount all JSON null must not crash; an unresolvable null copyStatus
+    yields None, and a null skippedWorkloadCount under SKIPPED_WORKLOAD falls back to 0."""
+    unresolvable = _parse_backup_copy_status({
+        "copyStatus": None, "pendingVersionCount": None, "remainingBytes": None, "statusReason": None,
+    })
+    assert unresolvable is None
+
+    skipped = _parse_backup_copy_status({
+        "copyStatus": "SKIPPED_WORKLOAD", "skippedWorkloadCount": None,
+        "pendingVersionCount": None, "remainingBytes": None,
+    })
+    assert skipped is not None
+    assert skipped.status == VersionCopyStatus.SKIPPED
+    assert skipped.skipped_workload_count == 0
+    assert skipped.pending_version_count == 0
+    assert skipped.remaining_bytes is None
+
+
+def test_parse_plan_survives_null_top_level_fields() -> None:
+    """spec, protectedWorkloadCount, and unprotectedWorkloadCount all JSON null (keys
+    present, values null) must not crash _parse_plan(); every dependent field falls
+    back to its documented default, including backup_copy_policy=None derived from
+    the now-empty spec."""
+    raw = null_out(SAMPLE_PLAN_RAW, "spec", "protectedWorkloadCount", "unprotectedWorkloadCount")
+    plan = _parse_plan(raw)
+
+    assert plan.plan_id == PLAN_ID
+    assert plan.name == ""
+    assert plan.description == ""
+    assert plan.category == WorkloadCategory.MACHINE
+    assert plan.is_immutable is False
+    assert plan.workload_count == 0
+    assert plan.successful_workload_count == 0
+    assert plan.unsuccessful_workload_count == 0
+    assert plan.backup_copy_policy is None
+    assert plan.run_schedule_by_controller_time is False
+    assert plan.policy is not None
+    assert plan.policy.retention.retention_type == RetentionType.NONE
+
+
+def test_parse_plan_survives_null_retention() -> None:
+    """spec.retention JSON null (key present, value null — distinct from an absent key
+    or an empty {}), with the rest of spec otherwise valid, must not crash
+    _parse_plan(); retention falls back to the same RetentionType.NONE default as an
+    empty retention object."""
+    raw = null_out(SAMPLE_PLAN_RAW, "spec.retention")
+    plan = _parse_plan(raw)
+
+    assert plan.plan_id == PLAN_ID
+    assert plan.name == "Daily Backup"
+    assert plan.policy is not None
+    assert plan.policy.retention.retention_type == RetentionType.NONE
+    assert plan.policy.retention.days is None
+
+
+def test_parse_plan_survives_null_backup_copy() -> None:
+    """spec.backupCopy JSON null (key present, value null — distinct from an absent
+    key or {"enabled": false}) must not crash _parse_plan(); backup_copy_policy falls
+    back to None, same as when backupCopy is disabled."""
+    plan = _parse_plan(SAMPLE_PLAN_NULL_COPY)
+
+    assert plan.plan_id == "null-copy-plan-001"
+    assert plan.name == "Null Copy Plan"
+    assert plan.backup_copy_policy is None
+
+
+def test_parse_plan_survives_null_backup_copy_retention() -> None:
+    """A plan whose backupCopy is present/enabled with a valid destination but whose
+    nested backupCopy.retention is JSON null (key present, value null — distinct from
+    an absent key) must not crash _parse_plan(); backup_copy_policy.retention falls
+    back to the same RetentionType.NONE default as an empty retention object."""
+    raw = null_out(SAMPLE_PLAN_WITH_COPY_APPLIANCE, "spec.backupCopy.retention")
+    cache = {
+        COPY_DEST_ID: LocationInfo(
+            is_remote_storage=False, identifier=COPY_DEST_ID, name="My NAS",
+            endpoint="192.168.1.10", vault=None,
+        ),
+    }
+    plan = _parse_plan(raw, cache)
+
+    assert plan.backup_copy_policy is not None
+    assert plan.backup_copy_policy.retention.retention_type == RetentionType.NONE
+    assert plan.backup_copy_policy.retention.days is None
+
+
+async def test_build_location_cache_survives_null_fields() -> None:
+    """A plan with spec=null (skipped) alongside a plan whose backupCopy.destinationType
+    is JSON null (still bucketed as APPLIANCE, the documented default) and backup
+    servers whose namespace/status/spec fields are JSON null must not crash
+    _build_location_cache(). A null hostName still safely yields no cache entry for
+    that destination; a null spec/addr still yields an entry with endpoint="" once
+    hostName is present."""
+    dest_no_hostname = "dest-no-hostname-001"
+    plans_raw: list[dict[str, Any]] = [
+        {"id": "p-null-spec", "spec": None},
+        {
+            "id": "p-null-desttype",
+            "spec": {
+                "backupCopy": {"enabled": True, "destination": COPY_DEST_ID, "destinationType": None},
+            },
+        },
+        {
+            "id": "p-null-hostname",
+            "spec": {
+                "backupCopy": {
+                    "enabled": True, "destination": dest_no_hostname, "destinationType": "APPLIANCE",
+                },
+            },
+        },
+    ]
+    servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
+    async with connected_session() as (session, m):
+        m.get(servers_url, payload={
+            "backupServers": [
+                {"id": "s-null", "namespace": None, "status": None, "spec": None},
+                {"id": "s-match", "namespace": COPY_DEST_ID, "status": {"hostName": "My NAS"}, "spec": None},
+                {
+                    "id": "s-no-name", "namespace": dest_no_hostname,
+                    "status": {"hostName": None}, "spec": {"addr": "192.0.2.9"},
+                },
+            ],
+            "total": 3,
+        })
+        cache = await _build_location_cache(session, plans_raw)
+        await session.disconnect()
+
+    assert COPY_DEST_ID in cache
+    loc = cache[COPY_DEST_ID]
+    assert loc.name == "My NAS"
+    assert loc.endpoint == ""
+    assert dest_no_hostname not in cache
+
+
+async def test_build_location_cache_survives_null_backup_servers_list() -> None:
+    """A backup_server list response whose backupServers key is JSON null (key
+    present, value null — distinct from an absent key or an empty list) must not
+    crash _build_location_cache(); it yields an empty cache instead of raising."""
+    plans_raw = [{
+        "id": "p1",
+        "spec": {"backupCopy": {"enabled": True, "destination": COPY_DEST_ID, "destinationType": "APPLIANCE"}},
+    }]
+    servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
+    async with connected_session() as (session, m):
+        m.get(servers_url, payload={"backupServers": None, "total": 0})
+        cache = await _build_location_cache(session, plans_raw)
+        await session.disconnect()
+
+    assert cache == {}
+
+
+async def test_list_plans_survives_null_plans_field() -> None:
+    """A backup_plan list response whose plans key is JSON null (key present, value
+    null — distinct from an absent key or an empty list) must not crash
+    _list_plans(); it yields an empty result instead of raising."""
+    async with connected_session() as (session, m):
+        m.get(PLANS_URL, payload={"plans": None, "total": 0})
+        result = await _list_plans(session, "DEVICE", None, 500, 0)
+        await session.disconnect()
+
+    assert result.items == []
+    assert result.total == 0
+
+
+async def test_get_plan_by_id_survives_null_plan_wrapper() -> None:
+    """A get-by-id response with no top-level 'id' and a JSON null 'plan' key (key
+    present, value null — distinct from an absent key) still fails predictably with
+    a KeyError on the missing plan id, rather than an unrelated AttributeError from
+    calling a dict method on None."""
+    async with connected_session() as (session, m):
+        m.get(f"{BASE_URL}/api/v1/plan/backup_plan/{PLAN_ID}", payload={"plan": None})
+        with pytest.raises(KeyError):
+            await _get_plan_by_id(session, PLAN_ID)
+        await session.disconnect()
+
+
+async def test_get_plan_by_name_survives_null_fields() -> None:
+    """get_by_name() must not crash when a candidate plan's spec.name is JSON null
+    (skipped as a non-match, distinct from an absent key) or when the plans key
+    itself is JSON null (paginates as an empty page)."""
+    plan_null_name = {
+        **SAMPLE_PLAN_RAW,
+        "id": "null-name-plan",
+        "spec": {**SAMPLE_PLAN_RAW["spec"], "name": None},
+    }
+    keyword_url = f"{BASE_URL}/api/v1/plan/backup_plan?keyword=Daily+Backup&limit=100&offset=0&serviceType=DEVICE"
+    async with connected_session() as (session, m):
+        m.get(keyword_url, payload={"plans": [plan_null_name, SAMPLE_PLAN_RAW], "total": 2})
+        plan = await _get_plan_by_name(session, "DEVICE", "Daily Backup")
+        await session.disconnect()
+
+    assert plan.plan_id == PLAN_ID
+    assert plan.name == "Daily Backup"
+
+    keyword_url_2 = f"{BASE_URL}/api/v1/plan/backup_plan?keyword=Anything&limit=100&offset=0&serviceType=DEVICE"
+    async with connected_session() as (session, m):
+        m.get(keyword_url_2, payload={"plans": None, "total": 0})
+        with pytest.raises(ResourceNotFoundError):
+            await _get_plan_by_name(session, "DEVICE", "Anything")
+        await session.disconnect()

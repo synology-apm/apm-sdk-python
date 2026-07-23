@@ -6,10 +6,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from synology_apm.sdk.collections.logs import LogCollection
+from synology_apm.sdk.collections.logs import (
+    LogCollection,
+    _parse_activity_log,
+    _parse_drive_log,
+    _user_log_fields,
+)
 from synology_apm.sdk.enums import APMActivityLogType, BackupServerType, LogLevel, ServerStatus
 from synology_apm.sdk.models.backup_server import BackupServer
-from tests.unit.sdk.conftest import make_session
+from tests.unit.sdk.conftest import make_session, null_out
 
 NAMESPACE = "9053e422-4154-4abc-b03a-6e3d8e17b2d5"
 
@@ -312,6 +317,52 @@ async def test_activity_type_mapping(api_val: str, expected: APMActivityLogType 
         logs, _ = await collection.list_activity(SAMPLE_SERVER)
 
     assert logs[0].log_type == expected
+
+
+# ── Null vs. absent JSON field handling ────────────────────────────────────
+# (see SDK README "Null vs. Absent JSON Field Handling") -- parser functions
+# called directly with every touched field set to explicit JSON null.
+
+
+def test_parse_activity_log_survives_null_fields() -> None:
+    """_parse_activity_log must not crash when every touched field is JSON null; all
+    falsy-typed fields fall back to their documented safe defaults."""
+    raw = null_out(SAMPLE_ACTIVITY_RAW, "level", "type", "timestamp", "username", "description")
+    log = _parse_activity_log(raw)
+    assert log.level == LogLevel.INFO
+    assert log.log_type is None
+    assert log.timestamp == datetime.fromtimestamp(0, tz=UTC)
+    assert log.username == ""
+    assert log.description == ""
+
+
+def test_parse_drive_log_survives_null_fields() -> None:
+    """_parse_drive_log must not crash when every touched field is JSON null; all
+    falsy-typed fields fall back to their documented safe defaults ("-" for the
+    device-identity fields, not "")."""
+    raw = null_out(
+        SAMPLE_DRIVE_RAW,
+        "level", "timestamp", "description", "deviceName", "model", "location", "serial",
+    )
+    log = _parse_drive_log(raw)
+    assert log.level == LogLevel.INFO
+    assert log.timestamp == datetime.fromtimestamp(0, tz=UTC)
+    assert log.description == ""
+    assert log.server_name == "-"
+    assert log.model == "-"
+    assert log.location == "-"
+    assert log.serial == "-"
+
+
+def test_user_log_fields_survives_null_fields() -> None:
+    """_user_log_fields (shared by ConnectionLog/SystemLog) must not crash when every touched
+    field is JSON null; all falsy-typed fields fall back to their documented safe defaults."""
+    raw = null_out(SAMPLE_CONNECTION_RAW, "level", "timestamp", "username", "description")
+    fields = _user_log_fields(raw)
+    assert fields["level"] == LogLevel.INFO
+    assert fields["timestamp"] == datetime.fromtimestamp(0, tz=UTC)
+    assert fields["username"] == ""
+    assert fields["description"] == ""
 
 
 # ── Optional filter params for list_drive / list_connection / list_system ──────

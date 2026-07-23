@@ -580,3 +580,54 @@ async def test_error_code_in_body_format3_nested_raises_api_error() -> None:
 
     assert exc_info.value.error_code == 7003
     assert "workload can not change" in exc_info.value.message
+
+
+# ── Null vs. absent JSON field handling ────────────────────────────────────
+# (see SDK README "Null vs. Absent JSON Field Handling")
+
+
+@pytest.mark.parametrize(
+    "method,path,payload",
+    [
+        # Format 1: error.code (Synology WebAPI)
+        ("get", "/api/v1/plan/backup_plan",
+         {"error": {"code": 7003, "message": None}}),
+        # Format 3: error.errorCode (APM REST nested)
+        ("post", "/api/v1/workload/m365_workload/batch",
+         {"success": False, "error": {"errorCode": 7003, "message": None}}),
+        # Format 2: top-level errorCode (APM REST)
+        ("put", "/api/v1/workload/device_workloads/plan",
+         {"errorCode": 7003, "message": None}),
+    ],
+)
+async def test_check_api_error_null_message_falls_back_to_default(
+    method: str, path: str, payload: dict[str, Any],
+) -> None:
+    """"message" present as JSON null (not absent) in any of the three error-code body formats
+    must fall back to the default "API error" text, not surface None as the exception message."""
+    session = make_session()
+    async with aiointercept(mock_external_urls=True) as m:
+        await connect_session(m, session)
+        getattr(m, method)(f"{BASE_URL}{path}", payload=payload)
+        call_kwargs: dict[str, Any] = {} if method == "get" else {"json": {}}
+        with pytest.raises(APIError) as exc_info:
+            await getattr(session, method)(path, **call_kwargs)
+        await session.disconnect()
+
+    assert exc_info.value.error_code == 7003
+    assert exc_info.value.message == "API error"
+
+
+async def test_login_failure_with_null_error_field_raises_generic_message() -> None:
+    """success=False with "error": null (present but JSON null, not absent) must not crash
+    login; it falls back to the same generic "error code None" message as an absent error
+    key (data.get("error") already returns None in both cases -- a pure simplification, not
+    a behavior change, but still worth a regression test)."""
+    session = make_session()
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(TESTUSER_LOGIN_URL, payload={"success": False, "error": None})
+        with pytest.raises(AuthenticationError) as exc_info:
+            await session.connect()
+
+    assert exc_info.value.error_code is None
+    assert "error code none" in exc_info.value.message.lower()

@@ -166,3 +166,39 @@ jobs:
         uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
         with:
           packages-dir: dist/synology-apm-mcp
+
+  # Runs alongside the publish-* jobs (all three depend only on verify-dist) — the
+  # GitHub Release is independent of the PyPI uploads.
+  github-release:
+    needs: [build, verify-dist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download synology-apm-sdk dist
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dist-synology-apm-sdk
+          path: dist/synology-apm-sdk
+
+      - name: Download synology-apm-cli dist
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dist-synology-apm-cli
+          path: dist/synology-apm-cli
+
+      - name: Download synology-apm-mcp dist
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dist-synology-apm-mcp
+          path: dist/synology-apm-mcp
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          files: |
+            dist/synology-apm-sdk/*
+            dist/synology-apm-cli/*
+            dist/synology-apm-mcp/*
+          make_latest: true
+          generate_release_notes: false

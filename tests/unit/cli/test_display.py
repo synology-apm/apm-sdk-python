@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import time
 
+import pytest
+
 from synology_apm.cli._display import (
     _ACTIVITY_LOG_TYPE_DISPLAY,
     _BACKUP_ACTIVITY_STATUS_DISPLAY,
@@ -275,14 +277,12 @@ def test_fmt_hypervisor_type_all_values() -> None:
     assert fmt_hypervisor_type(HypervisorType.UNKNOWN)                 == "Unknown"
 
 
-def test_fmt_remote_storage_usage_both_values() -> None:
-    result = fmt_remote_storage_usage(453378, 366960877568)
-    assert result == "442.8 KB (341.8 GB left)"
-
-
-def test_fmt_remote_storage_usage_only_used() -> None:
-    result = fmt_remote_storage_usage(453378, None)
-    assert result == "442.8 KB"
+@pytest.mark.parametrize("used,avail,expected", [
+    (453378, 366960877568, "442.8 KB (341.8 GB left)"),
+    (453378, None, "442.8 KB"),
+], ids=["both_values", "only_used"])
+def test_fmt_remote_storage_usage(used: int, avail: int | None, expected: str) -> None:
+    assert fmt_remote_storage_usage(used, avail) == expected
 
 
 def test_fmt_remote_storage_usage_zero_used() -> None:

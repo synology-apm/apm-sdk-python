@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from synology_apm.sdk.collections._shared import _fetch_remote_storage_location
 from synology_apm.sdk.collections.backup_servers import BackupServerCollection
 from synology_apm.sdk.enums import BackupServerRole, BackupServerType, ServerStatus
 from synology_apm.sdk.exceptions import APIError
@@ -42,35 +43,16 @@ SAMPLE_SERVER_RAW: dict[str, Any] = {
 # ── sync-status edge cases ──────────────────────────────────────────────────
 
 
-async def test_sync_status_disconnected_overrides_normal_status() -> None:
-    """When spec.syncStatus=DISCONNECTED, status should be DISCONNECTED even if status.status=NORMAL."""
+@pytest.mark.parametrize("sync_status", ["DISCONNECTED", "JOINING_DISCONNECTED"])
+async def test_sync_status_disconnected_variants_override_normal_status(sync_status: str) -> None:
+    """When spec.syncStatus is DISCONNECTED or JOINING_DISCONNECTED, status should be
+    DISCONNECTED even if status.status=NORMAL."""
     raw = {
         "id": "srv-3", "namespace": "ns-3",
-        "spec": {"addr": "1.2.3.6", "syncStatus": "DISCONNECTED"},
+        "spec": {"addr": "1.2.3.6", "syncStatus": sync_status},
         "status": {
             "hostName": "APM-SyncFail", "model": "DP100", "firmwareVer": "APM 1.2-0",
             "serial": "SN2", "timezone": "UTC", "status": "NORMAL",
-            "dpStorage": {"totalBytes": "0", "backupBytes": "0", "systemBytes": "0"},
-            "storageStatistic": {"transferBytes": "0", "usageBytes": "0"},
-        },
-    }
-    async with connected_session() as (session, m):
-        m.get(SERVERS_URL, payload={"backupServers": [raw]})
-        collection = BackupServerCollection(session)
-        servers, total = await collection.list()
-        await session.disconnect()
-
-    assert servers[0].status == ServerStatus.DISCONNECTED
-
-
-async def test_sync_status_joining_disconnected_maps_to_disconnected() -> None:
-    """When spec.syncStatus=JOINING_DISCONNECTED, status should be DISCONNECTED."""
-    raw = {
-        "id": "srv-4", "namespace": "ns-4",
-        "spec": {"addr": "1.2.3.7", "syncStatus": "JOINING_DISCONNECTED"},
-        "status": {
-            "hostName": "APM-Joining", "model": "DP100", "firmwareVer": "APM 1.2-0",
-            "serial": "SN3", "timezone": "UTC", "status": "NORMAL",
             "dpStorage": {"totalBytes": "0", "backupBytes": "0", "systemBytes": "0"},
             "storageStatistic": {"transferBytes": "0", "usageBytes": "0"},
         },
@@ -126,35 +108,15 @@ async def test_spec_sync_status_joining_maps_to_syncing() -> None:
     assert servers[0].status == ServerStatus.SYNCING
 
 
-async def test_notinitialized_server_maps_to_disconnected() -> None:
-    """When API returns NOTINITIALIZED, SDK status should be DISCONNECTED."""
+@pytest.mark.parametrize("api_status", ["NOTINITIALIZED", "INCOMPATIBLE"])
+async def test_notinitialized_and_incompatible_server_map_to_disconnected(api_status: str) -> None:
+    """When the API returns NOTINITIALIZED or INCOMPATIBLE, SDK status should be DISCONNECTED."""
     raw = {
         "id": "srv-1", "namespace": "ns-1",
         "spec": {"addr": "1.2.3.4"},
         "status": {
             "hostName": "APM-New", "model": "DP100", "firmwareVer": "APM 1.2-0",
-            "serial": "SN0", "status": "NOTINITIALIZED",
-            "dpStorage": {"totalBytes": "0", "backupBytes": "0", "systemBytes": "0"},
-            "storageStatistic": {"transferBytes": "0", "usageBytes": "0"},
-        },
-    }
-    async with connected_session() as (session, m):
-        m.get(SERVERS_URL, payload={"backupServers": [raw]})
-        collection = BackupServerCollection(session)
-        servers, total = await collection.list()
-        await session.disconnect()
-
-    assert servers[0].status == ServerStatus.DISCONNECTED
-
-
-async def test_incompatible_server_maps_to_disconnected() -> None:
-    """When API returns INCOMPATIBLE, SDK status should be DISCONNECTED."""
-    raw = {
-        "id": "srv-2", "namespace": "ns-2",
-        "spec": {"addr": "1.2.3.5"},
-        "status": {
-            "hostName": "APM-Old", "model": "DP100", "firmwareVer": "APM 1.1-0",
-            "serial": "SN1", "status": "INCOMPATIBLE",
+            "serial": "SN0", "status": api_status,
             "dpStorage": {"totalBytes": "0", "backupBytes": "0", "systemBytes": "0"},
             "storageStatistic": {"transferBytes": "0", "usageBytes": "0"},
         },
@@ -426,8 +388,32 @@ async def test_tiering_destination_none_when_external_storage_no_longer_exists()
     assert servers[0].tiering_plan_destination is None
 
 
-def test_storage_usage_pct_computes_used_over_total() -> None:
-    """storage_usage_pct should be used/total*100 when both are non-zero."""
+async def test_fetch_remote_storage_location_survives_null_id_and_endpoint() -> None:
+    """_fetch_remote_storage_location falls back to the dest_id and "" endpoint when the
+    external storage response's id/endpoint fields are JSON null, while a non-null
+    displayName still yields a populated LocationInfo (a null displayName instead yields
+    None, same as the dangling-reference case covered elsewhere)."""
+    async with connected_session() as (session, m):
+        m.get(_TIERING_STORAGE_URL, payload={
+            "id": None, "displayName": "tiering-remote", "endpoint": None, "vaultName": None,
+        })
+        loc = await _fetch_remote_storage_location(session, _TIERING_STORAGE_ID)
+        await session.disconnect()
+
+    assert loc is not None
+    assert loc.identifier == _TIERING_STORAGE_ID  # id is null -> falls back to dest_id
+    assert loc.name == "tiering-remote"
+    assert loc.endpoint == ""
+    assert loc.vault is None
+
+
+@pytest.mark.parametrize("total_bytes,used_bytes,expected", [
+    (1000, 250, 25.0),
+    (0, 100, 0.0),
+], ids=["nonzero_total", "zero_total"])
+def test_storage_usage_pct(total_bytes: int, used_bytes: int, expected: float) -> None:
+    """storage_usage_pct should be used/total*100 when total is non-zero, and 0.0 when the
+    reported total capacity is 0."""
     from synology_apm.sdk.models.backup_server import BackupServer
 
     server = BackupServer(
@@ -441,32 +427,9 @@ def test_storage_usage_pct_computes_used_over_total() -> None:
         status=ServerStatus.HEALTHY,
         is_updating=False,
         serial="SN001",
-        storage_total_bytes=1000,
-        storage_used_bytes=250,
+        storage_total_bytes=total_bytes,
+        storage_used_bytes=used_bytes,
         logical_backup_data_bytes=None,
         physical_backup_data_bytes=None,
     )
-    assert server.storage_usage_pct == 25.0
-
-
-def test_storage_usage_pct_zero_when_total_is_zero() -> None:
-    """storage_usage_pct is 0.0 when the reported total capacity is 0."""
-    from synology_apm.sdk.models.backup_server import BackupServer
-
-    server = BackupServer(
-        backup_server_id="bs-zero-001",
-        namespace="ns-zero-001",
-        server_type=BackupServerType.DP,
-        name="apm-server-01",
-        hostname="192.0.2.1",
-        model="DP320",
-        system_version="APM 1.2-71845",
-        status=ServerStatus.HEALTHY,
-        is_updating=False,
-        serial="SN001",
-        storage_total_bytes=0,
-        storage_used_bytes=100,
-        logical_backup_data_bytes=None,
-        physical_backup_data_bytes=None,
-    )
-    assert server.storage_usage_pct == 0.0
+    assert server.storage_usage_pct == expected

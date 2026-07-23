@@ -224,16 +224,12 @@ async def test_update_file_server_raises_for_non_fs_workload() -> None:
     assert_resource_error(exc_info, resource_type="Workload", resource_id=SAMPLE_WL_OBJ.workload_id)
 
 
-def test_update_file_server_empty_string_password_raises_value_error() -> None:
-    """FileServerUpdateRequest raises ValueError at construction when login_password is empty string."""
+@pytest.mark.parametrize("login_password", ["", "   "], ids=["empty_string", "whitespace_only"])
+def test_update_file_server_blank_password_raises_value_error(login_password: str) -> None:
+    """FileServerUpdateRequest raises ValueError at construction when login_password is
+    empty or whitespace only."""
     with pytest.raises(ValueError, match="login_password"):
-        FileServerUpdateRequest(host_ip="192.0.2.10", login_user="admin", login_password="")
-
-
-def test_update_file_server_whitespace_only_password_raises_value_error() -> None:
-    """FileServerUpdateRequest raises ValueError at construction when login_password is whitespace only."""
-    with pytest.raises(ValueError, match="login_password"):
-        FileServerUpdateRequest(host_ip="192.0.2.10", login_user="admin", login_password="   ")
+        FileServerUpdateRequest(host_ip="192.0.2.10", login_user="admin", login_password=login_password)
 
 
 async def test_update_file_server_raises_duplicate_on_conflict_response() -> None:

@@ -114,6 +114,9 @@ only states the rule a new tool must follow and where that rule lives.
 - Enum-typed parameters: a `Literal[...]` alias from `_enums.py`, never the SDK enum class directly.
   `_enums.py` is the single source of truth for each value set; convert to the real enum only at the SDK
   call site (`to_enum_list()` for repeatable filters, a direct `EnumType(value)` otherwise).
+- Treat explicit `null` in a caller-supplied JSON field (e.g. `tasks_json`) as "no value" and fall through
+  to that field's default — opposite of the SDK's API-response convention (see the SDK README's "Null vs.
+  Absent JSON Field Handling"). Keep required fields failing loudly when missing.
 
 ### Mode gating
 

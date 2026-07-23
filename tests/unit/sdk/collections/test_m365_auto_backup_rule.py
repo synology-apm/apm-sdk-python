@@ -5,13 +5,18 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from synology_apm.sdk.collections.m365_auto_backup_rule import M365AutoBackupRuleCollection
+from synology_apm.sdk.collections.m365_auto_backup_rule import (
+    M365AutoBackupRuleCollection,
+    _is_terminating,
+    _parse_collab_setting,
+    _parse_rule,
+)
 from synology_apm.sdk.models.m365_auto_backup_rule import (
     M365AutoBackupRule,
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
 )
-from tests.unit.sdk.conftest import BASE_URL, make_session
+from tests.unit.sdk.conftest import BASE_URL, make_session, null_out
 
 TENANT_ID = "87c467dd-ac00-45d8-babb-e2b0787e2d13"
 NAMESPACE = "9053e422-4154-4abc-b03a-6e3d8e17b2d5"
@@ -35,6 +40,25 @@ SAMPLE_RULE_RAW = {
         "uid": RULE_UID,
         "namespace": NAMESPACE,
         "metadata": {"creationVersion": "1", "resourceVersion": "1"},
+        "spec": {"tenantId": TENANT_ID, "backupPlanId": PLAN_ID},
+        "status": {},
+    },
+    "exchangeGroupIds": [GROUP_ID_A],
+    "onedriveGroupIds": [],
+    "chatGroupIds": [],
+}
+
+TERMINATING_RULE_RAW = {
+    "uid": RULE_UID,
+    "namespace": NAMESPACE,
+    "autoBackupRule": {
+        "uid": RULE_UID,
+        "namespace": NAMESPACE,
+        "metadata": {
+            "creationVersion": "1",
+            "resourceVersion": "1",
+            "deletionTimestamp": "1782797122",
+        },
         "spec": {"tenantId": TENANT_ID, "backupPlanId": PLAN_ID},
         "status": {},
     },
@@ -137,6 +161,59 @@ async def test_list_excludes_terminating_rules() -> None:
         mock_get.return_value = {**SAMPLE_LIST_RESPONSE, "rulesWithMetas": [terminating_raw]}
         result = await col.list(TENANT_ID)
     assert result.rules == ()
+
+
+# ── Null vs. absent JSON field handling (see SDK README) ──────────────────
+#
+# _parse_rule/_is_terminating/_parse_collab_setting are called directly (not through
+# list()) per the project's null-field testing convention — these are standalone parser
+# functions, so there is no need to drive them through a mocked HTTP round-trip.
+
+
+@pytest.mark.parametrize("null_paths", [
+    ("autoBackupRule",),
+    ("autoBackupRule.metadata", "autoBackupRule.spec"),
+], ids=["null_auto_backup_rule", "null_metadata_and_spec"])
+def test_parse_rule_survives_null_fields(null_paths: tuple[str, ...]) -> None:
+    """autoBackupRule (or its nested metadata/spec) as JSON null (key present, value null —
+    distinct from an absent key) must not crash _parse_rule(); tenant_id/plan_id default to
+    empty strings instead of raising. uid/namespace come from the top-level object and are
+    unaffected."""
+    raw = null_out(SAMPLE_RULE_RAW, *null_paths)
+
+    rule = _parse_rule(raw)
+
+    assert rule.uid == RULE_UID
+    assert rule.namespace == NAMESPACE
+    assert rule.tenant_id == ""
+    assert rule.plan_id == ""
+    assert _is_terminating(raw) is False
+
+
+@pytest.mark.parametrize("null_paths", [
+    ("autoBackupRule",),
+    ("autoBackupRule.metadata",),
+    ("autoBackupRule.metadata.deletionTimestamp",),
+], ids=["null_auto_backup_rule", "null_metadata", "null_deletion_timestamp"])
+def test_is_terminating_treats_null_paths_as_not_terminating(null_paths: tuple[str, ...]) -> None:
+    """A non-zero deletionTimestamp normally marks a rule as terminating (see
+    test_list_excludes_terminating_rules); nulling any ancestor on the way to it must fall
+    back to "not terminating" instead of crashing."""
+    raw = null_out(TERMINATING_RULE_RAW, *null_paths)
+
+    assert _is_terminating(raw) is False
+
+
+def test_parse_collab_setting_survives_null_fields() -> None:
+    """planId/namespace as JSON null must not crash _parse_collab_setting(); both default
+    to empty strings (same as a disabled setting)."""
+    raw = null_out(ACTIVE_SETTING, "planId", "namespace")
+
+    setting = _parse_collab_setting(raw)
+
+    assert setting.plan_id == ""
+    assert setting.namespace == ""
+    assert setting.enabled is False
 
 
 @pytest.mark.asyncio

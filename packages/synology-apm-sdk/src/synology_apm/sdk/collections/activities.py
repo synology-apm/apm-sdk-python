@@ -68,7 +68,7 @@ async def _fetch_backup_activity_detail(
         "/api/v1/activity/backup/activity",
         params={"executionId": execution_id, "workloadUid": workload_id, "namespace": namespace},
     )
-    detail: dict[str, Any] = raw_detail.get("activity", {})
+    detail: dict[str, Any] = raw_detail.get("activity") or {}
     return detail
 
 
@@ -81,8 +81,8 @@ async def _fetch_backup_detail_extras(
     data_change_bytes/data_deduped_bytes/backup_scope from the detail, then fetches and
     parses the activity's detail log.
     """
-    detail_status = detail.get("status", {})
-    detail_spec = detail.get("spec", {})
+    detail_status = detail.get("status") or {}
+    detail_spec = detail.get("spec") or {}
 
     data_change, data_deduped = _parse_data_sizes(detail_status)
     machine_info = detail_spec.get("machineInfo") or {}
@@ -94,7 +94,7 @@ async def _fetch_backup_detail_extras(
         params={"limit": 1001, "offset": 0, "backupActivityUid": log_uid},
         headers=_tunnel_headers(log_namespace),
     )
-    log_entries = _parse_log_entries(raw_logs.get("detailLogs", []))
+    log_entries = _parse_log_entries(raw_logs.get("detailLogs") or [])
 
     return {
         "data_change_bytes": data_change,
@@ -156,7 +156,7 @@ class _BaseActivityCollection(Generic[ActivityT]):
 
         raw = await self._session.get(self._list_endpoint, params=params)
         return ListResult(
-            [self._parse(item["activity"]) for item in raw.get("activities", [])], raw.get("total")
+            [self._parse(item["activity"]) for item in raw.get("activities") or []], raw.get("total")
         )
 
     async def _find_by_id(self, activity_id: str) -> ActivityT | None:
@@ -175,7 +175,7 @@ class _BaseActivityCollection(Generic[ActivityT]):
                     ("orderDirection", "ORDER_DIRECTION_DESC"),
                 ]
                 raw_page = await self._session.get(self._list_endpoint, params=params)
-                return raw_page.get("activities", []), raw_page.get("total")
+                return raw_page.get("activities") or [], raw_page.get("total")
 
             async for item in _paginate(fetch):
                 act = self._parse(item["activity"])
@@ -317,7 +317,7 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
         )
         base = _parse_backup_activity(detail)
         extras = await _fetch_backup_detail_extras(
-            self._session, detail, log_uid=detail.get("uid", ""), log_namespace=version.namespace,
+            self._session, detail, log_uid=detail.get("uid") or "", log_namespace=version.namespace,
         )
         return dataclasses.replace(base, **extras)
 
@@ -435,7 +435,7 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
             params={"limit": 1001, "offset": 0, "restoreActivityUid": activity_id},
             headers=_tunnel_headers(target.namespace),
         )
-        log_entries = _parse_log_entries(raw_logs.get("detailLogs", []))
+        log_entries = _parse_log_entries(raw_logs.get("detailLogs") or [])
         return dataclasses.replace(target, log_entries=log_entries)
 
     async def get_latest_by_workload_name(self, name: str) -> RestoreActivity:

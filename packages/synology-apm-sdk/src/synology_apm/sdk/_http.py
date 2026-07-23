@@ -384,7 +384,7 @@ class WebAPISession:
             )
 
         if not data.get("success"):
-            error = data.get("error", {})
+            error = data.get("error")
             raw_code = error.get("code") if isinstance(error, dict) else None
             code: int | None = raw_code if isinstance(raw_code, int) else None
             msg = (
@@ -543,20 +543,20 @@ class WebAPISession:
             c = error_obj.get("code")
             if c is not None and int(c) != 0:
                 code = int(c)
-                msg = error_obj.get("message", "API error")
+                msg = error_obj.get("message") or "API error"
             # Format 3: error.errorCode (APM REST nested)
             if code is None:
                 c = error_obj.get("errorCode")
                 if c is not None and int(c) != 0:
                     code = int(c)
-                    msg = error_obj.get("message", "API error")
+                    msg = error_obj.get("message") or "API error"
 
         # Format 2: top-level errorCode (APM REST)
         if code is None:
             c = data.get("errorCode")
             if c is not None and int(c) != 0:
                 code = int(c)
-                msg = data.get("message", "API error")
+                msg = data.get("message") or "API error"
 
         if code is not None:
             self._raise_for_error_code(code, msg, response_body=data)

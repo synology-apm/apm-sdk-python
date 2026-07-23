@@ -238,32 +238,32 @@ class LogCollection:
 def _parse_activity_log(raw: dict[str, Any]) -> APMActivityLog:
     """Convert a raw aem-log entry to APMActivityLog."""
     return APMActivityLog(
-        level=_LEVEL_PARSE.get(raw.get("level", ""), LogLevel.INFO),
-        log_type=_TYPE_PARSE.get(raw.get("type", "")),
-        timestamp=_parse_ts(raw.get("timestamp", 0)),
-        username=raw.get("username", ""),
-        description=raw.get("description", ""),
+        level=_LEVEL_PARSE.get(raw.get("level") or "", LogLevel.INFO),
+        log_type=_TYPE_PARSE.get(raw.get("type") or ""),
+        timestamp=_parse_ts(raw.get("timestamp") or 0),
+        username=raw.get("username") or "",
+        description=raw.get("description") or "",
     )
 
 
 def _parse_drive_log(raw: dict[str, Any]) -> DriveLog:
     """Convert a raw drive-log entry to DriveLog."""
     return DriveLog(
-        level=_LEVEL_PARSE.get(raw.get("level", ""), LogLevel.INFO),
-        timestamp=_parse_ts(raw.get("timestamp", 0)),
-        description=raw.get("description", ""),
-        server_name=raw.get("deviceName", "-"),
-        model=raw.get("model", "-"),
-        location=raw.get("location", "-"),
-        serial=raw.get("serial", "-"),
+        level=_LEVEL_PARSE.get(raw.get("level") or "", LogLevel.INFO),
+        timestamp=_parse_ts(raw.get("timestamp") or 0),
+        description=raw.get("description") or "",
+        server_name=raw.get("deviceName") or "-",
+        model=raw.get("model") or "-",
+        location=raw.get("location") or "-",
+        serial=raw.get("serial") or "-",
     )
 
 
 def _user_log_fields(raw: dict[str, Any]) -> dict[str, Any]:
     """Shared level/timestamp/username/description fields of connection and system logs."""
     return {
-        "level": _LEVEL_PARSE.get(raw.get("level", ""), LogLevel.INFO),
-        "timestamp": _parse_ts(raw.get("timestamp", 0)),
-        "username": raw.get("username", ""),
-        "description": raw.get("description", ""),
+        "level": _LEVEL_PARSE.get(raw.get("level") or "", LogLevel.INFO),
+        "timestamp": _parse_ts(raw.get("timestamp") or 0),
+        "username": raw.get("username") or "",
+        "description": raw.get("description") or "",
     }

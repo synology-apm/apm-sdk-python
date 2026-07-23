@@ -8,6 +8,10 @@ from typing import Any
 import pytest
 from aiointercept import aiointercept
 
+from synology_apm.sdk.collections._activity_parsers import (
+    _parse_activity_common,
+    _parse_backup_activity,
+)
 from synology_apm.sdk.collections.activities import BackupActivityCollection
 from synology_apm.sdk.enums import (
     ActivityWorkloadType,
@@ -29,6 +33,7 @@ from tests.unit.sdk.conftest import (
     connected_session,
     make_backup_activity_raw,
     make_session,
+    null_out,
 )
 
 RECENT_URL = (
@@ -204,6 +209,20 @@ async def test_list_running_activity_has_no_finished_at() -> None:
     assert act.duration_seconds is None
     assert act.data_transferred_bytes == 0
     assert act.progress == 42
+
+
+async def test_list_survives_null_activities_key() -> None:
+    """A JSON-null "activities" key (present but null -- distinct from an absent key) must not
+    crash list(); it degrades to an empty result rather than raising."""
+    async with connected_session() as (session, m):
+
+        m.get(RECENT_URL, payload={"activities": None, "total": 0})
+        collection = BackupActivityCollection(session)
+        activities, total = await collection.list()
+        await session.disconnect()
+
+    assert activities == []
+    assert total == 0
 
 
 async def test_running_activity_minus_one_duration_is_none() -> None:
@@ -882,3 +901,70 @@ async def test_backup_parser_maps_unknown_verify_status_to_none() -> None:
     with patch.object(session, "get", AsyncMock(return_value={"activities": [_ACT_WITH_UNKNOWN_VERIFY], "total": 1})):
         acts, _ = await collection.list()
     assert acts[0].verify_status is None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Null vs. absent JSON field handling (see SDK README "Null vs. Absent JSON
+# Field Handling") -- parser functions called directly with every touched
+# field set to explicit JSON null simultaneously.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_parse_activity_common_survives_null_fields() -> None:
+    """_parse_activity_common must not crash when every touched field is JSON null; all
+    falsy-typed fields fall back to their documented safe defaults."""
+    raw = null_out(
+        make_backup_activity_raw()["activity"],
+        "uid", "namespace", "spec", "status",
+    )
+    common = _parse_activity_common(raw)
+    assert common["activity_id"] == ""
+    assert common["namespace"] == ""
+    assert common["workload_id"] == ""
+    assert common["workload_name"] == ""
+    assert common["plan_name"] == ""
+    assert common["workload_namespace"] == ""
+    assert common["progress"] == 0
+    assert common["workload_type"] == ActivityWorkloadType.UNKNOWN
+    assert common["category"] == WorkloadCategory.MACHINE
+    assert common["processed_success_count"] is None
+    assert common["processed_warning_count"] is None
+    assert common["processed_error_count"] is None
+
+    # processedSuccessCount/WarningCount/ErrorCount only apply for an item-based subtype
+    # (FS/M365); exercise their null fallback to 0 with workloadType kept valid so that
+    # branch actually runs.
+    fs_raw = null_out(
+        make_backup_activity_raw(spec={"workloadType": "MACHINE_FS"})["activity"],
+        "spec.workload", "spec.workloadName", "spec.planName",
+        "status.progress", "status.processedSuccessCount",
+        "status.processedWarningCount", "status.processedErrorCount",
+    )
+    fs_common = _parse_activity_common(fs_raw)
+    assert fs_common["workload_id"] == ""
+    assert fs_common["workload_name"] == ""
+    assert fs_common["plan_name"] == ""
+    assert fs_common["workload_namespace"] == ""
+    assert fs_common["progress"] == 0
+    assert fs_common["processed_success_count"] == 0
+    assert fs_common["processed_warning_count"] == 0
+    assert fs_common["processed_error_count"] == 0
+
+
+def test_parse_backup_activity_survives_null_fields() -> None:
+    """_parse_backup_activity must not crash when durationTime/backupStatus/executionId are
+    JSON null, and when the whole status object is JSON null."""
+    raw = null_out(
+        make_backup_activity_raw()["activity"],
+        "status.durationTime", "status.backupStatus", "status.executionId",
+    )
+    act = _parse_backup_activity(raw)
+    assert act.duration_seconds is None
+    assert act.execution_id == ""
+    assert act.status == BackupActivityStatus.BACKING_UP
+
+    raw_no_status = null_out(make_backup_activity_raw()["activity"], "status")
+    act2 = _parse_backup_activity(raw_no_status)
+    assert act2.execution_id == ""
+    assert act2.duration_seconds is None
+    assert act2.status == BackupActivityStatus.BACKING_UP

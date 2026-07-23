@@ -136,28 +136,19 @@ class TestErrorMessagesPointToCli:
     see README's Configure APM Credentials / Troubleshooting sections, which this message
     text is meant to match."""
 
-    def test_missing_host_message_points_to_cli(self, monkeypatch, capsys):
+    @pytest.mark.parametrize(
+        "host,username,password",
+        [
+            ("", "admin", "secret"),
+            ("apm.corp.com", "", "secret"),
+            ("apm.corp.com", "admin", ""),
+        ],
+        ids=["missing_host", "missing_username", "missing_password"],
+    )
+    def test_missing_credential_message_points_to_cli(self, monkeypatch, capsys, host, username, password):
         with patch(
             "synology_apm.mcp._config.resolve_connection",
-            return_value=ResolvedConnection("", "admin", "secret", True),
-        ), pytest.raises(AuthenticationError) as exc_info:
-            _load()
-        assert "synology-apm-cli config set" in str(exc_info.value)
-        assert "synology-apm-cli config set" in capsys.readouterr().err
-
-    def test_missing_username_message_points_to_cli(self, monkeypatch, capsys):
-        with patch(
-            "synology_apm.mcp._config.resolve_connection",
-            return_value=ResolvedConnection("apm.corp.com", "", "secret", True),
-        ), pytest.raises(AuthenticationError) as exc_info:
-            _load()
-        assert "synology-apm-cli config set" in str(exc_info.value)
-        assert "synology-apm-cli config set" in capsys.readouterr().err
-
-    def test_missing_password_message_points_to_cli(self, monkeypatch, capsys):
-        with patch(
-            "synology_apm.mcp._config.resolve_connection",
-            return_value=ResolvedConnection("apm.corp.com", "admin", "", True),
+            return_value=ResolvedConnection(host, username, password, True),
         ), pytest.raises(AuthenticationError) as exc_info:
             _load()
         assert "synology-apm-cli config set" in str(exc_info.value)

@@ -135,19 +135,20 @@ def test_final_status(outcome: str, expected: str) -> None:
 # ── MailExportJob.log_label ───────────────────────────────────────────────────
 
 
-def test_log_label_with_unit_label() -> None:
-    job = _make_job(identity="alice@contoso.com", unit_label="mailbox")
-    assert job.log_label == "alice@contoso.com (mailbox)"
-
-
-def test_log_label_with_archive_unit_label() -> None:
-    job = _make_job(identity="alice@contoso.com", unit_label="archive mailbox")
-    assert job.log_label == "alice@contoso.com (archive mailbox)"
-
-
-def test_log_label_without_unit_label() -> None:
-    job = _make_job(identity="marketing@contoso.com", unit_label="")
-    assert job.log_label == "marketing@contoso.com"
+@pytest.mark.parametrize(
+    "identity,unit_label,expected",
+    [
+        ("alice@contoso.com", "mailbox", "alice@contoso.com (mailbox)"),
+        ("alice@contoso.com", "archive mailbox", "alice@contoso.com (archive mailbox)"),
+        ("marketing@contoso.com", "", "marketing@contoso.com"),
+    ],
+    ids=["with-unit-label", "with-archive-unit-label", "without-unit-label"],
+)
+def test_log_label(identity: str, unit_label: str, expected: str) -> None:
+    """log_label appends "(unit_label)" when a unit_label is given, and omits the
+    parenthetical entirely when it is empty."""
+    job = _make_job(identity=identity, unit_label=unit_label)
+    assert job.log_label == expected
 
 
 # ── _build_exchange_domain ────────────────────────────────────────────────────

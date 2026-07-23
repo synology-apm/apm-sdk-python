@@ -243,6 +243,27 @@ async def test_group_export_start_default_name_falls_back_to_workload_name() -> 
     assert post_body["exportName"].endswith(".pst")
 
 
+async def test_group_export_start_survives_null_task_execution_id() -> None:
+    """taskExecutionId JSON null (key present, value null — distinct from an absent key) in
+    the start_export response must not crash GroupExportCollection.start(); the resulting
+    M365ExportStartResult.execution_id falls back to an empty string."""
+    from unittest.mock import AsyncMock, patch
+
+    from synology_apm.sdk.collections.m365_mail_export import GroupExportCollection
+
+    session = make_session()
+    col = GroupExportCollection(session)
+    version = _make_group_export_version()
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get, \
+         patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_get.return_value = {"folderList": [{"id": "folder-1"}]}
+        mock_post.return_value = {"provideLink": True, "taskExecutionId": None}
+        result = await col.start(SAMPLE_M365_GROUP_WL_OBJ, version)
+
+    assert result.execution_id == ""
+
+
 async def test_group_export_start_sends_connection_id_for_copy_location() -> None:
     """start() includes connectionId in the body when the selected location carries one."""
     from unittest.mock import AsyncMock, patch

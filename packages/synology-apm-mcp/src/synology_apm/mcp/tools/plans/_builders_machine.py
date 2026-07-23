@@ -147,7 +147,8 @@ def _parse_backup_window(enabled: bool, spec: str | None) -> MachineBackupWindow
                 if enabled and start > end:
                     raise ValueError(
                         f"Backup window range start must be <= end, got {rng!r}. "
-                        f"For an overnight window use two ranges, e.g. 20-23,0-8."
+                        f"Allowed hours only apply within the same calendar day; for a window "
+                        f"spanning midnight, split it across two day tokens, e.g. 'mon:20-23;tue:0-8'."
                     )
                 hours.update(range(start, end + 1))
             else:

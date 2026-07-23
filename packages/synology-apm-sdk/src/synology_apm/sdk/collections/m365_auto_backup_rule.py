@@ -14,24 +14,26 @@ from ..models.m365_auto_backup_rule import (
 
 def _parse_collab_setting(raw: dict[str, Any]) -> M365CollabServiceSetting:
     return M365CollabServiceSetting(
-        plan_id=raw.get("planId", ""),
-        namespace=raw.get("namespace", ""),
+        plan_id=raw.get("planId") or "",
+        namespace=raw.get("namespace") or "",
     )
 
 
 def _is_terminating(raw: dict[str, Any]) -> bool:
-    ts = raw.get("autoBackupRule", {}).get("metadata", {}).get("deletionTimestamp", "0")
+    rule_obj: dict[str, Any] = raw.get("autoBackupRule") or {}
+    metadata: dict[str, Any] = rule_obj.get("metadata") or {}
+    ts = metadata.get("deletionTimestamp") or "0"
     return ts not in ("", "0")
 
 
 def _parse_rule(raw: dict[str, Any]) -> M365AutoBackupRule:
-    rule_obj: dict[str, Any] = raw.get("autoBackupRule", {})
-    spec: dict[str, Any] = rule_obj.get("spec", {})
+    rule_obj: dict[str, Any] = raw.get("autoBackupRule") or {}
+    spec: dict[str, Any] = rule_obj.get("spec") or {}
     return M365AutoBackupRule(
-        uid=raw.get("uid", ""),
-        namespace=raw.get("namespace", ""),
-        tenant_id=spec.get("tenantId", ""),
-        plan_id=spec.get("backupPlanId", ""),
+        uid=raw.get("uid") or "",
+        namespace=raw.get("namespace") or "",
+        tenant_id=spec.get("tenantId") or "",
+        plan_id=spec.get("backupPlanId") or "",
         exchange_group_ids=tuple(raw.get("exchangeGroupIds") or []),
         onedrive_group_ids=tuple(raw.get("onedriveGroupIds") or []),
         chat_group_ids=tuple(raw.get("chatGroupIds") or []),

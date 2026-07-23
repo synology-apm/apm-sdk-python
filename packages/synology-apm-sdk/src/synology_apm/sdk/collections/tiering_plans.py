@@ -25,6 +25,11 @@ from ._shared import (
 _RESOURCE_TYPE = "TieringPlan"
 
 
+def _spec_destination(raw: dict[str, Any]) -> str:
+    """Extract spec.destination, tolerating an absent or null spec/destination."""
+    return (raw.get("spec") or {}).get("destination") or ""
+
+
 class TieringPlanCollection:
     """Collection interface for managing tiering plans.
 
@@ -59,7 +64,7 @@ class TieringPlanCollection:
             params["keyword"] = name_contains
 
         raw = await self._session.get("/api/v1/plan/tiering_plan", params=params)
-        plans_raw = raw.get("plans", [])
+        plans_raw = raw.get("plans") or []
         cache = await _build_destination_cache(self._session, plans_raw)
         return ListResult([_parse_tiering_plan(p, cache) for p in plans_raw], raw.get("total"))
 
@@ -74,7 +79,7 @@ class TieringPlanCollection:
         """
         with _not_found_as(_RESOURCE_TYPE, plan_id, detail_code=4003):
             raw = await self._session.get(f"/api/v1/plan/tiering_plan/{plan_id}")
-        dest_id = raw.get("spec", {}).get("destination", "")
+        dest_id = _spec_destination(raw)
         dest = await _fetch_remote_storage_location(self._session, dest_id) if dest_id else None
         return _parse_tiering_plan(raw, {dest_id: dest} if dest else {})
 
@@ -99,11 +104,11 @@ class TieringPlanCollection:
                 "offset": offset,
             }
             raw = await self._session.get("/api/v1/plan/tiering_plan", params=params)
-            return raw.get("plans", []), raw.get("total")
+            return raw.get("plans") or [], raw.get("total")
 
         async for p in _paginate(fetch):
-            if p.get("spec", {}).get("name", "").lower() == q:
-                dest_id = p.get("spec", {}).get("destination", "")
+            if ((p.get("spec") or {}).get("name") or "").lower() == q:
+                dest_id = _spec_destination(p)
                 dest = await _fetch_remote_storage_location(self._session, dest_id) if dest_id else None
                 return _parse_tiering_plan(p, {dest_id: dest} if dest else {})
         raise ResourceNotFoundError(
@@ -200,7 +205,7 @@ async def _build_destination_cache(
     unique: list[str] = []
     seen: set[str] = set()
     for p in plans_raw:
-        dest_id = p.get("spec", {}).get("destination", "")
+        dest_id = _spec_destination(p)
         if dest_id and dest_id not in seen:
             unique.append(dest_id)
             seen.add(dest_id)
@@ -233,18 +238,18 @@ async def _get_plans_bulk(
 
 def _parse_tiering_plan(raw: dict[str, Any], dest_cache: dict[str, LocationInfo]) -> TieringPlan:
     """Convert a tiering plan API response object to the SDK TieringPlan model."""
-    spec: dict[str, Any] = raw.get("spec", {})
-    tiering_info: dict[str, Any] = raw.get("tieringInfo", {})
-    schedule: dict[str, Any] = spec.get("schedule", {})
-    dest_id = spec.get("destination", "")
+    spec: dict[str, Any] = raw.get("spec") or {}
+    tiering_info: dict[str, Any] = raw.get("tieringInfo") or {}
+    schedule: dict[str, Any] = spec.get("schedule") or {}
+    dest_id = spec.get("destination") or ""
     return TieringPlan(
         plan_id=raw["id"],
-        name=spec.get("name", ""),
-        description=spec.get("description", ""),
-        tiering_after_days=spec.get("tieringAfterDays", 0),
-        daily_check_time=time(schedule.get("runHour", 0), schedule.get("runMin", 0)),
+        name=spec.get("name") or "",
+        description=spec.get("description") or "",
+        tiering_after_days=spec.get("tieringAfterDays") or 0,
+        daily_check_time=time(schedule.get("runHour") or 0, schedule.get("runMin") or 0),
         destination=dest_cache.get(dest_id),
-        server_count=tiering_info.get("protectedServerCount", 0),
+        server_count=tiering_info.get("protectedServerCount") or 0,
         tiering_status=_parse_tiering_status(tiering_info),
         run_schedule_by_controller_time=spec.get("controllerUtcOffset") is not None,
     )

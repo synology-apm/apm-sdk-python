@@ -6,7 +6,11 @@ from typing import Any
 import pytest
 from yarl import URL
 
-from synology_apm.sdk.collections.retirement_plans import RetirementPlanCollection
+from synology_apm.sdk.collections.retirement_plans import (
+    RetirementPlanCollection,
+    _parse_retirement_plan,
+    _parse_retirement_retention,
+)
 from synology_apm.sdk.exceptions import APIError, PlanInUseError, PlanNameConflictError, ResourceNotFoundError
 from synology_apm.sdk.models.retirement_plan import (
     RetirementPlan,
@@ -17,6 +21,7 @@ from tests.unit.sdk.conftest import (
     BASE_URL,
     assert_resource_error,
     connected_session,
+    null_out,
     request_json,
 )
 
@@ -445,3 +450,58 @@ async def test_create_reraises_non_conflict_api_error() -> None:
         await session.disconnect()
 
     assert exc_info.type is APIError
+
+
+# ── null vs. absent JSON field handling ─────────────────────────────────────
+#
+# One test per parser function, each covering every field that function's
+# null-safety touches at once — see the SDK README's "Null vs. Absent JSON Field
+# Handling". Parser functions are pure and called directly, no HTTP mocking needed.
+
+
+def test_parse_retirement_retention_survives_null_fields() -> None:
+    """_parse_retirement_retention() with keepDays/keepVersions both JSON null (keys
+    present, values null — distinct from absent keys) must not crash; falls back to
+    the same defaults as an empty retention object (days=None, keep_latest_version=False)."""
+    policy = _parse_retirement_retention({"keepDays": None, "keepVersions": None})
+    assert policy.days is None
+    assert policy.keep_latest_version is False
+
+
+def test_parse_retirement_plan_survives_null_fields() -> None:
+    """_parse_retirement_plan() with spec.retention JSON null (spec otherwise valid),
+    and separately with the whole spec plus workloadCount JSON null, must not crash;
+    every dependent field falls back to its documented default."""
+    raw_null_retention = null_out(SAMPLE_PLAN_RAW, "spec.retention")
+    plan = _parse_retirement_plan(raw_null_retention)
+    assert plan.plan_id == PLAN_ID
+    assert plan.name == "Keep 30 Days"
+    assert plan.description == "Retire and keep 30 days"
+    assert plan.retention is not None
+    assert plan.retention.days is None
+    assert plan.retention.keep_latest_version is False
+
+    raw_null_spec = null_out(SAMPLE_PLAN_RAW, "spec", "workloadCount")
+    plan_null_spec = _parse_retirement_plan(raw_null_spec)
+    assert plan_null_spec.plan_id == PLAN_ID
+    assert plan_null_spec.name == ""
+    assert plan_null_spec.description == ""
+    assert plan_null_spec.workload_count == 0
+    assert plan_null_spec.retention is not None
+    assert plan_null_spec.retention.days is None
+    assert plan_null_spec.run_schedule_by_controller_time is False
+
+
+async def test_list_survives_null_plans_field() -> None:
+    """A backup_plan-archive list response whose plans key is JSON null (key present,
+    value null — distinct from an absent key or an empty list) must not crash
+    list(); it yields an empty result instead of raising."""
+    async with connected_session() as (session, m):
+
+        m.get(PLANS_URL, payload={"plans": None, "total": 0})
+        col = RetirementPlanCollection(session)
+        result, total = await col.list()
+        await session.disconnect()
+
+    assert result == []
+    assert total == 0

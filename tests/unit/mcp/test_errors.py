@@ -103,18 +103,19 @@ class TestSdkErrorToDictCodes:
         result = _convert(exc)
         assert "hint" not in result
 
-    def test_ssl_certificate_failure_gets_ssl_error_code_and_hint(self):
+    @pytest.mark.parametrize(
+        "message,expected_code",
+        [
+            ("SSL certificate verification failed for apm.corp.com", "ssl_error"),
+            ("Cannot connect to apm.corp.com: Connection refused", "connection_error"),
+        ],
+        ids=["ssl_certificate_failure", "cannot_connect"],
+    )
+    def test_message_pattern_gets_specific_error_code_and_hint(self, message, expected_code):
         from synology_apm.sdk import APIError
-        exc = APIError("SSL certificate verification failed for apm.corp.com")
+        exc = APIError(message)
         result = _convert(exc)
-        assert result["error"] == "ssl_error"
-        assert "synology-apm-cli config set" in result["hint"]
-
-    def test_cannot_connect_gets_connection_error_code_and_hint(self):
-        from synology_apm.sdk import APIError
-        exc = APIError("Cannot connect to apm.corp.com: Connection refused")
-        result = _convert(exc)
-        assert result["error"] == "connection_error"
+        assert result["error"] == expected_code
         assert "synology-apm-cli config set" in result["hint"]
 
     def test_unrelated_api_error_falls_back_to_apm_error_without_hint(self):

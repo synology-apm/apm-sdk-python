@@ -97,12 +97,12 @@ def _parse_retention(raw: dict[str, Any]) -> ProtectionRetentionPolicy:
     if raw.get("keepAll"):
         return ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_ALL)
 
-    keep_days: int = raw.get("keepDays", 0)
-    keep_versions: int = raw.get("keepVersions", 0)
-    gfs_days: int = raw.get("gfsDays", 0)
-    gfs_weeks: int = raw.get("gfsWeeks", 0)
-    gfs_months: int = raw.get("gfsMonths", 0)
-    gfs_years: int = raw.get("gfsYears", 0)
+    keep_days: int = raw.get("keepDays") or 0
+    keep_versions: int = raw.get("keepVersions") or 0
+    gfs_days: int = raw.get("gfsDays") or 0
+    gfs_weeks: int = raw.get("gfsWeeks") or 0
+    gfs_months: int = raw.get("gfsMonths") or 0
+    gfs_years: int = raw.get("gfsYears") or 0
     has_gfs = gfs_days > 0 or gfs_weeks > 0 or gfs_months > 0 or gfs_years > 0
 
     if (keep_days > 0 and keep_versions > 0) or has_gfs:
@@ -132,10 +132,10 @@ def _parse_schedule(raw: dict[str, Any]) -> ProtectionSchedule:
     if schedule_type == "EVENT":
         return ProtectionSchedule(frequency=ScheduleFrequency.AFTER_BACKUP, start_time=None)
 
-    repeat_type = raw.get("repeatType", "DAILY")
-    repeat_hour: int = raw.get("repeatHour", 0)
-    run_hour: int = raw.get("runHour", 0)
-    run_min: int = raw.get("runMin", 0)
+    repeat_type = raw.get("repeatType")
+    repeat_hour: int = raw.get("repeatHour") or 0
+    run_hour: int = raw.get("runHour") or 0
+    run_min: int = raw.get("runMin") or 0
 
     if repeat_type == "WEEKLY":
         frequency = ScheduleFrequency.WEEKLY
@@ -160,16 +160,16 @@ def _parse_backup_copy_status(bcs: dict[str, Any] | None) -> PlanBackupCopyStatu
     """Parse a backupCopyStatus dict from the plan API response into PlanBackupCopyStatus."""
     if bcs is None:
         return None
-    raw_status = bcs.get("copyStatus", "")
-    pending = _parse_count_field(bcs.get("pendingVersionCount", "0"))
-    remaining = _parse_bytes_field(bcs.get("remainingBytes", ""))
+    raw_status = bcs.get("copyStatus") or ""
+    pending = _parse_count_field(bcs.get("pendingVersionCount"))
+    remaining = _parse_bytes_field(bcs.get("remainingBytes"))
     resolved = _parse_copy_status_core(raw_status, pending, remaining, bcs.get("statusReason"))
     if resolved is None:
         return None
     status, reason, pending, remaining = resolved
     skipped = 0
     if status == VersionCopyStatus.SKIPPED:
-        skipped = _parse_count_field(bcs.get("skippedWorkloadCount", "0"))
+        skipped = _parse_count_field(bcs.get("skippedWorkloadCount"))
     return PlanBackupCopyStatus(status=status, reason=reason, pending_version_count=pending,
                                 remaining_bytes=remaining, skipped_workload_count=skipped)
 
@@ -177,47 +177,47 @@ def _parse_backup_copy_status(bcs: dict[str, Any] | None) -> PlanBackupCopyStatu
 def _parse_vm_config(raw: dict[str, Any]) -> MachineVmConfig:
     return MachineVmConfig(
         enable_app_aware_bkp=bool(raw.get("enableAppAwareBkp", True)),
-        enable_verification=bool(raw.get("enableVerification", False)),
-        verification_video_duration_seconds=int(raw.get("verificationPolicy", 120)),
-        enable_datastore_usage_detection=bool(raw.get("enableDatastoreAware", False)),
-        datastore_min_free_space_percent=int(raw.get("datastoreReservedPercentage", 10)),
+        enable_verification=bool(raw.get("enableVerification") or False),
+        verification_video_duration_seconds=int(raw.get("verificationPolicy") or 120),
+        enable_datastore_usage_detection=bool(raw.get("enableDatastoreAware") or False),
+        datastore_min_free_space_percent=int(raw.get("datastoreReservedPercentage") or 10),
     )
 
 
 def _parse_pc_config(raw: dict[str, Any]) -> MachinePcConfig:
     return MachinePcConfig(
-        shutdown_after_backup=bool(raw.get("shutdownAfterComplete", False)),
-        wake_for_backup=bool(raw.get("wakeUp", False)),
-        prevent_sleep_during_backup=bool(raw.get("windowsWorkingState", False)),
+        shutdown_after_backup=bool(raw.get("shutdownAfterComplete") or False),
+        wake_for_backup=bool(raw.get("wakeUp") or False),
+        prevent_sleep_during_backup=bool(raw.get("windowsWorkingState") or False),
     )
 
 
 def _parse_ps_config(raw: dict[str, Any]) -> MachinePsConfig:
     return MachinePsConfig(
         enable_app_aware_bkp=bool(raw.get("enableAppAwareBkp", True)),
-        enable_verification=bool(raw.get("enableVerification", False)),
-        verification_video_duration_seconds=int(raw.get("verificationPolicy", 120)),
-        shutdown_after_backup=bool(raw.get("shutdownAfterComplete", False)),
-        wake_for_backup=bool(raw.get("wakeUp", False)),
-        prevent_sleep_during_backup=bool(raw.get("windowsWorkingState", False)),
+        enable_verification=bool(raw.get("enableVerification") or False),
+        verification_video_duration_seconds=int(raw.get("verificationPolicy") or 120),
+        shutdown_after_backup=bool(raw.get("shutdownAfterComplete") or False),
+        wake_for_backup=bool(raw.get("wakeUp") or False),
+        prevent_sleep_during_backup=bool(raw.get("windowsWorkingState") or False),
     )
 
 
 def _parse_db_config(raw: dict[str, Any]) -> MachineDbConfig | None:
     if raw.get("disableDbBackup", True):
         return None
-    mssql = raw.get("mssqlServer", {})
-    oracle = raw.get("oracleServer", {})
+    mssql = raw.get("mssqlServer") or {}
+    oracle = raw.get("oracleServer") or {}
     return MachineDbConfig(
-        action_on_error=_DB_ACTION_MAP.get(raw.get("logsProcessing", ""), DbActionOnError.CONTINUE),
-        mssql_log_setting=_MSSQL_LOG_MAP.get(mssql.get("logSettings", ""), MssqlLogSetting.DO_NOT_TRUNCATE),
-        oracle_log_setting=_ORACLE_LOG_MAP.get(oracle.get("logSettings", ""), OracleLogSetting.DO_NOT_DELETE),
+        action_on_error=_DB_ACTION_MAP.get(raw.get("logsProcessing") or "", DbActionOnError.CONTINUE),
+        mssql_log_setting=_MSSQL_LOG_MAP.get(mssql.get("logSettings") or "", MssqlLogSetting.DO_NOT_TRUNCATE),
+        oracle_log_setting=_ORACLE_LOG_MAP.get(oracle.get("logSettings") or "", OracleLogSetting.DO_NOT_DELETE),
     )
 
 
 def _parse_backup_window(raw: dict[str, Any]) -> MachineBackupWindow:
-    enabled = bool(raw.get("enabled", False))
-    data = raw.get("data", "")
+    enabled = bool(raw.get("enabled") or False)
+    data = raw.get("data") or ""
     allowed_hours: dict[WeekDay, frozenset[int]] = {}
     if enabled and len(data) == 168:
         for day in WeekDay:
@@ -234,12 +234,11 @@ def _parse_backup_window(raw: dict[str, Any]) -> MachineBackupWindow:
 def _parse_task_schedule(raw: dict[str, Any]) -> MachineTaskSchedule:
     schedule_type = raw.get("scheduleType")
 
-    log_off = bool(raw.get("logOff", False))
-    screen_lock = bool(raw.get("screenLock", False))
-    startup = bool(raw.get("startup", False))
-    period_base = raw.get("periodBase", "HOUR")
-    period_length = int(raw.get("periodLength", 1))
-    secs = _PERIOD_BASE_SECS.get(period_base, 3600) * period_length
+    log_off = bool(raw.get("logOff") or False)
+    screen_lock = bool(raw.get("screenLock") or False)
+    startup = bool(raw.get("startup") or False)
+    period_length = int(raw.get("periodLength") or 1)
+    secs = _PERIOD_BASE_SECS.get(raw.get("periodBase") or "", 3600) * period_length
 
     event_trigger: EventTriggerConfig | None = None
     if log_off or screen_lock or startup:
@@ -260,8 +259,8 @@ def _parse_task_schedule(raw: dict[str, Any]) -> MachineTaskSchedule:
 
 
 def _parse_task_config(raw: dict[str, Any]) -> MachineTaskConfig:
-    wl_type = _MACHINE_WORKLOAD_TYPE_MAP.get(raw.get("workloadType", ""), MachineWorkloadType.PC)
-    os_type = _OS_TYPE_MAP.get(raw.get("osType", "NONE"), MachineOsType.NONE)
+    wl_type = _MACHINE_WORKLOAD_TYPE_MAP.get(raw.get("workloadType") or "", MachineWorkloadType.PC)
+    os_type = _OS_TYPE_MAP.get(raw.get("osType") or "", MachineOsType.NONE)
     use_main = bool(raw.get("useMainSchedule", True))
 
     agent_scope_raw = raw.get("agentScope")
@@ -271,15 +270,15 @@ def _parse_task_config(raw: dict[str, Any]) -> MachineTaskConfig:
     include_boot_partition = True
 
     if agent_scope_raw is not None:
-        source_type = agent_scope_raw.get("sourceType", "BACKUP_SOURCE_BAREMETAL")
+        source_type = agent_scope_raw.get("sourceType")
         scope = _SOURCE_TYPE_MAP.get(source_type, MachineTaskScope.ENTIRE_MACHINE)
-        custom_volumes = tuple(agent_scope_raw.get("customVolume", []))
-        include_external_drives = bool(agent_scope_raw.get("enableBackupExternal", False))
+        custom_volumes = tuple(agent_scope_raw.get("customVolume") or [])
+        include_external_drives = bool(agent_scope_raw.get("enableBackupExternal") or False)
         include_boot_partition = bool(agent_scope_raw.get("includeBootPartition", True))
 
     schedule: MachineTaskSchedule | None = None
     if not use_main:
-        schedule = _parse_task_schedule(raw.get("schedule", {}))
+        schedule = _parse_task_schedule(raw.get("schedule") or {})
 
     return MachineTaskConfig(
         workload_type=wl_type,
@@ -298,11 +297,11 @@ def _parse_plan(
     location_cache: dict[str, LocationInfo] | None = None,
 ) -> ProtectionPlan:
     """API response → SDK ProtectionPlan. Category is inferred from spec.serviceType."""
-    spec: dict[str, Any] = raw.get("spec", {})
-    service_type = spec.get("serviceType", "DEVICE")
+    spec: dict[str, Any] = raw.get("spec") or {}
+    service_type = spec.get("serviceType")
     category = WorkloadCategory.M365 if service_type == "M365" else WorkloadCategory.MACHINE
 
-    retention = _parse_retention(spec.get("retention", {}))
+    retention = _parse_retention(spec.get("retention") or {})
 
     schedule: ProtectionSchedule | None = None
     config_device: dict[str, Any] = {}
@@ -332,12 +331,12 @@ def _parse_plan(
             )
             backup_copy_policy = BackupCopyPolicy(
                 destination=dest_loc,
-                retention=_parse_retention(bc.get("retention", {})),
+                retention=_parse_retention(bc.get("retention") or {}),
                 schedule=bc_sched,
             )
 
-    protected = raw.get("protectedWorkloadCount", 0)
-    unprotected = raw.get("unprotectedWorkloadCount", 0)
+    protected = raw.get("protectedWorkloadCount") or 0
+    unprotected = raw.get("unprotectedWorkloadCount") or 0
     backup_copy_status = _parse_backup_copy_status(raw.get("backupCopyStatus"))
 
     # Config fields — only present in get() responses (configDevice will be absent or empty in list())
@@ -364,14 +363,14 @@ def _parse_plan(
 
     return ProtectionPlan(
         plan_id=raw["id"],
-        name=spec.get("name", ""),
+        name=spec.get("name") or "",
         category=category,
         policy=policy,
         workload_count=protected + unprotected,
-        description=spec.get("description", ""),
+        description=spec.get("description") or "",
         successful_workload_count=protected,
         unsuccessful_workload_count=unprotected,
-        is_immutable=bool(spec.get("isImmutable", False)),
+        is_immutable=bool(spec.get("isImmutable") or False),
         backup_copy_policy=backup_copy_policy,
         backup_copy_status=backup_copy_status,
         run_schedule_by_controller_time=spec.get("controllerUtcOffset") is not None,

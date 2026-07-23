@@ -451,36 +451,31 @@ def test_print_table_workload_row_and_total_line(capsys: pytest.CaptureFixture[s
     assert "3.0 KB" in wl_total_line
 
 
-def test_print_table_server_reduction_with_ratio(capsys: pytest.CaptureFixture[str]) -> None:
-    srv_rows = [
-        _SrvRow(
-            name="apm-server-01",
-            logical_backup_data_bytes=2048,
-            physical_backup_data_bytes=1024,
-            backup_data_reduction_bytes=1024,
-            backup_data_reduction_ratio=50.0,
-        )
-    ]
-
-    _print_table([], srv_rows, [])
-
-    lines = capsys.readouterr().out.splitlines()
-    srv_line = next(ln for ln in lines if "apm-server-01" in ln)
-    assert "1.0 KB (50.0%)" in srv_line
-    srv_total_line = [ln for ln in lines if ln.startswith("  Total")][1]  # 2nd Total row = server section
-    assert "1.0 KB (50.0%)" in srv_total_line
-
-
-def test_print_table_server_reduction_none_shows_dash(
+@pytest.mark.parametrize(
+    "logical_bytes,physical_bytes,reduction_bytes,reduction_ratio,expected",
+    [
+        (2048, 1024, 1024, 50.0, "1.0 KB (50.0%)"),
+        (None, None, None, 0.0, "—"),
+    ],
+    ids=["with-ratio", "none-shows-dash"],
+)
+def test_print_table_server_reduction(
     capsys: pytest.CaptureFixture[str],
+    logical_bytes: int | None,
+    physical_bytes: int | None,
+    reduction_bytes: int | None,
+    reduction_ratio: float,
+    expected: str,
 ) -> None:
+    """The server row and its section Total row render the reduction as "size (ratio%)"
+    when known, or "—" when the underlying byte counts are None."""
     srv_rows = [
         _SrvRow(
             name="apm-server-01",
-            logical_backup_data_bytes=None,
-            physical_backup_data_bytes=None,
-            backup_data_reduction_bytes=None,
-            backup_data_reduction_ratio=0.0,
+            logical_backup_data_bytes=logical_bytes,
+            physical_backup_data_bytes=physical_bytes,
+            backup_data_reduction_bytes=reduction_bytes,
+            backup_data_reduction_ratio=reduction_ratio,
         )
     ]
 
@@ -488,9 +483,9 @@ def test_print_table_server_reduction_none_shows_dash(
 
     lines = capsys.readouterr().out.splitlines()
     srv_line = next(ln for ln in lines if "apm-server-01" in ln)
-    assert "—" in srv_line
-    srv_total_line = [ln for ln in lines if ln.startswith("  Total")][1]
-    assert "—" in srv_total_line
+    assert expected in srv_line
+    srv_total_line = [ln for ln in lines if ln.startswith("  Total")][1]  # 2nd Total row = server section
+    assert expected in srv_total_line
 
 
 def test_print_table_server_total_reduction_without_logical_omits_ratio(

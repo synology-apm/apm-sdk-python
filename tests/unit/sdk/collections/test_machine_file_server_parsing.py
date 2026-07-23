@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from synology_apm.sdk.collections.machine import MachineWorkloadCollection
+from synology_apm.sdk.collections.machine import MachineWorkloadCollection, _parse_workload
 from synology_apm.sdk.enums import (
     FileServerType,
     MachineWorkloadType,
@@ -23,7 +23,7 @@ from synology_apm.sdk.models.workload import (
     FileServerPathSelector,
     MachineWorkload,
 )
-from tests.unit.sdk.conftest import assert_resource_error, make_session
+from tests.unit.sdk.conftest import assert_resource_error, make_session, null_out
 
 WORKLOAD_ID = "wl-id-001"
 NAMESPACE = "ns-001"
@@ -201,6 +201,32 @@ async def test_fs_workload_empty_remote_session_list_defaults_to_whole_machine()
     cfg = workloads[0].fs_config
     assert cfg is not None
     assert cfg.selectors == (FileServerPathSelector(path=""),)
+
+
+def test_parse_workload_fs_config_survives_null_fields() -> None:
+    """_parse_workload's FS-config branch (spec.configFs) and _parse_selectors both fall back
+    to safe defaults when their fields are JSON null (distinct from the field being absent,
+    already covered above)."""
+    raw = null_out(
+        SAMPLE_FS_RAW,
+        "spec.configFs.hostIp", "spec.configFs.hostPort", "spec.configFs.osName",
+        "spec.configFs.loginUser", "spec.configFs.agentlessEnableWindowsVss",
+        "spec.configFs.connectionTimeout",
+    )
+    raw["spec"]["configFs"]["remoteSessionList"] = json.dumps(
+        [{"selected_path": None, "filtered_paths": ["docker"]}]
+    )
+    wl = _parse_workload(raw)
+
+    cfg = wl.fs_config
+    assert cfg is not None
+    assert cfg.host_ip == ""
+    assert cfg.host_port == 445
+    assert cfg.server_type == FileServerType.UNKNOWN
+    assert cfg.login_user == ""
+    assert cfg.enable_vss is False
+    assert cfg.connection_timeout_seconds == 180
+    assert cfg.selectors == (FileServerPathSelector(path="", excluded_paths=("docker",)),)
 
 
 async def test_non_fs_workload_fs_config_is_none() -> None:

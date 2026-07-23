@@ -138,14 +138,14 @@ async def _fetch_remote_storage_location(
         raw = await session.get(f"/api/v1/external_storage/{dest_id}")
     except ResourceNotFoundError:
         return None
-    name = raw.get("displayName", "")
+    name = raw.get("displayName") or ""
     if not name:
         return None
     return LocationInfo(
         is_remote_storage=True,
-        identifier=raw.get("id", dest_id),
+        identifier=raw.get("id") or dest_id,
         name=name,
-        endpoint=raw.get("endpoint", ""),
+        endpoint=raw.get("endpoint") or "",
         vault=raw.get("vaultName") or None,
     )
 
@@ -391,7 +391,7 @@ class _VersionMixin:
         )
         wl_type = self._version_wl_type(workload)
         return ListResult(
-            [_parse_version(v, workload.workload_id, wl_type) for v in raw.get("versions", [])],
+            [_parse_version(v, workload.workload_id, wl_type) for v in raw.get("versions") or []],
             raw.get("total"),
         )
 
@@ -565,11 +565,11 @@ def _parse_tiering_status(tiering_info: dict[str, Any]) -> TieringStatus | None:
 
     Returns None when tieringStatus is absent or empty.
     """
-    raw_status = tiering_info.get("tieringStatus", "")
+    raw_status = tiering_info.get("tieringStatus") or ""
     if not raw_status:
         return None
-    pending = _parse_count_field(tiering_info.get("pendingVersionCount", "0"))
-    remaining = _parse_bytes_field(tiering_info.get("remainingBytes", ""))
+    pending = _parse_count_field(tiering_info.get("pendingVersionCount"))
+    remaining = _parse_bytes_field(tiering_info.get("remainingBytes"))
     resolved = _parse_copy_status_core(raw_status, pending, remaining, tiering_info.get("statusReason"))
     if resolved is None:
         return None
@@ -604,17 +604,17 @@ def _build_location_info(server_info: dict[str, Any]) -> LocationInfo | None:
     Returns None when hostName is empty (no server configured).
     namespace falls back to uid when absent/empty or equal to "shared".
     """
-    name = server_info.get("hostName", "")
+    name = server_info.get("hostName") or ""
     if not name:
         return None
-    namespace = server_info.get("namespace", "")
+    namespace = server_info.get("namespace") or ""
     if not namespace or namespace == "shared":
-        namespace = server_info.get("uid", "")
+        namespace = server_info.get("uid") or ""
     return LocationInfo(
-        is_remote_storage=server_info.get("destinationType", "APPLIANCE") != "APPLIANCE",
+        is_remote_storage=(server_info.get("destinationType") or "APPLIANCE") != "APPLIANCE",
         identifier=namespace,
         name=name,
-        endpoint=server_info.get("addr", ""),
+        endpoint=server_info.get("addr") or "",
         vault=server_info.get("vaultName") or None,
     )
 
@@ -645,7 +645,7 @@ async def _post_version_lock(
         endpoint,
         json={"groups": [{"groupLeader": leader, "nsUidPairs": pairs}]},
     )
-    errors = resp.get("errors", []) if resp else []
+    errors = resp.get("errors") or [] if resp else []
     if errors:
         action = "lock" if locked else "unlock"
         raise APIError(
@@ -661,44 +661,43 @@ def _parse_version(
     raw: dict[str, Any], workload_id: str, wl_type: MachineWorkloadType | None = None
 ) -> WorkloadVersion:
     """Convert a single version object from an API response to the SDK model."""
-    spec: dict[str, Any] = raw.get("spec", {})
-    status: dict[str, Any] = raw.get("status", {})
+    spec: dict[str, Any] = raw.get("spec") or {}
+    status: dict[str, Any] = raw.get("status") or {}
 
-    portal_version_id: str = spec.get("versionId", "")
-    version_id: str = raw.get("id", "")
+    portal_version_id: str = spec.get("versionId") or ""
+    version_id: str = raw.get("id") or ""
     created_at = _parse_ts_or_now(status.get("startTime"))
 
-    version_status = _VERSION_STATUS_MAP.get(status.get("status", ""), VersionStatus.NO_BACKUPS)
+    version_status = _VERSION_STATUS_MAP.get(status.get("status") or "", VersionStatus.NO_BACKUPS)
 
-    transferred_raw = status.get("transferredSize", "0")
-    size_bytes = int(transferred_raw) if transferred_raw else 0
+    size_bytes = int(status.get("transferredSize") or 0)
 
     locations = [
         loc
-        for raw_loc in raw.get("locations", [])
+        for raw_loc in raw.get("locations") or []
         for loc in _parse_version_location(raw_loc)
     ]
     verify_status = _parse_verify_status(status.get("verifyStatus"), wl_type) if wl_type is not None else None
 
-    copy_status = _VERSION_COPY_STATUS_MAP.get(raw.get("copyStatus", ""))
+    copy_status = _VERSION_COPY_STATUS_MAP.get(raw.get("copyStatus") or "")
     copy_reason: CopyReason | None = None
     if copy_status in (VersionCopyStatus.SKIPPED, VersionCopyStatus.RETRY, VersionCopyStatus.FAILED):
         copy_reason = _resolve_copy_reason(
-            status.get("copyStatus", ""),
+            status.get("copyStatus") or "",
             status.get("copyStatusReason"),
         )
 
     return WorkloadVersion(
         version_id=version_id,
         workload_id=workload_id,
-        namespace=raw.get("namespace", ""),
+        namespace=raw.get("namespace") or "",
         created_at=created_at,
         status=version_status,
-        execution_id=spec.get("executionId", ""),
-        locked=bool(spec.get("locked", False)),
+        execution_id=spec.get("executionId") or "",
+        locked=bool(spec.get("locked") or False),
         changed_size_bytes=size_bytes,
         portal_version_id=portal_version_id,
-        snapshot_id=spec.get("snapshotId", ""),
+        snapshot_id=spec.get("snapshotId") or "",
         verify_status=verify_status,
         locations=locations,
         copy_status=copy_status,
@@ -770,7 +769,7 @@ def _raise_first_batch_error(
         return
     err = errors[0]
     raise InvalidOperationError(
-        err.get("message", default_message),
+        err.get("message") or default_message,
         resource_type="Workload",
         resource_id=workload.workload_id,
         error_code=err.get("errorCode"),
@@ -816,11 +815,11 @@ async def _resolve_namespace_to_server_id(session: WebAPISession, namespace: str
             "/api/v1/infra/backup_server",
             params={"offset": offset, "limit": limit},
         )
-        return raw.get("backupServers", []), raw.get("total")
+        return raw.get("backupServers") or [], raw.get("total")
 
     async for server in _paginate(fetch, page_size=500):
         if server.get("namespace") == namespace:
-            return str(server.get("id", ""))
+            return str(server.get("id") or "")
     raise ResourceNotFoundError(
         f"No backup server with namespace {namespace!r}.",
         resource_type="BackupServer",
@@ -830,26 +829,26 @@ async def _resolve_namespace_to_server_id(session: WebAPISession, namespace: str
 
 def _parse_version_location(raw: dict[str, Any]) -> list[VersionLocation]:
     """Expand one API locations[] entry into one VersionLocation per versionUid."""
-    is_remote = raw.get("locationType", "APPLIANCE") != "APPLIANCE"
+    is_remote = (raw.get("locationType") or "APPLIANCE") != "APPLIANCE"
     ext = raw.get("externalStorageInfo")
     if ext:
         info = LocationInfo(
             is_remote_storage=is_remote,
-            identifier=ext.get("storageUid", ""),
-            name=ext.get("displayName", ""),
-            endpoint=ext.get("endpoint", ""),
+            identifier=ext.get("storageUid") or "",
+            name=ext.get("displayName") or "",
+            endpoint=ext.get("endpoint") or "",
             vault=ext.get("vaultName") or None,
         )
     else:
-        server_info = raw.get("backupServerInfo", {})
+        server_info = raw.get("backupServerInfo") or {}
         info = LocationInfo(
             is_remote_storage=is_remote,
-            identifier=raw.get("namespace", ""),
-            name=server_info.get("hostName", ""),
-            endpoint=server_info.get("address", ""),
+            identifier=raw.get("namespace") or "",
+            name=server_info.get("hostName") or "",
+            endpoint=server_info.get("address") or "",
             vault=None,
         )
-    namespace = raw.get("namespace", "")
+    namespace = raw.get("namespace") or ""
     connection_id: str | None = raw.get("connectionId") or None
     return [
         VersionLocation(
@@ -858,5 +857,5 @@ def _parse_version_location(raw: dict[str, Any]) -> list[VersionLocation]:
             location_id=uid,
             connection_id=connection_id,
         )
-        for uid in raw.get("versionUids", [])
+        for uid in raw.get("versionUids") or []
     ]

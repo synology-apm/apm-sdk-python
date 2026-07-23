@@ -96,14 +96,12 @@ def test_reason_never_backed_up_only_true_skips_retry_branch() -> None:
     assert _reason(wl, never_backed_up_only=True) == "overdue"
 
 
-def test_reason_overdue_healthy_status() -> None:
+@pytest.mark.parametrize("never_backed_up_only", [False, True])
+def test_reason_overdue_healthy_status(never_backed_up_only: bool) -> None:
+    """A workload with an old backup and a healthy (non-retry) status is "overdue",
+    regardless of never_backed_up_only."""
     wl = make_machine_workload(last_backup_at=_OLD, status=WorkloadStatus.SUCCESS)
-    assert _reason(wl, never_backed_up_only=False) == "overdue"
-
-
-def test_reason_overdue_healthy_status_never_backed_up_only_true() -> None:
-    wl = make_machine_workload(last_backup_at=_OLD, status=WorkloadStatus.SUCCESS)
-    assert _reason(wl, never_backed_up_only=True) == "overdue"
+    assert _reason(wl, never_backed_up_only=never_backed_up_only) == "overdue"
 
 
 def test_reason_m365_workload_never_backed_up() -> None:
@@ -130,9 +128,18 @@ def test_is_stale_recent_backup_success_is_not_stale() -> None:
     assert _is_stale(wl, _CUTOFF, never_backed_up_only=False) is False
 
 
-def test_is_stale_old_backup_success_overdue() -> None:
+@pytest.mark.parametrize(
+    ("never_backed_up_only", "expected"),
+    [(False, True), (True, False)],
+    ids=["old-backup-success-overdue", "never-backed-up-only-true-not-stale"],
+)
+def test_is_stale_old_backup_healthy_status(
+    never_backed_up_only: bool, expected: bool
+) -> None:
+    """A workload with an old backup and a healthy (non-retry) status is stale by
+    default, but is not counted as stale when never_backed_up_only=True."""
     wl = make_machine_workload(last_backup_at=_OLD, status=WorkloadStatus.SUCCESS)
-    assert _is_stale(wl, _CUTOFF, never_backed_up_only=False) is True
+    assert _is_stale(wl, _CUTOFF, never_backed_up_only=never_backed_up_only) is expected
 
 
 def test_is_stale_needs_retry_recent_backup_still_stale() -> None:
@@ -148,12 +155,6 @@ def test_is_stale_never_backed_up_only_true_skips_retry_and_overdue() -> None:
     # never_backed_up_only=True: only last_backup_at is None returns True.
     # A workload with a recent backup and FAILED status is not stale.
     wl = make_machine_workload(last_backup_at=_RECENT, status=WorkloadStatus.FAILED)
-    assert _is_stale(wl, _CUTOFF, never_backed_up_only=True) is False
-
-
-def test_is_stale_never_backed_up_only_true_old_backup_success_not_stale() -> None:
-    # Overdue (old backup, healthy status) is not counted when never_backed_up_only=True.
-    wl = make_machine_workload(last_backup_at=_OLD, status=WorkloadStatus.SUCCESS)
     assert _is_stale(wl, _CUTOFF, never_backed_up_only=True) is False
 
 

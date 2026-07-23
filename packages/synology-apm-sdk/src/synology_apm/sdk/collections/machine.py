@@ -85,8 +85,8 @@ def _raise_fs_duplicate(resource_id: str, error_code: int, response_body: object
 
 def _batch_errors_from_failed(resp: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Flatten the device-workload batch response's {"failed": {"entries": [{"error": {...}}]}} shape."""
-    entries = ((resp or {}).get("failed") or {}).get("entries", [])
-    return [e.get("error", {}) for e in entries]
+    entries = ((resp or {}).get("failed") or {}).get("entries") or []
+    return [e.get("error") or {} for e in entries]
 
 
 
@@ -204,7 +204,7 @@ class MachineWorkloadCollection(_VersionMixin):
             "/api/v2/workload/device_workload", params=param_pairs
         )
         workloads: list[MachineWorkload] = [
-            _parse_workload(w) for w in raw.get("workloads", [])
+            _parse_workload(w) for w in raw.get("workloads") or []
         ]
         return ListResult(workloads, raw.get("total"))
 
@@ -252,7 +252,7 @@ class MachineWorkloadCollection(_VersionMixin):
                 ("filter.protectStatus", _machine_protect_status(is_retired)),
             ]
             raw = await self._session.get("/api/v2/workload/device_workload", params=param_pairs)
-            return raw.get("workloads", []), raw.get("total")
+            return raw.get("workloads") or [], raw.get("total")
 
         async for raw_wl in _paginate(fetch):
             wl = _parse_workload(raw_wl)
@@ -336,13 +336,13 @@ class MachineWorkloadCollection(_VersionMixin):
 
         resp = await self._session.post("/api/v1/workload/device_workload/batch", json=body)
 
-        errors: list[dict[str, Any]] = resp.get("errors", []) if resp else []
+        errors: list[dict[str, Any]] = resp.get("errors") or [] if resp else []
         if not errors:
             return
 
         first_error = errors[0]
-        error_code: int = first_error.get("errorCode", 0)
-        error_message: str = first_error.get("message", "unknown error")
+        error_code: int = first_error.get("errorCode") or 0
+        error_message: str = first_error.get("message") or "unknown error"
 
         if error_code == _FS_DUPLICATE_ERROR_CODE:
             _raise_fs_duplicate(request.host_ip, error_code, first_error)
@@ -519,7 +519,7 @@ def _parse_selectors(raw: str) -> tuple[FileServerPathSelector, ...]:
         return (FileServerPathSelector(path=""),)
     return tuple(
         FileServerPathSelector(
-            path=e.get("selected_path", ""),
+            path=e.get("selected_path") or "",
             excluded_paths=tuple(e.get("filtered_paths") or []),
         )
         for e in entries
@@ -538,37 +538,34 @@ def _build_remote_session_list(selectors: tuple[FileServerPathSelector, ...]) ->
 
 def _parse_workload(raw: dict[str, Any]) -> MachineWorkload:
     """Convert a single workload object from an API response to the SDK model."""
-    spec: dict[str, Any] = raw.get("spec", {})
-    status: dict[str, Any] = raw.get("status", {})
+    spec: dict[str, Any] = raw.get("spec") or {}
+    status: dict[str, Any] = raw.get("status") or {}
 
     workload_id: str = raw["id"]
-    name: str = spec.get("workloadName", "")
-    namespace: str = raw.get("namespace", "")
+    name: str = spec.get("workloadName") or ""
+    namespace: str = raw.get("namespace") or ""
 
     last_backup_at = _parse_ts_optional(status.get("lastBackupTime"))
 
-    usage_raw = status.get("usage", "0")
-    protected_data_bytes = int(usage_raw) if usage_raw else 0
+    protected_data_bytes = int(status.get("usage") or 0)
+    backup_copy_data_bytes = int(raw.get("copyDataUsage") or 0)
 
-    copy_usage_raw = raw.get("copyDataUsage", "0")
-    backup_copy_data_bytes = int(copy_usage_raw) if copy_usage_raw else 0
-
-    api_type: str = spec.get("workloadType", "")
+    api_type: str = spec.get("workloadType") or ""
     wl_type = _MACHINE_WORKLOAD_TYPE_MAP.get(api_type, MachineWorkloadType.PC)
 
     plan_ref: dict[str, Any] = spec.get("planRef") or {}
-    plan_name: str = raw.get("planName", "")
+    plan_name: str = raw.get("planName") or ""
     is_retired = plan_ref.get("kind") == "ArchivePlan"
     plan = _build_workload_plan_ref(
-        plan_ref.get("uid", ""), plan_name, is_archive=is_retired, category=WorkloadCategory.MACHINE
+        plan_ref.get("uid") or "", plan_name, is_archive=is_retired, category=WorkloadCategory.MACHINE
     )
 
-    server_info: dict[str, Any] = raw.get("backupServerInfo", {}) or {}
-    copy_info: dict[str, Any] = raw.get("backupCopyServerInfo", {}) or {}
+    server_info: dict[str, Any] = raw.get("backupServerInfo") or {}
+    copy_info: dict[str, Any] = raw.get("backupCopyServerInfo") or {}
     backup_server = _build_location_info(server_info)
     backup_copy_destination = _build_location_info(copy_info)
 
-    job_status: str = status.get("jobStatus", "")
+    job_status: str = status.get("jobStatus") or ""
     cache: dict[str, Any] = raw.get("cache") or {}
     backup_progress: int | None
     items_backed_up: int | None
@@ -599,7 +596,7 @@ def _parse_workload(raw: dict[str, Any]) -> MachineWorkload:
         backup_progress = None
         items_backed_up = None
         workload_status = _LVR_TO_STATUS.get(
-            status.get("latestVersionResult", ""), WorkloadStatus.NO_BACKUPS
+            status.get("latestVersionResult") or "", WorkloadStatus.NO_BACKUPS
         )
 
     # agent config (PC/PS only)
@@ -634,12 +631,12 @@ def _parse_workload(raw: dict[str, Any]) -> MachineWorkload:
     if api_type == "FS" and spec.get("configFs"):
         cfg: dict[str, Any] = spec["configFs"]
         fs_config = FileServerConfig(
-            host_ip=cfg.get("hostIp", ""),
-            host_port=int(cfg.get("hostPort", 445)),
-            server_type=_FS_OS_TYPE_MAP.get(cfg.get("osName", ""), FileServerType.UNKNOWN),
-            login_user=cfg.get("loginUser", ""),
-            enable_vss=bool(cfg.get("agentlessEnableWindowsVss", False)),
-            connection_timeout_seconds=int(cfg.get("connectionTimeout", 180)),
+            host_ip=cfg.get("hostIp") or "",
+            host_port=int(cfg.get("hostPort") or 445),
+            server_type=_FS_OS_TYPE_MAP.get(cfg.get("osName") or "", FileServerType.UNKNOWN),
+            login_user=cfg.get("loginUser") or "",
+            enable_vss=bool(cfg.get("agentlessEnableWindowsVss") or False),
+            connection_timeout_seconds=int(cfg.get("connectionTimeout") or 180),
             selectors=_parse_selectors(cfg.get("remoteSessionList") or "[]"),
         )
 

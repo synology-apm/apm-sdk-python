@@ -48,17 +48,19 @@ class TestLoadManifest:
 
 
 class TestResolveSdkPath:
-    def test_resolves_real_async_method(self) -> None:
+    @pytest.mark.parametrize(
+        "path,expected",
+        [
+            ("get_site_info", True),
+            ("get_site_info_typo", False),
+        ],
+        ids=["real_async_method", "nonexistent_path"],
+    )
+    def test_resolves_path_to_expected_result(self, path: str, expected: bool) -> None:
         from synology_apm.sdk import APMClient
 
         client = APMClient("host", "user", "pass")
-        assert check_mcp_coverage._resolve_sdk_path(client, "get_site_info") is True
-
-    def test_returns_false_for_nonexistent_path(self) -> None:
-        from synology_apm.sdk import APMClient
-
-        client = APMClient("host", "user", "pass")
-        assert check_mcp_coverage._resolve_sdk_path(client, "get_site_info_typo") is False
+        assert check_mcp_coverage._resolve_sdk_path(client, path) is expected
 
     def test_returns_false_for_non_async_attribute(self) -> None:
         from synology_apm.sdk import APMClient

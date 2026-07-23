@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from yarl import URL
 
-from synology_apm.sdk.collections.tiering_plans import TieringPlanCollection
+from synology_apm.sdk.collections.tiering_plans import TieringPlanCollection, _parse_tiering_plan
 from synology_apm.sdk.enums import CopyReason, RemoteStorageType, VersionCopyStatus
 from synology_apm.sdk.exceptions import APIError, PlanInUseError, PlanNameConflictError, ResourceNotFoundError
 from synology_apm.sdk.models.remote_storage import RemoteStorage
@@ -16,6 +16,7 @@ from tests.unit.sdk.conftest import (
     BASE_URL,
     assert_resource_error,
     connected_session,
+    null_out,
     request_json,
 )
 
@@ -733,3 +734,51 @@ async def test_create_unsupported_storage_type_raises_value_error() -> None:
         await session.disconnect()
 
     assert ("POST", URL(create_url)) not in m.requests
+
+
+# ── null vs. absent JSON field handling ─────────────────────────────────────
+#
+# One test per parser function, each covering every field that function's
+# null-safety touches at once — see the SDK README's "Null vs. Absent JSON Field
+# Handling". _parse_tiering_plan is pure and called directly, no HTTP mocking needed.
+
+
+def test_parse_tiering_plan_survives_null_fields() -> None:
+    """_parse_tiering_plan() with spec.schedule and tieringInfo both JSON null (spec
+    otherwise valid), and separately with the whole spec JSON null, must not crash;
+    daily_check_time/server_count/tiering_status fall back to their documented
+    zero-value defaults instead of raising AttributeError."""
+    raw_null_schedule_and_info = null_out(SAMPLE_PLAN_RAW, "spec.schedule", "tieringInfo")
+    plan = _parse_tiering_plan(raw_null_schedule_and_info, {})
+    assert plan.plan_id == PLAN_ID
+    assert plan.name == "tiering plan 1"
+    assert plan.tiering_after_days == 9876
+    assert plan.daily_check_time == time(0, 0)
+    assert plan.server_count == 0
+    assert plan.tiering_status is None
+    assert plan.destination is None
+
+    raw_null_spec = null_out(SAMPLE_PLAN_RAW, "spec")
+    plan_null_spec = _parse_tiering_plan(raw_null_spec, {})
+    assert plan_null_spec.plan_id == PLAN_ID
+    assert plan_null_spec.name == ""
+    assert plan_null_spec.description == ""
+    assert plan_null_spec.tiering_after_days == 0
+    assert plan_null_spec.daily_check_time == time(0, 0)
+    assert plan_null_spec.destination is None
+    assert plan_null_spec.run_schedule_by_controller_time is False
+
+
+async def test_list_survives_null_plans_field() -> None:
+    """A tiering_plan list response whose plans key is JSON null (key present, value
+    null — distinct from an absent key or an empty list) must not crash list(); it
+    yields an empty result instead of raising."""
+    async with connected_session() as (session, m):
+
+        m.get(PLANS_URL, payload={"plans": None, "total": 0})
+        col = TieringPlanCollection(session)
+        result, total = await col.list()
+        await session.disconnect()
+
+    assert result == []
+    assert total == 0

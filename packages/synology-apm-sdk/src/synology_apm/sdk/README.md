@@ -373,6 +373,14 @@ The API fields are of string type; parser rules:
 
 > All `list()` methods return a `ListResult[T]` (a `NamedTuple` with `items` and `total` fields); callers (including tests) can unpack it positionally like a plain `(items, total)` tuple: `items, _ = await collection.list()`. `total` is `None` when the underlying data source cannot report a reliable count (see each collection method's docstring for which case applies). The one exception is `M365AutoBackupRuleCollection.list()`, which returns an `M365AutoBackupRuleListResult` (see its section below).
 
+### Null vs. Absent JSON Field Handling
+
+Use `raw.get(key) or T` instead of `raw.get(key, T)` for nested optional config blocks
+and for scalar fields whose default equals that type's falsy value. Avoid `or T` for
+any other default (e.g. `True`, non-empty sentinels) without concrete evidence the field
+can be `null`. Apply only to REST API response parsing, not TOML config or environment
+variables. Parenthesize `or` expressions inside comparisons or chained calls.
+
 ### MachineWorkloadCollection
 
 **get() / get_by_name():**

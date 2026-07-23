@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from yarl import URL
 
-from synology_apm.sdk.collections.m365 import M365WorkloadCollection
+from synology_apm.sdk.collections.m365 import M365WorkloadCollection, _parse_m365_workload
 from synology_apm.sdk.enums import (
     M365WorkloadType,
     RetentionType,
@@ -27,7 +27,14 @@ from synology_apm.sdk.models.protection_plan import (
 )
 from synology_apm.sdk.models.retirement_plan import RetirementPlan, RetirementRetentionPolicy
 from synology_apm.sdk.models.workload import M365UserInfo, M365Workload
-from tests.unit.sdk.conftest import BASE_URL, assert_resource_error, connected_session, make_session, request_json
+from tests.unit.sdk.conftest import (
+    BASE_URL,
+    assert_resource_error,
+    connected_session,
+    make_session,
+    null_out,
+    request_json,
+)
 
 WORKLOAD_POST_URL = f"{BASE_URL}/api/v1/workload/m365_workload"
 
@@ -409,27 +416,15 @@ async def test_get_by_name_matches_display_name() -> None:
     assert wl.name == "Alice"
 
 
-async def test_get_by_name_matches_email() -> None:
-    """get_by_name("alice@contoso.com") matches on user_principal_name."""
+@pytest.mark.parametrize("name", ["alice@contoso.com", "ALICE"], ids=["matches_email", "case_insensitive"])
+async def test_get_by_name_matches_user_principal_name(name: str) -> None:
+    """get_by_name() matches on user_principal_name, case-insensitively."""
     async with connected_session() as (session, m):
 
         m.post(WORKLOAD_POST_URL, payload={"m365Workloads": [SAMPLE_M365_WORKLOAD]})
 
         collection = M365WorkloadCollection(session)
-        wl = await collection.get_by_name("alice@contoso.com", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
-        await session.disconnect()
-
-    assert wl.workload_id == WORKLOAD_UID
-
-
-async def test_get_by_name_match_is_case_insensitive() -> None:
-    """Name match ignores case."""
-    async with connected_session() as (session, m):
-
-        m.post(WORKLOAD_POST_URL, payload={"m365Workloads": [SAMPLE_M365_WORKLOAD]})
-
-        collection = M365WorkloadCollection(session)
-        wl = await collection.get_by_name("ALICE", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
+        wl = await collection.get_by_name(name, TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
         await session.disconnect()
 
     assert wl.workload_id == WORKLOAD_UID
@@ -480,8 +475,12 @@ async def test_get_by_name_does_not_match_workload_id() -> None:
 # ── M365WorkloadCollection.list(keyword=) ────────────────────────────────
 
 
-async def test_list_not_retired_sends_plantype_backup() -> None:
-    """list(is_retired=False) sends planType=BACKUP server-side."""
+@pytest.mark.parametrize("is_retired,expected_plan_type", [
+    (False, "BACKUP"),
+    (True, "ARCHIVE"),
+])
+async def test_list_sends_plantype_for_is_retired(is_retired: bool, expected_plan_type: str) -> None:
+    """list(is_retired=...) sends the matching planType server-side."""
     from unittest.mock import AsyncMock, patch
 
     session = make_session()
@@ -489,25 +488,10 @@ async def test_list_not_retired_sends_plantype_backup() -> None:
 
     with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = {"m365Workloads": []}
-        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=False)
+        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=is_retired)
 
     body = mock_post.call_args[1]["json"]["filter"]
-    assert body["planType"] == "BACKUP"
-
-
-async def test_list_retired_sends_plantype_archive() -> None:
-    """list(is_retired=True) sends planType=ARCHIVE server-side."""
-    from unittest.mock import AsyncMock, patch
-
-    session = make_session()
-    collection = M365WorkloadCollection(session)
-
-    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
-        mock_post.return_value = {"m365Workloads": []}
-        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=True)
-
-    body = mock_post.call_args[1]["json"]["filter"]
-    assert body["planType"] == "ARCHIVE"
+    assert body["planType"] == expected_plan_type
 
 
 async def test_list_default_sends_plantype_backup() -> None:
@@ -557,8 +541,10 @@ async def test_list_keyword_is_passed_in_filter_body() -> None:
     assert body["keyword"] == "testuser4"
 
 
-async def test_list_without_keyword_omits_keyword_field() -> None:
-    """list() without keyword should NOT include keyword in the POST body."""
+@pytest.mark.parametrize("field_name", ["keyword", "planUids", "backupStatus"])
+async def test_list_omits_optional_filter_fields_when_not_provided(field_name: str) -> None:
+    """list() without keyword/plan/status should NOT include the corresponding optional
+    field in the POST body's filter."""
     from unittest.mock import AsyncMock, patch
 
     session = make_session()
@@ -570,7 +556,7 @@ async def test_list_without_keyword_omits_keyword_field() -> None:
 
     _, kwargs = mock_post.call_args
     body = kwargs["json"]["filter"]
-    assert "keyword" not in body
+    assert field_name not in body
 
 
 async def test_list_plan_is_passed_as_plan_uids_in_filter_body() -> None:
@@ -592,22 +578,6 @@ async def test_list_plan_is_passed_as_plan_uids_in_filter_body() -> None:
     assert body["planUids"] == [SAMPLE_PROTECTION_PLAN.plan_id, SAMPLE_RETIREMENT_PLAN.plan_id]
 
 
-async def test_list_without_plan_omits_plan_uids_field() -> None:
-    """list() without plan should NOT include planUids in the POST body."""
-    from unittest.mock import AsyncMock, patch
-
-    session = make_session()
-    collection = M365WorkloadCollection(session)
-
-    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
-        mock_post.return_value = {"m365Workloads": []}
-        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
-
-    _, kwargs = mock_post.call_args
-    body = kwargs["json"]["filter"]
-    assert "planUids" not in body
-
-
 async def test_list_status_is_passed_as_backup_status_in_filter_body() -> None:
     """list(status=[FAILED, PARTIAL]) should include backupStatus (raw API values) in the POST body."""
     from unittest.mock import AsyncMock, patch
@@ -625,22 +595,6 @@ async def test_list_status_is_passed_as_backup_status_in_filter_body() -> None:
     _, kwargs = mock_post.call_args
     body = kwargs["json"]["filter"]
     assert body["backupStatus"] == ["ERROR", "WARNING"]
-
-
-async def test_list_without_status_omits_backup_status_field() -> None:
-    """list() without status should NOT include backupStatus in the POST body."""
-    from unittest.mock import AsyncMock, patch
-
-    session = make_session()
-    collection = M365WorkloadCollection(session)
-
-    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
-        mock_post.return_value = {"m365Workloads": []}
-        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
-
-    _, kwargs = mock_post.call_args
-    body = kwargs["json"]["filter"]
-    assert "backupStatus" not in body
 
 
 async def test_list_status_retired_raises_value_error() -> None:
@@ -777,3 +731,155 @@ async def test_list_unknown_namespace_raises_not_found() -> None:
         mock_post.assert_not_called()
 
     assert_resource_error(exc_info, resource_type="BackupServer", resource_id="no-such-ns")
+
+
+async def test_list_namespace_survives_null_backup_servers_key() -> None:
+    """_resolve_namespace_to_server_id: backupServers present as JSON null (key present,
+    value null — distinct from an absent key) paginates as an empty page, same as an
+    absent key, and raises ResourceNotFoundError rather than crashing."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get, \
+         patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_get.return_value = {"backupServers": None, "total": 0}
+
+        collection = M365WorkloadCollection(session)
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace="no-such-ns")
+        mock_post.assert_not_called()
+
+    assert_resource_error(exc_info, resource_type="BackupServer", resource_id="no-such-ns")
+
+
+async def test_list_namespace_survives_null_backup_server_id() -> None:
+    """_resolve_namespace_to_server_id: a matching backup server whose "id" is JSON null
+    (key present, value null) resolves to an empty string instead of crashing. That empty
+    string is falsy, so the caller's `if backup_server_id:` guard drops the
+    backupServerUids constraint entirely rather than posting a bogus [""] filter."""
+    from unittest.mock import AsyncMock, patch
+
+    BS_NAMESPACE = "ns-m365-002"
+    session = make_session()
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get, \
+         patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_get.return_value = {
+            "backupServers": [{"id": None, "namespace": BS_NAMESPACE, "spec": {}, "status": {}}],
+        }
+        mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
+
+        collection = M365WorkloadCollection(session)
+        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=BS_NAMESPACE)
+
+    posted_filter = mock_post.call_args[1]["json"]["filter"]
+    assert "backupServerUids" not in posted_filter
+
+
+# ── _parse_m365_workload: null vs. absent JSON field handling ─────────────
+#
+# Called directly (not through list()) per the project's null-field testing convention —
+# it's a standalone parser function, so there's no need to drive it through a mocked HTTP
+# round-trip. See test_m365_integration.py for the SHAREPOINT/TEAMS/GROUP_EXCHANGE
+# per-workload-type info-block variants.
+
+
+def test_parse_m365_workload_returns_none_for_null_workload_type() -> None:
+    """workloadType JSON null (key present, value null — distinct from an absent key)
+    must not crash _parse_m365_workload(); the workload is dropped (returns None), same
+    as an unrecognized workloadType (see test_list_skips_unknown_workload_type)."""
+    raw = null_out(SAMPLE_M365_WORKLOAD, "workloadType")
+
+    assert _parse_m365_workload(raw) is None
+
+
+def test_parse_m365_workload_survives_null_entity_meta() -> None:
+    """entityMeta JSON null must not crash _parse_m365_workload(); tenant_id and the
+    EXCHANGE/ONEDRIVE/CHAT user_principal_name/name both fall back to empty strings."""
+    raw = null_out(SAMPLE_M365_WORKLOAD, "entityMeta")
+
+    wl = _parse_m365_workload(raw)
+
+    assert wl is not None
+    assert wl.tenant_id == ""
+    assert isinstance(wl.info, M365UserInfo)
+    assert wl.info.user_principal_name == ""
+    assert wl.name == ""
+
+
+def test_parse_m365_workload_survives_null_common_fields() -> None:
+    """Every top-level/common field _parse_m365_workload() touches with `or` defaults, as
+    JSON null, must not crash it and must fall back to its documented safe default: string
+    fields to "", numeric usage fields to 0, backup_status to the NO_BACKUPS default, and
+    the server/copy location blocks to None. Reuses the EXCHANGE workload_type branch."""
+    raw = null_out(
+        SAMPLE_M365_WORKLOAD,
+        "uid", "namespace", "planId", "planName", "planType",
+        "backupUsage", "copyUsage", "backupStatus",
+        "backupServerInfo", "backupCopyServerInfo",
+        "entityMeta.spec.tenantId", "entityMeta.spec.userInfo",
+    )
+
+    wl = _parse_m365_workload(raw)
+
+    assert wl is not None
+    assert wl.workload_id == ""
+    assert wl.namespace == ""
+    assert wl.tenant_id == ""
+    assert wl.plan.plan_id == ""
+    assert wl.plan.name == ""
+    assert wl.is_retired is False
+    assert wl.protected_data_bytes == 0
+    assert wl.backup_copy_data_bytes == 0
+    assert wl.status == WorkloadStatus.NO_BACKUPS
+    assert wl.backup_server is None
+    assert wl.backup_copy_destination is None
+    assert isinstance(wl.info, M365UserInfo)
+    assert wl.info.user_principal_name == ""
+    assert wl.name == ""
+
+
+# ── M365WorkloadCollection.list()/get()/get_by_name(): null "m365Workloads" key ────
+
+
+async def test_list_survives_null_m365_workloads_key() -> None:
+    """m365Workloads JSON null (key present, value null — distinct from an absent key)
+    must not crash list(); it is treated as an empty page instead of raising."""
+    async with connected_session() as (session, m):
+
+        m.post(WORKLOAD_POST_URL, payload={"m365Workloads": None})
+
+        collection = M365WorkloadCollection(session)
+        workloads, total = await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
+        await session.disconnect()
+
+    assert workloads == []
+
+
+async def test_get_survives_null_m365_workloads_key() -> None:
+    """m365Workloads JSON null in the nsUidPair lookup response must not crash get(); it
+    is treated as no match (ResourceNotFoundError), same as an empty list."""
+    async with connected_session() as (session, m):
+
+        m.post(WORKLOAD_POST_URL, payload={"m365Workloads": None})
+
+        collection = M365WorkloadCollection(session)
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await collection.get(WORKLOAD_UID, NAMESPACE, tenant_id=TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
+        await session.disconnect()
+
+    assert_resource_error(exc_info, resource_type="M365Workload", resource_id=WORKLOAD_UID)
+
+
+async def test_get_by_name_survives_null_m365_workloads_key() -> None:
+    """m365Workloads JSON null in the keyword-search response must not crash
+    get_by_name(); it is treated as no match (ResourceNotFoundError), same as an empty list."""
+    async with connected_session() as (session, m):
+
+        m.post(WORKLOAD_POST_URL, payload={"m365Workloads": None})
+
+        collection = M365WorkloadCollection(session)
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await collection.get_by_name("Alice", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE)
+        await session.disconnect()
+
+    assert_resource_error(exc_info, resource_type="M365Workload", resource_id="Alice")

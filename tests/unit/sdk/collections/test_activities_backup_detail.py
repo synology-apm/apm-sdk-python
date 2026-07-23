@@ -154,6 +154,32 @@ async def test_get_returns_none_optional_fields_when_detail_is_empty() -> None:
     assert act.log_entries == ()
 
 
+async def test_get_survives_null_activity_and_detail_logs() -> None:
+    """The detail API returning {"activity": null} and the log API returning
+    {"detailLogs": null} (both JSON null, key present -- distinct from an absent key or an
+    empty dict/list) must not crash get(); all derived fields fall back to their safe defaults."""
+    session = make_session()
+
+    detail_url = re.compile(r".*/api/v1/activity/backup/activity.*")
+    log_url = re.compile(r".*/api/v1/log/detail-log.*")
+
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        await session.connect()
+        m.get(RECENT_URL, payload={"activities": [SAMPLE_ACTIVITY_RAW], "total": 1})
+        m.get(detail_url, payload={"activity": None})
+        m.get(log_url, payload={"detailLogs": None})
+
+        collection = BackupActivityCollection(session)
+        act = await collection.get("act-uid-001")
+        await session.disconnect()
+
+    assert act.data_change_bytes is None
+    assert act.data_deduped_bytes is None
+    assert act.backup_scope is None
+    assert act.log_entries == ()
+
+
 # ── cancel() ──────────────────────────────────────────────────────────────
 
 
@@ -321,3 +347,32 @@ async def test_backup_get_by_version_sends_tunnel_route_header() -> None:
 
     log_call = next(c for c in session.get.call_args_list if "detail-log" in c.args[0])
     assert log_call.kwargs.get("headers") == {"x-syno-tunnel-route": "ns-backup-server-002"}
+
+
+async def test_backup_get_by_version_survives_null_detail_uid() -> None:
+    """detail.uid present as JSON null must fall back to "" for the log-fetch's
+    backupActivityUid param, not crash by passing None to the log endpoint."""
+    from unittest.mock import AsyncMock
+
+    session = AsyncMock(spec=WebAPISession)
+    session.get.side_effect = [
+        {"activity": {"uid": None, "spec": {}, "status": {}}},
+        {"detailLogs": []},
+    ]
+    version = WorkloadVersion(
+        version_id="ver-001",
+        workload_id="wl-uid",
+        namespace="ns-001",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        status=VersionStatus.SUCCESS,
+        execution_id="EX_1",
+        locked=False,
+        changed_size_bytes=0,
+    )
+
+    collection = BackupActivityCollection(session)
+    act = await collection.get_by_version(version)
+
+    log_call = next(c for c in session.get.call_args_list if "detail-log" in c.args[0])
+    assert log_call.kwargs["params"]["backupActivityUid"] == ""
+    assert act.log_entries == ()

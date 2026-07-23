@@ -10,7 +10,8 @@ import pytest
 from aiointercept import aiointercept
 from yarl import URL
 
-from synology_apm.sdk.collections.backup_servers import BackupServerCollection
+from synology_apm.sdk.collections._shared import _parse_tiering_status
+from synology_apm.sdk.collections.backup_servers import BackupServerCollection, _parse_backup_server
 from synology_apm.sdk.enums import BackupServerType, CopyReason, ServerStatus, VersionCopyStatus
 from synology_apm.sdk.exceptions import InvalidOperationError, ResourceNotFoundError
 from synology_apm.sdk.models.backup_server import BackupServer
@@ -22,6 +23,7 @@ from tests.unit.sdk.conftest import (
     assert_resource_error,
     connected_session,
     make_session,
+    null_out,
 )
 
 SERVERS_URL = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=500"
@@ -613,6 +615,63 @@ async def test_dp_empty_storage_returns_none() -> None:
     assert server.system_version == "APM 1.2-71845"
 
 
+@pytest.mark.parametrize("null_paths", [
+    (
+        "role", "spec.addr", "spec.syncStatus", "spec.description", "spec.tieringPlanRef",
+        "status.hostName", "status.model", "status.firmwareVer", "status.serial",
+        "status.status", "status.upgrade", "status.dpStorage", "status.storageStatistic",
+        "tieringInfo",
+    ),
+    ("status", "spec"),
+], ids=["null_nested_fields", "null_status_and_spec"])
+def test_parse_backup_server_survives_null_fields(null_paths: tuple[str, ...]) -> None:
+    """_parse_backup_server must not crash when every touched field is JSON null; all
+    falsy-typed fields fall back to their documented safe defaults, whether the null is a
+    nested sub-field of a present status/spec or the status/spec container itself."""
+    raw = null_out(SAMPLE_SERVER_RAW, *null_paths)
+    server = _parse_backup_server(raw, {})
+
+    assert server.role is None
+    assert server.hostname == ""
+    assert server.name == ""
+    assert server.model == ""
+    assert server.system_version == ""
+    assert server.serial == ""
+    assert server.description == ""
+    assert server.status == ServerStatus.DISCONNECTED
+    assert server.is_updating is False
+    assert server.storage_total_bytes is None
+    assert server.storage_used_bytes is None
+    assert server.logical_backup_data_bytes is None
+    assert server.physical_backup_data_bytes is None
+    assert server.tiering_status is None
+    assert server.tiering_plan_name is None
+    assert server.tiering_plan_destination is None
+
+
+def test_parse_backup_server_nas_storage_survives_null_byte_counts() -> None:
+    """NAS storage totals fall back to 0 (not None) when nasStorage is a non-empty list
+    whose totalBytes/usedBytes are JSON null -- distinct from an empty/absent nasStorage,
+    which yields None (already covered by test_nas_empty_storage_returns_none)."""
+    raw: dict[str, Any] = {
+        "id": "srv-nas-null",
+        "namespace": "ns-nas-null",
+        "spec": {"addr": "10.0.0.99", "type": "NAS"},
+        "status": {
+            "hostName": "nas-server-99",
+            "model": "DS923+",
+            "firmwareVer": "7.2.1-69057",
+            "serial": "NAS099",
+            "status": "NORMAL",
+            "nasStorage": [{"totalBytes": None, "usedBytes": None}],
+            "storageStatistic": {},
+        },
+    }
+    server = _parse_backup_server(raw, {})
+    assert server.storage_total_bytes == 0
+    assert server.storage_used_bytes == 0
+
+
 # ── tiering_status parsing ──────────────────────────────────────────────────
 
 
@@ -681,6 +740,24 @@ async def test_tiering_status_none_when_no_tiering_info() -> None:
         await session.disconnect()
 
     assert servers[0].tiering_status is None
+
+
+def test_parse_tiering_status_survives_null_fields() -> None:
+    """_parse_tiering_status falls back to safe defaults when tieringInfo is present but
+    its own fields (pendingVersionCount, remainingBytes) are JSON null, and returns None
+    when tieringStatus itself is null — distinct from tieringInfo itself being null/absent
+    (covered in the _parse_backup_server null test above)."""
+    ts = _parse_tiering_status({
+        "tieringStatus": "DOING",
+        "pendingVersionCount": None,
+        "remainingBytes": None,
+    })
+    assert ts is not None
+    assert ts.status == VersionCopyStatus.IN_PROGRESS
+    assert ts.pending_version_count == 0
+    assert ts.remaining_bytes is None
+
+    assert _parse_tiering_status({"tieringStatus": None, "pendingVersionCount": "5"}) is None
 
 
 # ── change_tiering_plan() ──────────────────────────────────────────────────

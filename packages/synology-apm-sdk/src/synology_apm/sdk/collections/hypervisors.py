@@ -34,7 +34,7 @@ class HypervisorCollection:
             ListResult of (list of Hypervisor, total count)
         """
         raw = await self._session.get("/api/v1/inventory")
-        items = [_parse_hypervisor(h) for h in raw.get("inventories", [])]
+        items = [_parse_hypervisor(h) for h in raw.get("inventories") or []]
         return ListResult(items, len(items))
 
     async def get(self, hypervisor_id: str) -> Hypervisor:
@@ -78,14 +78,14 @@ class HypervisorCollection:
 
 def _parse_hypervisor(raw: dict[str, Any]) -> Hypervisor:
     """Convert an inventory object from an API response to the SDK Hypervisor model."""
-    spec = raw.get("spec", {})
+    spec = raw.get("spec") or {}
     return Hypervisor(
-        hypervisor_id=raw.get("id", ""),
-        hostname=spec.get("hostName", ""),
-        address=spec.get("hostAddr", ""),
-        host_type=_HOST_TYPE_MAP.get(spec.get("hostType", ""), HypervisorType.UNKNOWN),
-        account=spec.get("authUser", ""),
-        description=spec.get("description", ""),
-        port=int(spec.get("portWebapi", 0)),
-        version=spec.get("version", ""),
+        hypervisor_id=raw.get("id") or "",
+        hostname=spec.get("hostName") or "",
+        address=spec.get("hostAddr") or "",
+        host_type=_HOST_TYPE_MAP.get(spec.get("hostType") or "", HypervisorType.UNKNOWN),
+        account=spec.get("authUser") or "",
+        description=spec.get("description") or "",
+        port=int(spec.get("portWebapi") or 0),
+        version=spec.get("version") or "",
     )

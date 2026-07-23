@@ -1,7 +1,11 @@
-# Quality gate on every push and pull request — `make test` (unit tests with
-# coverage threshold, integration-suite collection, lint, mypy, MCP coverage check).
-# release.yml reuses this workflow (workflow_call) so a release re-verifies the
-# same gate first.
+# Quality gate on every push and pull request. `test` runs the full `make test`
+# (unit tests with coverage threshold, integration-suite collection, lint, mypy,
+# MCP coverage check) once on the newest supported Python; `test-compatible-python`
+# runs `make test-unit` (just the unit suite — no coverage/lint/mypy/integration,
+# those are Python-version-independent or already covered by `test`) across the
+# older supported versions, to catch compatibility breaks without re-running
+# version-independent checks on every matrix leg. release.yml reuses this
+# workflow (workflow_call) so a release re-verifies the same gate first.
 name: CI
 
 on:
@@ -29,6 +33,7 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
+          python-version: "3.14"
 
       - name: Install dependencies
         run: uv sync
@@ -60,3 +65,34 @@ jobs:
           name: coverage-report
           path: htmlcov/
           retention-days: 14
+
+  test-compatible-python:
+    runs-on: ubuntu-latest
+
+    # Mirrors the `requires-python = ">=3.11"` floor and the classifiers in
+    # packages/*/pyproject.toml, minus the newest version already covered by the
+    # `test` job above — every version listed there must actually be exercised
+    # somewhere in CI, not just asserted in metadata.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Compatibility gate (make test-unit)
+        env:
+          NO_COLOR: "1"
+          TERM: "dumb"
+        run: make test-unit

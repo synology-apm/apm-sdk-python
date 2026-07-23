@@ -166,9 +166,16 @@ def test_activity_backup_list_string_filter(mock_apm: AsyncMock, args: list[str]
     assert call_kwargs[kwarg_name] == expected_value
 
 
-def test_activity_list_invalid_status(mock_apm: AsyncMock) -> None:
-    """activity list --status invalid should exit with code 1."""
-    result = invoke_cli(mock_apm, ["activity", "backup", "list", "--status", "invalid"])
+@pytest.mark.parametrize("option_flag", [
+    "--status",
+    "--machine-type",
+    "--m365-type",
+], ids=["status", "machine-type", "m365-type"])
+def test_activity_backup_list_invalid_filter_value(mock_apm: AsyncMock, option_flag: str) -> None:
+    """activity backup list with an invalid filter option value should exit with code 1."""
+    result = invoke_cli(mock_apm, [
+        "activity", "backup", "list", option_flag, "invalid",
+    ])
     assert result.exit_code == 1
 
 
@@ -196,22 +203,6 @@ def test_activity_backup_list_workload_type_filter(
     call_kwargs = mock_apm.activities.backup.list.call_args.kwargs
     assert call_kwargs["machine_types"] == expected_machine_types
     assert call_kwargs["m365_types"] == expected_m365_types
-
-
-def test_activity_backup_list_invalid_machine_type(mock_apm: AsyncMock) -> None:
-    """activity backup list --machine-type invalid should exit with code 1."""
-    result = invoke_cli(mock_apm, [
-        "activity", "backup", "list", "--machine-type", "invalid",
-    ])
-    assert result.exit_code == 1
-
-
-def test_activity_backup_list_invalid_m365_type(mock_apm: AsyncMock) -> None:
-    """activity backup list --m365-type invalid should exit with code 1."""
-    result = invoke_cli(mock_apm, [
-        "activity", "backup", "list", "--m365-type", "invalid",
-    ])
-    assert result.exit_code == 1
 
 
 def test_activity_list_verbose_shows_transferred(mock_apm: AsyncMock) -> None:

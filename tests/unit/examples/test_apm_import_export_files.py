@@ -20,27 +20,22 @@ def test_load_yaml_valid(tmp_path: Path) -> None:
     assert result == {"version": 1, "protection_plans": []}
 
 
-def test_load_yaml_not_a_mapping(tmp_path: Path) -> None:
-    """A YAML file whose top-level value is a list raises ValueError."""
+@pytest.mark.parametrize(
+    ("content", "error_match"),
+    [
+        ("- item1\n- item2\n", "mapping at the top level"),
+        ("protection_plans: []\n", "Unsupported YAML schema version"),
+        ("version: 2\nprotection_plans: []\n", "Unsupported YAML schema version"),
+    ],
+    ids=["not-a-mapping", "missing-version", "wrong-version"],
+)
+def test_load_yaml_invalid_raises_value_error(
+    tmp_path: Path, content: str, error_match: str
+) -> None:
+    """An invalid top-level shape or unsupported/missing schema version raises ValueError."""
     p = tmp_path / "bad.yaml"
-    p.write_text("- item1\n- item2\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="mapping at the top level"):
-        ie._load_yaml(str(p))
-
-
-def test_load_yaml_missing_version(tmp_path: Path) -> None:
-    """A YAML mapping with no version key raises ValueError about unsupported schema version."""
-    p = tmp_path / "no_version.yaml"
-    p.write_text("protection_plans: []\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="Unsupported YAML schema version"):
-        ie._load_yaml(str(p))
-
-
-def test_load_yaml_wrong_version(tmp_path: Path) -> None:
-    """A YAML mapping with version != 1 raises ValueError about unsupported schema version."""
-    p = tmp_path / "v2.yaml"
-    p.write_text("version: 2\nprotection_plans: []\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="Unsupported YAML schema version"):
+    p.write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError, match=error_match):
         ie._load_yaml(str(p))
 
 
@@ -81,26 +76,36 @@ def _write_cred_csv(path: Path, content: str) -> None:
     os.chmod(path, 0o600)
 
 
-def test_load_fs_credentials_happy_path(tmp_path: Path) -> None:
-    """A well-formed FS credentials CSV is parsed into the expected dict."""
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (
+            "endpoint,login_user,password\nhost,user,pass\n",
+            {("host", "user"): "pass"},
+        ),
+        (
+            "endpoint,login_user,password\n"
+            "# this is a comment\n"
+            "\n"
+            "host,user,secret\n",
+            {("host", "user"): "secret"},
+        ),
+        (
+            "endpoint,login_user,password,extra\nhost,user,pass,ignored\n",
+            {("host", "user"): "pass"},
+        ),
+    ],
+    ids=["happy-path", "skips-comments-and-blanks", "extra-columns-ignored"],
+)
+def test_load_fs_credentials_parses_rows(
+    tmp_path: Path, content: str, expected: dict[tuple[str, str], str]
+) -> None:
+    """A well-formed FS credentials CSV is parsed into a dict: comments/blank lines are
+    skipped, and columns beyond the required three are ignored."""
     p = tmp_path / "fs.csv"
-    _write_cred_csv(p, "endpoint,login_user,password\nhost,user,pass\n")
+    _write_cred_csv(p, content)
     result = ie._load_fs_credentials(str(p))
-    assert result == {("host", "user"): "pass"}
-
-
-def test_load_fs_credentials_skips_comments_and_blanks(tmp_path: Path) -> None:
-    """Lines starting with '#' and blank lines are skipped."""
-    p = tmp_path / "fs.csv"
-    _write_cred_csv(
-        p,
-        "endpoint,login_user,password\n"
-        "# this is a comment\n"
-        "\n"
-        "host,user,secret\n",
-    )
-    result = ie._load_fs_credentials(str(p))
-    assert result == {("host", "user"): "secret"}
+    assert result == expected
 
 
 def test_load_fs_credentials_bom(tmp_path: Path) -> None:
@@ -138,28 +143,35 @@ def test_load_fs_credentials_empty_required_field(
         ie._load_fs_credentials(str(p))
 
 
-def test_load_fs_credentials_extra_columns_ignored(tmp_path: Path) -> None:
-    """Extra columns beyond the required three are ignored."""
-    p = tmp_path / "fs.csv"
-    _write_cred_csv(p, "endpoint,login_user,password,extra\nhost,user,pass,ignored\n")
-    result = ie._load_fs_credentials(str(p))
-    assert result == {("host", "user"): "pass"}
-
-
-def test_load_rs_credentials_happy_path(tmp_path: Path) -> None:
-    """A well-formed RS credentials CSV is parsed into the expected dict."""
+@pytest.mark.parametrize(
+    ("content", "expected_relink_key"),
+    [
+        (
+            "storage_type,endpoint,vault_name,access_key,secret_key,relink_encryption_key\n"
+            "s3,https://s3.example.com,MyBucket,AK,SK,EK\n",
+            "EK",
+        ),
+        (
+            "storage_type,endpoint,vault_name,access_key,secret_key\n"
+            "s3,https://s3.example.com,MyBucket,AK,SK\n",
+            "",
+        ),
+    ],
+    ids=["happy-path", "optional-relink-key-missing"],
+)
+def test_load_rs_credentials_parses_rows(
+    tmp_path: Path, content: str, expected_relink_key: str
+) -> None:
+    """A well-formed RS credentials CSV is parsed into a dict; a missing optional
+    relink_encryption_key column defaults to '' rather than raising."""
     p = tmp_path / "rs.csv"
-    _write_cred_csv(
-        p,
-        "storage_type,endpoint,vault_name,access_key,secret_key,relink_encryption_key\n"
-        "s3,https://s3.example.com,MyBucket,AK,SK,EK\n",
-    )
+    _write_cred_csv(p, content)
     result = ie._load_rs_credentials(str(p))
     assert result == {
         ("s3", "https://s3.example.com", "MyBucket"): {
             "access_key": "AK",
             "secret_key": "SK",
-            "relink_encryption_key": "EK",
+            "relink_encryption_key": expected_relink_key,
         }
     }
 
@@ -174,24 +186,6 @@ def test_load_rs_credentials_missing_required_column(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="must have a header row"):
         ie._load_rs_credentials(str(p))
-
-
-def test_load_rs_credentials_optional_relink_key_missing(tmp_path: Path) -> None:
-    """When relink_encryption_key column is absent, it defaults to '' in the result dict."""
-    p = tmp_path / "rs_no_relink.csv"
-    _write_cred_csv(
-        p,
-        "storage_type,endpoint,vault_name,access_key,secret_key\n"
-        "s3,https://s3.example.com,MyBucket,AK,SK\n",
-    )
-    result = ie._load_rs_credentials(str(p))
-    assert result == {
-        ("s3", "https://s3.example.com", "MyBucket"): {
-            "access_key": "AK",
-            "secret_key": "SK",
-            "relink_encryption_key": "",
-        }
-    }
 
 
 # ── _write_rs_credentials ─────────────────────────────────────────────────────

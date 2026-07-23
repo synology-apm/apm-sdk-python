@@ -49,7 +49,7 @@ class RetirementPlanCollection:
             params["keyword"] = name_contains
 
         raw = await self._session.get("/api/v1/plan/archive_plan", params=params)
-        return ListResult([_parse_retirement_plan(p) for p in raw.get("plans", [])], raw.get("total"))
+        return ListResult([_parse_retirement_plan(p) for p in raw.get("plans") or []], raw.get("total"))
 
     async def get(self, plan_id: str) -> RetirementPlan:
         """Fetch a Retirement Plan by UUID.
@@ -82,7 +82,7 @@ class RetirementPlanCollection:
                 "offset": offset,
             }
             raw = await self._session.get("/api/v1/plan/archive_plan", params=params)
-            return raw.get("plans", []), raw.get("total")
+            return raw.get("plans") or [], raw.get("total")
 
         async for p in _paginate(fetch):
             plan = _parse_retirement_plan(p)
@@ -182,21 +182,21 @@ def _parse_retirement_retention(raw: dict[str, Any]) -> RetirementRetentionPolic
     keepAll is not handled separately: when keepAll=True the API returns keepDays=0 and
     keepVersions=0, which maps naturally to days=None, keep_latest_version=False.
     """
-    keep_days = raw.get("keepDays", 0)
+    keep_days = raw.get("keepDays") or 0
     return RetirementRetentionPolicy(
         days=keep_days if keep_days > 0 else None,
-        keep_latest_version=raw.get("keepVersions", 0) > 0,
+        keep_latest_version=(raw.get("keepVersions") or 0) > 0,
     )
 
 
 def _parse_retirement_plan(raw: dict[str, Any]) -> RetirementPlan:
     """Convert an archive plan object from an API response to the RetirementPlan model."""
-    spec: dict[str, Any] = raw.get("spec", {})
+    spec: dict[str, Any] = raw.get("spec") or {}
     return RetirementPlan(
         plan_id=raw["id"],
-        name=spec.get("name", ""),
-        description=spec.get("description", ""),
-        retention=_parse_retirement_retention(spec.get("retention", {})),
-        workload_count=raw.get("workloadCount", 0),
+        name=spec.get("name") or "",
+        description=spec.get("description") or "",
+        retention=_parse_retirement_retention(spec.get("retention") or {}),
+        workload_count=raw.get("workloadCount") or 0,
         run_schedule_by_controller_time=spec.get("controllerUtcOffset") is not None,
     )

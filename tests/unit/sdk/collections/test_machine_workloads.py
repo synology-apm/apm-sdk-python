@@ -8,7 +8,8 @@ from typing import Any
 import pytest
 from yarl import URL
 
-from synology_apm.sdk.collections.machine import MachineWorkloadCollection
+from synology_apm.sdk.collections._shared import _build_location_info
+from synology_apm.sdk.collections.machine import MachineWorkloadCollection, _parse_workload
 from synology_apm.sdk.enums import (
     MachineWorkloadType,
     RetentionType,
@@ -29,6 +30,7 @@ from tests.unit.sdk.conftest import (
     assert_resource_error,
     connected_session,
     make_session,
+    null_out,
 )
 
 WORKLOAD_ID = "wl-id-001"
@@ -723,8 +725,10 @@ async def test_list_filter_by_plan_sends_repeated_plan_id() -> None:
     assert plan_id_values == [SAMPLE_PROTECTION_PLAN.plan_id, SAMPLE_RETIREMENT_PLAN.plan_id]
 
 
-async def test_list_no_plan_omits_plan_id_param() -> None:
-    """plan=None must not add filter.planId to the request."""
+@pytest.mark.parametrize("field_name", ["filter.planId", "filter.verifyStatus"])
+async def test_list_omits_optional_filter_params_when_not_provided(field_name: str) -> None:
+    """plan=None and verify_status=None must not add their corresponding filter param
+    to the request."""
     from unittest.mock import AsyncMock, patch
 
     session = make_session()
@@ -735,7 +739,7 @@ async def test_list_no_plan_omits_plan_id_param() -> None:
         await collection.list()
 
     params = mock_get.call_args[1]["params"]
-    assert not any(k == "filter.planId" for k, _ in params)
+    assert not any(k == field_name for k, _ in params)
 
 
 @pytest.mark.parametrize(
@@ -813,26 +817,89 @@ async def test_list_verify_status_filter_sends_repeated_verify_status() -> None:
     assert verify_status_values == ["VERIFY_FAILED", "VERIFY_NOT_ENABLED"]
 
 
-async def test_list_no_verify_status_omits_param() -> None:
-    """verify_status=None must not add filter.verifyStatus to the request."""
+# ── _parse_workload — null field handling ───────────────────────────────────
+
+
+@pytest.mark.parametrize("null_paths", [
+    (
+        "namespace", "copyDataUsage", "planName",
+        "spec.workloadName", "spec.workloadType", "spec.planRef.uid",
+        "status.usage", "status.jobStatus", "status.latestVersionResult",
+    ),
+    ("namespace", "copyDataUsage", "planName", "spec", "status"),
+], ids=["null_nested_fields", "null_spec_and_status"])
+def test_parse_workload_survives_null_fields(null_paths: tuple[str, ...]) -> None:
+    """_parse_workload must not crash when every touched field is JSON null; all falsy-typed
+    fields fall back to their documented safe defaults, whether the null is a nested
+    sub-field of a present spec/status or the spec/status container itself."""
+    raw = null_out(SAMPLE_WORKLOAD, *null_paths)
+    wl = _parse_workload(raw)
+
+    assert wl.workload_id == WORKLOAD_ID
+    assert wl.namespace == ""
+    assert wl.name == ""
+    assert wl.protected_data_bytes == 0
+    assert wl.backup_copy_data_bytes == 0
+    assert wl.workload_type == MachineWorkloadType.PC  # workloadType null -> "" -> unmapped -> PC default
+    assert wl.plan.plan_id == ""
+    assert wl.plan.name == ""
+    assert wl.status == WorkloadStatus.NO_BACKUPS  # jobStatus null -> latestVersionResult fallback, also null
+
+
+def test_build_location_info_survives_null_fields() -> None:
+    """_build_location_info (used for both backup_server and backup_copy_destination) falls
+    back to safe defaults when hostName is present but namespace/uid/destinationType/addr are
+    JSON null, and returns None when hostName itself is JSON null (same as absent)."""
+    server_info = null_out(
+        SAMPLE_WORKLOAD["backupServerInfo"],
+        "namespace", "uid", "destinationType", "addr",
+    )
+    loc = _build_location_info(server_info)
+    assert loc is not None
+    assert loc.identifier == ""  # namespace null -> "" -> falls back to uid, also null -> ""
+    assert loc.is_remote_storage is False  # destinationType null -> "APPLIANCE" default
+    assert loc.endpoint == ""
+
+    none_info = null_out(SAMPLE_WORKLOAD["backupServerInfo"], "hostName")
+    assert _build_location_info(none_info) is None
+
+
+async def test_retire_batch_error_null_fields_fall_back_to_safe_defaults() -> None:
+    """retire()'s failed-batch-entry handling falls back safely when the top-level "failed"
+    key, or an entry's "error" key, is JSON null — _batch_errors_from_failed() and
+    _raise_first_batch_error() (shared with M365) both handle the null case distinctly from
+    the key being absent."""
     from unittest.mock import AsyncMock, patch
 
     session = make_session()
     collection = MachineWorkloadCollection(session)
 
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"workloads": [], "total": 0}
-        await collection.list()
+    with patch.object(session, "put", new_callable=AsyncMock) as mock_put:
+        mock_put.return_value = {"succeeded": {"namespaceWorkloadListMap": {}}, "failed": None}
+        await collection.retire(SAMPLE_WL_OBJ, SAMPLE_RETIREMENT_PLAN)  # must not raise
 
-    params = mock_get.call_args[1]["params"]
-    assert not any(k == "filter.verifyStatus" for k, _ in params)
+    with patch.object(session, "put", new_callable=AsyncMock) as mock_put:
+        mock_put.return_value = {
+            "succeeded": {"namespaceWorkloadListMap": {}},
+            "failed": {"entries": [{"error": None}]},
+        }
+        with pytest.raises(InvalidOperationError) as exc_info:
+            await collection.retire(SAMPLE_WL_OBJ, SAMPLE_RETIREMENT_PLAN)
+
+    assert_resource_error(exc_info, resource_type="Workload", resource_id=WORKLOAD_ID)
+    assert exc_info.value.error_code is None
+    assert exc_info.value.message == "Workload plan change failed"
 
 
 # ── get_by_name() — is_retired filter params ────────────────────────────────
 
 
-async def test_get_by_name_with_is_retired_true_sends_archived_filter() -> None:
-    """get_by_name(name, is_retired=True) appends filter.protectStatus=PROTECT_STATUS_ARCHIVED."""
+@pytest.mark.parametrize("is_retired,expected_filter", [
+    (True, "PROTECT_STATUS_ARCHIVED"),
+    (False, "PROTECT_STATUS_PROTECTED"),
+])
+async def test_get_by_name_sends_protect_status_filter_for_is_retired(is_retired: bool, expected_filter: str) -> None:
+    """get_by_name(name, is_retired=...) appends the matching filter.protectStatus."""
     from unittest.mock import AsyncMock, patch
 
     session = make_session()
@@ -840,25 +907,10 @@ async def test_get_by_name_with_is_retired_true_sends_archived_filter() -> None:
 
     with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = {"workloads": [SAMPLE_WORKLOAD], "total": 1}
-        await collection.get_by_name("CORP-PC-001", is_retired=True)
+        await collection.get_by_name("CORP-PC-001", is_retired=is_retired)
 
     params = dict(mock_get.call_args[1]["params"])
-    assert params.get("filter.protectStatus") == "PROTECT_STATUS_ARCHIVED"
-
-
-async def test_get_by_name_with_is_retired_false_sends_protected_filter() -> None:
-    """get_by_name(name, is_retired=False) appends filter.protectStatus=PROTECT_STATUS_PROTECTED."""
-    from unittest.mock import AsyncMock, patch
-
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"workloads": [SAMPLE_WORKLOAD], "total": 1}
-        await collection.get_by_name("CORP-PC-001", is_retired=False)
-
-    params = dict(mock_get.call_args[1]["params"])
-    assert params.get("filter.protectStatus") == "PROTECT_STATUS_PROTECTED"
+    assert params.get("filter.protectStatus") == expected_filter
 
 
 async def test_get_by_name_default_sends_protected_filter() -> None:

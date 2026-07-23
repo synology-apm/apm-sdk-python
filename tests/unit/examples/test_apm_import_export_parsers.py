@@ -78,13 +78,21 @@ def test_dedupe_by_key_multiple_duplicates_one_warning_each(
 # ── _filter_to_keys ───────────────────────────────────────────────────────────
 
 
-def test_filter_to_keys_retains_items_in_original_order() -> None:
-    result = ie._filter_to_keys(
-        items=["a", "b", "c"],
-        key_of=str,
-        allowed_keys=["c", "a"],
-    )
-    assert result == ["a", "c"]
+@pytest.mark.parametrize(
+    ("items", "allowed_keys", "expected"),
+    [
+        (["a", "b", "c"], ["c", "a"], ["a", "c"]),
+        (["a", "a", "b"], ["a", "b"], ["a", "b"]),
+    ],
+    ids=["retains-original-order", "consumes-each-key-once"],
+)
+def test_filter_to_keys_order_and_dedup(
+    items: list[str], allowed_keys: list[str], expected: list[str]
+) -> None:
+    """Retained items keep their original order, and a duplicated item is kept only
+    once per matching allowed key."""
+    result = ie._filter_to_keys(items=items, key_of=str, allowed_keys=allowed_keys)
+    assert result == expected
 
 
 def test_filter_to_keys_excludes_items_not_in_allowed_keys() -> None:
@@ -94,16 +102,6 @@ def test_filter_to_keys_excludes_items_not_in_allowed_keys() -> None:
         allowed_keys=["b"],
     )
     assert result == ["b"]
-
-
-def test_filter_to_keys_consumes_each_key_once() -> None:
-    # Items "a" appears twice; allowed_keys has "a" once — only the first "a" is kept.
-    result = ie._filter_to_keys(
-        items=["a", "a", "b"],
-        key_of=str,
-        allowed_keys=["a", "b"],
-    )
-    assert result == ["a", "b"]
 
 
 def test_filter_to_keys_empty_allowed_keys_returns_empty() -> None:
@@ -289,21 +287,19 @@ def _name_of(b: BackupServer) -> str:
     return b.name
 
 
-def test_build_ref_map_happy_path_by_uuid() -> None:
+@pytest.mark.parametrize(
+    "name_or_id",
+    [
+        "123e4567-e89b-12d3-a456-426614174020",
+        "APM-SERVER-01",
+    ],
+    ids=["by-uuid", "by-name-case-insensitive"],
+)
+def test_build_ref_map_happy_path_resolves_entry(name_or_id: str) -> None:
+    """An entry resolves to the matching resource whether name_or_id is its UUID or its
+    name (matched case-insensitively)."""
     entries: list[dict[str, Any]] = [
-        {"ref_key": "bs-ref", "name_or_id": "123e4567-e89b-12d3-a456-426614174020"},
-    ]
-    ref_map, errors = ie._build_ref_map(
-        "backup_servers", entries, _make_bs_list(), _id_of, _name_of
-    )
-    assert errors == []
-    assert "bs-ref" in ref_map
-    assert ref_map["bs-ref"].name == "apm-server-01"
-
-
-def test_build_ref_map_happy_path_by_name_case_insensitive() -> None:
-    entries: list[dict[str, Any]] = [
-        {"ref_key": "bs-ref", "name_or_id": "APM-SERVER-01"},
+        {"ref_key": "bs-ref", "name_or_id": name_or_id},
     ]
     ref_map, errors = ie._build_ref_map(
         "backup_servers", entries, _make_bs_list(), _id_of, _name_of
@@ -326,28 +322,28 @@ def test_build_ref_map_multiple_entries() -> None:
     assert ref_map["ref-b"].name == "apm-server-02"
 
 
-def test_build_ref_map_uuid_not_found_returns_error_containing_uuid() -> None:
+@pytest.mark.parametrize(
+    ("name_or_id", "expected_substring"),
+    [
+        ("00000000-0000-0000-0000-000000000099", "UUID"),
+        ("no-such-server", "not found"),
+    ],
+    ids=["uuid-not-found", "name-not-found"],
+)
+def test_build_ref_map_not_found_returns_error(
+    name_or_id: str, expected_substring: str
+) -> None:
+    """A name_or_id that matches no resource, whether it looks like a UUID or a name,
+    returns an empty ref_map and a single descriptive error."""
     entries: list[dict[str, Any]] = [
-        {"ref_key": "bs-ref", "name_or_id": "00000000-0000-0000-0000-000000000099"},
+        {"ref_key": "bs-ref", "name_or_id": name_or_id},
     ]
     ref_map, errors = ie._build_ref_map(
         "backup_servers", entries, _make_bs_list(), _id_of, _name_of
     )
     assert ref_map == {}
     assert len(errors) == 1
-    assert "UUID" in errors[0]
-
-
-def test_build_ref_map_name_not_found_returns_error_containing_not_found() -> None:
-    entries: list[dict[str, Any]] = [
-        {"ref_key": "bs-ref", "name_or_id": "no-such-server"},
-    ]
-    ref_map, errors = ie._build_ref_map(
-        "backup_servers", entries, _make_bs_list(), _id_of, _name_of
-    )
-    assert ref_map == {}
-    assert len(errors) == 1
-    assert "not found" in errors[0]
+    assert expected_substring in errors[0]
 
 
 def test_build_ref_map_missing_ref_key_returns_error() -> None:
@@ -417,12 +413,26 @@ def test_build_saas_tenant_ref_map_multiple_entries() -> None:
     assert ref_map["tenant-b"] == "uuid-002"
 
 
-def test_build_saas_tenant_ref_map_missing_ref_key_returns_error() -> None:
-    entries: list[dict[str, Any]] = [
-        {"tenant_id": "tenant-uuid-001"},
-    ]
+@pytest.mark.parametrize(
+    ("entries", "expected_errors"),
+    [
+        (
+            [{"tenant_id": "tenant-uuid-001"}],
+            ["saas_tenants entry missing 'ref_key'"],
+        ),
+        (
+            [{"ref_key": "tenant-ref"}],
+            ["saas_tenants ref_key='tenant-ref' missing 'tenant_id'"],
+        ),
+    ],
+    ids=["missing-ref-key", "missing-tenant-id"],
+)
+def test_build_saas_tenant_ref_map_missing_field_returns_error(
+    entries: list[dict[str, Any]], expected_errors: list[str]
+) -> None:
+    """An entry missing ref_key, or missing tenant_id, returns a single descriptive error."""
     _, errors = ie._build_saas_tenant_ref_map(entries)
-    assert errors == ["saas_tenants entry missing 'ref_key'"]
+    assert errors == expected_errors
 
 
 def test_build_saas_tenant_ref_map_duplicate_ref_key_returns_error() -> None:
@@ -433,14 +443,6 @@ def test_build_saas_tenant_ref_map_duplicate_ref_key_returns_error() -> None:
     _, errors = ie._build_saas_tenant_ref_map(entries)
     assert len(errors) == 1
     assert "duplicate" in errors[0]
-
-
-def test_build_saas_tenant_ref_map_missing_tenant_id_returns_error() -> None:
-    entries: list[dict[str, Any]] = [
-        {"ref_key": "tenant-ref"},
-    ]
-    _, errors = ie._build_saas_tenant_ref_map(entries)
-    assert errors == ["saas_tenants ref_key='tenant-ref' missing 'tenant_id'"]
 
 
 def test_build_saas_tenant_ref_map_empty_list() -> None:
@@ -499,7 +501,16 @@ def test_resolve_backup_copy_remote_storage_destination() -> None:
     assert result.retention == ProtectionRetentionPolicy(RetentionType.KEEP_ALL)
 
 
-def test_resolve_backup_copy_appliance_ref_not_found_raises_value_error() -> None:
+@pytest.mark.parametrize(
+    "destination_type",
+    ["appliance", "remote_storage"],
+    ids=["appliance-ref-not-found", "remote-storage-ref-not-found"],
+)
+def test_resolve_backup_copy_ref_not_found_raises_value_error(
+    destination_type: str,
+) -> None:
+    """A backup_copy destination_ref that resolves to neither an appliance nor a
+    remote storage entry raises ValueError, for either destination type."""
     servers_by_ref: dict[str, BackupServer] = {}
     storages_by_ref: dict[str, RemoteStorage] = {}
 
@@ -508,23 +519,7 @@ def test_resolve_backup_copy_appliance_ref_not_found_raises_value_error() -> Non
         match=re.escape("backup_copy destination not found for plan 'Test Plan'"),
     ):
         ie._resolve_backup_copy(
-            _make_bc_dict("appliance", "missing-ref"),
-            servers_by_ref,
-            storages_by_ref,
-            "Test Plan",
-        )
-
-
-def test_resolve_backup_copy_remote_storage_ref_not_found_raises_value_error() -> None:
-    servers_by_ref: dict[str, BackupServer] = {}
-    storages_by_ref: dict[str, RemoteStorage] = {}
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape("backup_copy destination not found for plan 'Test Plan'"),
-    ):
-        ie._resolve_backup_copy(
-            _make_bc_dict("remote_storage", "missing-ref"),
+            _make_bc_dict(destination_type, "missing-ref"),
             servers_by_ref,
             storages_by_ref,
             "Test Plan",

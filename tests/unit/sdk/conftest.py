@@ -9,6 +9,7 @@ logged-in WebAPISession plus its aiointercept mock, ready for endpoint mocks.
 """
 from __future__ import annotations
 
+import copy
 import ssl
 from collections.abc import AsyncIterator, Iterator
 from contextlib import ExitStack, asynccontextmanager, contextmanager
@@ -39,6 +40,24 @@ LOGOUT_OK: dict[str, Any] = {}
 def make_session(**kwargs: Any) -> WebAPISession:
     """Create a WebAPISession pointed at the fake APM host (no SSL verification)."""
     return WebAPISession(HOST, "user", "pass", verify_ssl=False, **kwargs)
+
+
+def null_out(raw: dict[str, Any], *paths: str) -> dict[str, Any]:
+    """Return a deep copy of raw with each dotted key path set to JSON null (None).
+
+    Used to build regression fixtures for the "key present with explicit null" case,
+    distinct from an absent key — see the SDK README's "Null vs. Absent JSON Field
+    Handling". Each path is dot-separated (e.g. "spec.backupCopy"); intermediate
+    dicts must already exist in raw.
+    """
+    result = copy.deepcopy(raw)
+    for path in paths:
+        node = result
+        *parents, leaf = path.split(".")
+        for key in parents:
+            node = node[key]
+        node[leaf] = None
+    return result
 
 
 def assert_resource_error(

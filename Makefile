@@ -1,4 +1,4 @@
-.PHONY: build whl test check-mcp-coverage check-version-consistency bump-external-versions github-act-simulation record-integration-cassettes smoke-test smoke-test-cli smoke-test-sdk docs clean help
+.PHONY: build whl test test-unit check-mcp-coverage check-version-consistency bump-external-versions github-act-simulation record-integration-cassettes smoke-test docs clean help
 .DEFAULT_GOAL := help
 
 help: ## List available targets
@@ -12,6 +12,9 @@ test: ## Run the pre-commit checklist (unit + integration tests, lint, mypy, cov
 	uv run python scripts/check_mcp_coverage.py
 	uv run python scripts/check_version_consistency.py
 
+test-unit: ## Run unit tests only (no coverage/lint/mypy/integration) — for validating support across older Python versions
+	uv run pytest tests/unit/ -n auto -q
+
 check-mcp-coverage: ## Verify SDK ↔ MCP tool coverage (mcp_coverage.toml vs registered tools)
 	uv run python scripts/check_mcp_coverage.py
 
@@ -22,7 +25,11 @@ bump-external-versions: ## Rewrite outdated GH Actions pins and upgrade uv.lock 
 	uv run python scripts/check_actions_versions.py --write
 	uv lock --upgrade
 
-github-act-simulation: ## Locally test release.yml's build+verify-dist jobs via `act` (needs act + Docker; never runs publish-*)
+github-act-simulation: ## Locally test docs.yml's build job, then release.yml's test+build+verify-dist jobs, via `act` (needs act + Docker; never runs deploy/publish-*)
+	@echo '{"ref": "refs/heads/main"}' > /tmp/act-docs-event.json
+	act push -W .github/workflows/docs.yml -j build \
+		--eventpath /tmp/act-docs-event.json \
+		--artifact-server-path /tmp/act-artifacts-docs
 	@V=$$(uv run python -c "import tomllib; print(tomllib.load(open('packages/synology-apm-sdk/pyproject.toml', 'rb'))['project']['version'])"); \
 	echo "{\"ref\": \"refs/tags/v$$V\"}" > /tmp/act-release-event.json; \
 	act push -W .github/workflows/release.yml -j verify-dist \
@@ -32,12 +39,8 @@ github-act-simulation: ## Locally test release.yml's build+verify-dist jobs via 
 record-integration-cassettes: ## Record missing integration cassettes against a real APM (needs .env)
 	uv run pytest tests/integration/ --record-mode=new_episodes --import-mode=importlib -v
 
-smoke-test: smoke-test-cli smoke-test-sdk ## Run both live smoke tests against the .env-configured APM (CLI + SDK)
-
-smoke-test-cli: ## Run the CLI live smoke test against the .env-configured APM
+smoke-test: ## Run both live smoke tests against the .env-configured APM (CLI + SDK)
 	uv run python -m tests.smoke.cli
-
-smoke-test-sdk: ## Run the SDK live smoke test against the .env-configured APM
 	uv run python -m tests.smoke.sdk
 
 build: test whl ## Run test, then build wheel + sdist → dist/

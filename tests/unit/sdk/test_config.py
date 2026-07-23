@@ -55,15 +55,12 @@ def test_config_dir_falls_back_to_home_config_when_xdg_unset() -> None:
     assert _config_dir_in_subprocess(env) == str(Path.home() / ".config" / "synology-apm")
 
 
-def test_config_dir_falls_back_to_home_config_when_xdg_empty() -> None:
-    """CONFIG_DIR should fall back to ~/.config/synology-apm when XDG_CONFIG_HOME is empty."""
-    env = {**os.environ, "XDG_CONFIG_HOME": ""}
-    assert _config_dir_in_subprocess(env) == str(Path.home() / ".config" / "synology-apm")
-
-
-def test_config_dir_ignores_relative_xdg_config_home(tmp_path: Path) -> None:
-    """A relative XDG_CONFIG_HOME should be treated as unset, per the XDG Base Directory Specification."""
-    env = {**os.environ, "XDG_CONFIG_HOME": "relative/path"}
+@pytest.mark.parametrize("xdg_config_home", ["", "relative/path"], ids=["empty", "relative_path"])
+def test_config_dir_falls_back_to_home_config_when_xdg_unset_or_relative(xdg_config_home: str) -> None:
+    """CONFIG_DIR should fall back to ~/.config/synology-apm when XDG_CONFIG_HOME is empty,
+    or when it is set to a relative path -- per the XDG Base Directory Specification, a
+    relative XDG_CONFIG_HOME must be treated as unset."""
+    env = {**os.environ, "XDG_CONFIG_HOME": xdg_config_home}
     assert _config_dir_in_subprocess(env) == str(Path.home() / ".config" / "synology-apm")
 
 
@@ -472,24 +469,12 @@ def test_resolve_verify_ssl_cli_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert resolved.verify_ssl is False
 
 
-def test_resolve_verify_ssl_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """APM_NO_VERIFY_SSL=true should disable verify_ssl."""
+@pytest.mark.parametrize("env_value", ["true", "true "], ids=["exact", "trailing_whitespace"])
+def test_resolve_verify_ssl_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env_value: str) -> None:
+    """APM_NO_VERIFY_SSL=true should disable verify_ssl, even with a trailing space (common
+    from copy-pasted .env values) -- it must not silently fall back to verifying SSL."""
     _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_NO_VERIFY_SSL", "true")
-    cfg_file = tmp_path / "config.toml"
-    with (
-        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
-    ):
-        resolved = resolve_connection()
-    assert resolved.verify_ssl is False
-
-
-def test_resolve_verify_ssl_from_env_with_whitespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A trailing space (common from copy-pasted .env values) must not silently
-    disable the flag and fall back to verifying SSL."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_NO_VERIFY_SSL", "true ")
+    monkeypatch.setenv("APM_NO_VERIFY_SSL", env_value)
     cfg_file = tmp_path / "config.toml"
     with (
         patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
@@ -516,12 +501,21 @@ def test_resolve_verify_ssl_cli_false_overrides_file_true(monkeypatch: pytest.Mo
     assert resolved.verify_ssl is True
 
 
-def test_resolve_verify_ssl_env_false_overrides_file_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("env_value,expected", [
+    ("false", True),
+    ("", False),
+], ids=["explicit_false_overrides_file", "empty_falls_back_to_file"])
+def test_resolve_verify_ssl_env_false_or_empty_vs_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env_value: str, expected: bool
+) -> None:
     """APM_NO_VERIFY_SSL=false must force verification back on even when the config file
     profile has it enabled, mirroring how APM_HOST/APM_USERNAME/APM_PASSWORD override the
-    file regardless of direction."""
+    file regardless of direction. An empty (but set) APM_NO_VERIFY_SSL, by contrast, must be
+    treated as absent, not as an explicit false, falling through to the file profile --
+    matching how an empty APM_HOST/etc. is treated as absent rather than an explicit empty
+    value."""
     _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_NO_VERIFY_SSL", "false")
+    monkeypatch.setenv("APM_NO_VERIFY_SSL", env_value)
     cfg_file = tmp_path / "config.toml"
     cfg = AppConfig()
     cfg.set_profile("default", ProfileConfig(host="https://h", username="u", no_verify_ssl=True))
@@ -531,25 +525,7 @@ def test_resolve_verify_ssl_env_false_overrides_file_true(monkeypatch: pytest.Mo
     ):
         save_config(cfg)
         resolved = resolve_connection()
-    assert resolved.verify_ssl is True
-
-
-def test_resolve_verify_ssl_empty_env_falls_back_to_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """An empty (but set) APM_NO_VERIFY_SSL must be treated as absent, not as an explicit
-    false, falling through to the file profile -- matching how an empty APM_HOST/etc. is
-    treated as absent rather than an explicit empty value."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("APM_NO_VERIFY_SSL", "")
-    cfg_file = tmp_path / "config.toml"
-    cfg = AppConfig()
-    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", no_verify_ssl=True))
-    with (
-        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
-        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
-    ):
-        save_config(cfg)
-        resolved = resolve_connection()
-    assert resolved.verify_ssl is False
+    assert resolved.verify_ssl is expected
 
 
 def test_resolve_verify_ssl_from_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

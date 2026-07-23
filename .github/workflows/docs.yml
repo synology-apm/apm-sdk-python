@@ -27,11 +27,10 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install dependencies
-        run: uv sync --group docs
-
+      # Same command as a local docs build — docs/Makefile syncs the "docs"
+      # dependency group itself, so no separate `uv sync` step is needed here.
       - name: Build API docs
-        run: uv run make -C docs html
+        run: make docs
 
       - name: Upload Pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

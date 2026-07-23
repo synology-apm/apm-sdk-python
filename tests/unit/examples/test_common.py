@@ -565,22 +565,21 @@ def test_resolve_m365_services_all_without_service_returns_none() -> None:
 # ── run_main exit-code contract ────────────────────────────────────────────────
 
 
-def test_run_main_none_return_exits_0() -> None:
+@pytest.mark.parametrize(
+    ("return_value", "expected_code"),
+    [(None, 0), (3, 3)],
+    ids=["none-return", "nonzero-return"],
+)
+def test_run_main_exit_code_matches_coroutine_return_value(
+    return_value: int | None, expected_code: int
+) -> None:
+    """run_main() exits 0 for a None return, or with the returned code otherwise."""
     async def _coro() -> int | None:
-        return None
+        return return_value
 
     with pytest.raises(SystemExit) as exc_info:
         run_main(_coro())
-    assert exc_info.value.code == 0
-
-
-def test_run_main_nonzero_return_exits_with_that_code() -> None:
-    async def _coro() -> int | None:
-        return 3
-
-    with pytest.raises(SystemExit) as exc_info:
-        run_main(_coro())
-    assert exc_info.value.code == 3
+    assert exc_info.value.code == expected_code
 
 
 def test_run_main_apm_error_exits_1_with_message(capsys: pytest.CaptureFixture[str]) -> None:

@@ -81,31 +81,33 @@ def test_build_fs_requests_create_without_credentials_file_is_error() -> None:
     assert actions == _fs_actions_for(fse, "error")
 
 
-def test_build_fs_requests_create_with_missing_credential_row_is_error() -> None:
+@pytest.mark.parametrize(
+    ("credentials", "expected_error"),
+    [
+        (
+            {("192.0.2.99", "admin"): "other-pw"},
+            "credential not found for endpoint='10.0.0.10', login_user='admin' "
+            "in fs-credentials file",
+        ),
+        (
+            {("10.0.0.10", "admin"): ""},
+            "password is empty for endpoint='10.0.0.10', login_user='admin' "
+            "in fs-credentials file",
+        ),
+    ],
+    ids=["missing-credential-row", "empty-password"],
+)
+def test_build_fs_requests_create_credential_lookup_errors(
+    credentials: dict[tuple[str, str], str], expected_error: str
+) -> None:
+    """A create entry whose credential row is missing, or whose password is empty,
+    records a parse_error and marks the action as "error"."""
     fse = _make_fs_entry()
     actions = _fs_actions_for(fse, "create")
 
-    ie._build_fs_requests(
-        [fse], {("192.0.2.99", "admin"): "other-pw"}, actions, _PLANS_BY_NAME
-    )
+    ie._build_fs_requests([fse], credentials, actions, _PLANS_BY_NAME)
 
-    assert fse.parse_error == (
-        "credential not found for endpoint='10.0.0.10', login_user='admin' "
-        "in fs-credentials file"
-    )
-    assert actions == _fs_actions_for(fse, "error")
-
-
-def test_build_fs_requests_create_with_empty_password_is_error() -> None:
-    fse = _make_fs_entry()
-    actions = _fs_actions_for(fse, "create")
-
-    ie._build_fs_requests([fse], {("10.0.0.10", "admin"): ""}, actions, _PLANS_BY_NAME)
-
-    assert fse.parse_error == (
-        "password is empty for endpoint='10.0.0.10', login_user='admin' "
-        "in fs-credentials file"
-    )
+    assert fse.parse_error == expected_error
     assert actions == _fs_actions_for(fse, "error")
 
 
@@ -192,30 +194,28 @@ async def test_execute_one_fs_overwrite_calls_update_file_server() -> None:
     apm.machine.workloads.update_file_server.assert_awaited_once_with(existing_wl, entry.request)
 
 
-async def test_execute_one_fs_overwrite_without_existing_workload_fails() -> None:
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ("overwrite", ("failed", "existing workload not found")),
+        ("create", ("failed", "internal error: add request not built")),
+    ],
+    ids=["overwrite-without-existing-workload", "create-with-wrong-request-type"],
+)
+async def test_execute_one_fs_fails_fast_on_action_request_mismatch(
+    action: str, expected: tuple[str, str]
+) -> None:
+    """An "overwrite" with no existing workload, or a "create" whose request was built
+    as an update request, fails without calling the SDK."""
     apm = make_fake_apm()
     entry = _make_fs_entry()
     entry.request = FileServerUpdateRequest(
         host_ip="10.0.0.10", login_user="admin", login_password=None
     )
 
-    result = await ie._execute_one_fs(apm, entry, "overwrite", None)
+    result = await ie._execute_one_fs(apm, entry, action, None)
 
-    assert (result.result, result.error_msg) == ("failed", "existing workload not found")
-
-
-async def test_execute_one_fs_create_with_wrong_request_type_fails() -> None:
-    apm = make_fake_apm()
-    entry = _make_fs_entry()
-    entry.request = FileServerUpdateRequest(
-        host_ip="10.0.0.10", login_user="admin", login_password=None
-    )
-
-    result = await ie._execute_one_fs(apm, entry, "create", None)
-
-    assert (result.result, result.error_msg) == (
-        "failed", "internal error: add request not built"
-    )
+    assert (result.result, result.error_msg) == expected
 
 
 async def test_execute_one_fs_duplicate_workload_error() -> None:

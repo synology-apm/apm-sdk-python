@@ -554,8 +554,10 @@ async def test_add_file_server_custom_connection_timeout() -> None:
     assert cfg["connectionTimeout"] == 60
 
 
-def test_add_file_server_empty_password_raises_value_error() -> None:
-    """FileServerAddRequest raises ValueError at construction when login_password is empty."""
+@pytest.mark.parametrize("login_password", ["", "   "], ids=["empty", "whitespace_only"])
+def test_add_file_server_blank_password_raises_value_error(login_password: str) -> None:
+    """FileServerAddRequest raises ValueError at construction when login_password is empty
+    or whitespace only."""
     with pytest.raises(ValueError, match="login_password"):
         FileServerAddRequest(
             namespace=NAMESPACE,
@@ -563,20 +565,7 @@ def test_add_file_server_empty_password_raises_value_error() -> None:
             server_type=FileServerType.SMB,
             plan_id="plan-uuid-001",
             login_user="testuser",
-            login_password="",
-        )
-
-
-def test_add_file_server_whitespace_only_password_raises_value_error() -> None:
-    """FileServerAddRequest raises ValueError at construction when login_password is whitespace only."""
-    with pytest.raises(ValueError, match="login_password"):
-        FileServerAddRequest(
-            namespace=NAMESPACE,
-            host_ip="192.0.2.3",
-            server_type=FileServerType.SMB,
-            plan_id="plan-uuid-001",
-            login_user="testuser",
-            login_password="   ",
+            login_password=login_password,
         )
 
 

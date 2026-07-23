@@ -95,8 +95,8 @@ async def _fetch_s3_cert_and_region(
         "accessKey": access_key,
         "secretKey": secret_key,
     })
-    cert = raw.get("cert", "")
-    region = raw.get("region", "")
+    cert = raw.get("cert") or ""
+    region = raw.get("region") or ""
     return cert, region
 
 
@@ -134,7 +134,7 @@ class RemoteStorageCollection:
             ListResult of (list of RemoteStorage, total count)
         """
         raw = await self._session.get("/api/v1/external_storage/detail")
-        items = [_parse_remote_storage(s) for s in raw.get("storages", [])]
+        items = [_parse_remote_storage(s) for s in raw.get("storages") or []]
         return ListResult(items, len(items))
 
     async def get(self, storage_id: str) -> RemoteStorage:
@@ -231,15 +231,15 @@ class RemoteStorageCollection:
             "accessKey":   body["accessKey"],
             "secretKey":   body["secretKey"],
             "vaultName":   body["vaultName"],
-            "endpoint":    body.get("endpoint", ""),
-            "certificate": body.get("certificate", ""),
+            "endpoint":    body.get("endpoint") or "",
+            "certificate": body.get("certificate") or "",
         }
         if "customizedRegion" in body:
             catalog_body["customizedRegion"] = body["customizedRegion"]
         if "supportVirtualHost" in body:
             catalog_body["supportVirtualHost"] = body["supportVirtualHost"]
         catalog_raw = await self._session.post("/api/v1/storage_connection/remote", json=catalog_body)
-        connections = catalog_raw.get("connections", [])
+        connections = catalog_raw.get("connections") or []
         if connections and request.unmanaged_retirement_plan is None:
             raise RemoteStorageUnmanagedCatalogError(
                 f"Found {len(connections)} unmanaged catalog(s) in vault '{body['vaultName']}'; "
@@ -270,8 +270,8 @@ class RemoteStorageCollection:
                 ) from exc
             raise
 
-        storage_id = raw.get("id", "")
-        raw_key = raw.get("encryptionKey", "")
+        storage_id = raw.get("id") or ""
+        raw_key = raw.get("encryptionKey") or ""
         encryption_key: str | None = raw_key if raw_key else None
 
         relink_warning: str | None = None
@@ -464,14 +464,14 @@ def _parse_remote_storage(raw: dict[str, Any]) -> RemoteStorage:
     used_bytes = int(used_raw) if used_raw is not None and used_raw != "" else None
     remaining_bytes = int(remaining_raw) if remaining_raw is not None and remaining_raw != "" else None
     return RemoteStorage(
-        storage_id=raw.get("id", ""),
-        name=raw.get("displayName", ""),
-        storage_type=_REMOTE_STORAGE_TYPE_MAP.get(raw.get("storageType", ""), RemoteStorageType.UNKNOWN),
-        device_model=raw.get("modelName", ""),
-        endpoint=raw.get("endpoint", ""),
-        status=_REMOTE_STORAGE_STATUS_MAP.get(raw.get("connectionStatus", ""), RemoteStorageStatus.UNKNOWN),
+        storage_id=raw.get("id") or "",
+        name=raw.get("displayName") or "",
+        storage_type=_REMOTE_STORAGE_TYPE_MAP.get(raw.get("storageType") or "", RemoteStorageType.UNKNOWN),
+        device_model=raw.get("modelName") or "",
+        endpoint=raw.get("endpoint") or "",
+        status=_REMOTE_STORAGE_STATUS_MAP.get(raw.get("connectionStatus") or "", RemoteStorageStatus.UNKNOWN),
         used_bytes=used_bytes,
         remaining_bytes=remaining_bytes,
-        encryption_enabled=bool(raw.get("isEncryption", False)),
-        vault_name=raw.get("vaultName", ""),
+        encryption_enabled=bool(raw.get("isEncryption") or False),
+        vault_name=raw.get("vaultName") or "",
     )

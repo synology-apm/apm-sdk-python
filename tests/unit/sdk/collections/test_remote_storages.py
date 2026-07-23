@@ -5,7 +5,11 @@ from typing import Any
 
 import pytest
 
-from synology_apm.sdk.collections.remote_storages import RemoteStorageCollection
+from synology_apm.sdk.collections.remote_storages import (
+    RemoteStorageCollection,
+    _fetch_s3_cert_and_region,
+    _parse_remote_storage,
+)
 from synology_apm.sdk.enums import RemoteStorageStatus, RemoteStorageType
 from synology_apm.sdk.exceptions import (
     APIError,
@@ -21,7 +25,14 @@ from synology_apm.sdk.models.remote_storage import (
     RemoteStorageUpdateRequest,
 )
 from synology_apm.sdk.models.retirement_plan import RetirementPlan
-from tests.unit.sdk.conftest import BASE_URL, assert_resource_error, connected_session, make_session, patched_session
+from tests.unit.sdk.conftest import (
+    BASE_URL,
+    assert_resource_error,
+    connected_session,
+    make_session,
+    null_out,
+    patched_session,
+)
 
 LIST_URL = f"{BASE_URL}/api/v1/external_storage/detail"
 STORAGE_ID = "f0d5d047-7dda-59fe-8d1b-47441c80bd1e"
@@ -95,6 +106,59 @@ async def test_list_empty() -> None:
     assert total == 0
 
 
+async def test_list_survives_null_storages_key() -> None:
+    """storages JSON null (key present, value null — distinct from an absent key) must
+    not crash list(); it is treated as an empty page instead of raising."""
+    async with connected_session() as (session, m):
+        m.get(LIST_URL, payload={"storages": None})
+        collection = RemoteStorageCollection(session)
+        remote_storages, total = await collection.list()
+        await session.disconnect()
+
+    assert remote_storages == []
+    assert total == 0
+
+
+def test_parse_remote_storage_survives_null_fields() -> None:
+    """Every field _parse_remote_storage() touches with `or`/`.get(..., default)` defaults,
+    as JSON null, must not crash it and must fall back to its documented safe default:
+    string fields to "", enum fields to UNKNOWN, and encryption_enabled to False. Called
+    directly (not through list()/get()) since it's a standalone parser function."""
+    raw = null_out(
+        SAMPLE_STORAGE_RAW,
+        "id", "displayName", "storageType", "modelName", "endpoint",
+        "connectionStatus", "isEncryption", "vaultName",
+    )
+
+    storage = _parse_remote_storage(raw)
+
+    assert storage.storage_id == ""
+    assert storage.name == ""
+    assert storage.storage_type == RemoteStorageType.UNKNOWN
+    assert storage.device_model == ""
+    assert storage.endpoint == ""
+    assert storage.status == RemoteStorageStatus.UNKNOWN
+    assert storage.encryption_enabled is False
+    assert storage.vault_name == ""
+
+
+async def test_fetch_s3_cert_and_region_survives_null_fields() -> None:
+    """cert/region JSON null in the region_cert response must not crash
+    _fetch_s3_cert_and_region(); both fall back to empty strings. Called directly since
+    it's a standalone helper, not a RemoteStorageCollection method."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"cert": None, "region": None}
+        cert, region = await _fetch_s3_cert_and_region(
+            session, "https://s3.example.com:443", "ak", "sk"
+        )
+
+    assert cert == ""
+    assert region == ""
+
+
 # ── get() ──────────────────────────────────────────────────────────────────
 
 
@@ -144,21 +208,13 @@ async def test_get_not_found_http_404_raises_with_resource_fields() -> None:
 # ── get_by_name() ──────────────────────────────────────────────────────────
 
 
-async def test_get_by_name_display_name() -> None:
+@pytest.mark.parametrize("name", ["DSM-Storage", "DSM-STORAGE"], ids=["display_name", "case_insensitive"])
+async def test_get_by_name_matches_display_name(name: str) -> None:
+    """get_by_name() should match by display name, case-insensitively."""
     async with connected_session() as (session, m):
         m.get(LIST_URL, payload={"storages": [SAMPLE_STORAGE_RAW]})
         collection = RemoteStorageCollection(session)
-        s = await collection.get_by_name("DSM-Storage")
-        await session.disconnect()
-
-    assert s.storage_id == STORAGE_ID
-
-
-async def test_get_by_name_case_insensitive() -> None:
-    async with connected_session() as (session, m):
-        m.get(LIST_URL, payload={"storages": [SAMPLE_STORAGE_RAW]})
-        collection = RemoteStorageCollection(session)
-        s = await collection.get_by_name("DSM-STORAGE")
+        s = await collection.get_by_name(name)
         await session.disconnect()
 
     assert s.storage_id == STORAGE_ID
@@ -460,8 +516,9 @@ async def test_add_s3_relink_key_sent_in_body() -> None:
 @pytest.mark.parametrize("raw_key,expected_key", [
     ("abc", "abc"),   # non-empty encryptionKey in response → returned as-is
     ("", None),       # empty encryptionKey in response → mapped to None
-], ids=["encryption_key_present", "encryption_key_empty_is_none"])
-async def test_add_s3_encryption_key(raw_key: str, expected_key: str | None) -> None:
+    (None, None),     # encryptionKey JSON null (key present, value null) → mapped to None
+], ids=["encryption_key_present", "encryption_key_empty_is_none", "encryption_key_null_is_none"])
+async def test_add_s3_encryption_key(raw_key: str | None, expected_key: str | None) -> None:
     session = make_session()
 
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
@@ -640,6 +697,44 @@ async def test_add_s3_unmanaged_catalogs_with_plan_calls_batch_relink() -> None:
     assert batch_relink_body["items"][0]["archivePlanUuid"] == "plan-uuid"
 
 
+async def test_add_s3_survives_null_id_in_batch_relink_storage_uuid() -> None:
+    """id JSON null (key present, value null — distinct from an absent key) in the
+    /api/v1/external_storage response must not crash add(); the batch_relink call's
+    storageUuid falls back to an empty string instead of raising."""
+    session = make_session()
+    batch_relink_body: dict[str, Any] | None = None
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        nonlocal batch_relink_body
+        if "region_cert" in path:
+            return {"region": "us-east-1", "cert": ""}
+        if "support_virtual_host" in path:
+            return {"supportVirtualHost": True}
+        if "storage_connection/remote" in path:
+            return SAMPLE_CONNECTIONS_RAW
+        if path == "/api/v1/external_storage":
+            return {"id": None, "encryptionKey": ""}
+        if "batch_relink" in path:
+            batch_relink_body = json
+            return {}
+        return {}
+
+    async def fake_get(path: str, **kw: Any) -> dict[str, Any]:
+        return SAMPLE_STORAGE_RAW
+
+    with patched_session(session, post=fake_post, get=fake_get):
+        collection = RemoteStorageCollection(session)
+        req = GenericS3StorageAddRequest(
+            access_key="ak", secret_key="sk",
+            vault_name="tiering-remote", endpoint="https://s3.example.com:443",
+            unmanaged_retirement_plan=SAMPLE_RETIREMENT_PLAN,
+        )
+        await collection.add(req)
+
+    assert batch_relink_body is not None
+    assert batch_relink_body["storageUuid"] == ""
+
+
 async def test_add_s3_batch_relink_failure_sets_relink_warning() -> None:
     """When batch_relink raises, add() returns success with relink_warning set."""
     session = make_session()
@@ -705,6 +800,37 @@ async def test_add_s3_no_catalogs_skips_batch_relink() -> None:
         await collection.add(req)
 
     assert not batch_relink_called
+
+
+async def test_add_s3_survives_null_connections_key() -> None:
+    """connections JSON null (key present, value null — distinct from an absent key) in
+    the catalog-check response must not crash add(); it is treated as no unmanaged
+    catalogs (same as an empty list), so add() succeeds without raising."""
+    session = make_session()
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        if "region_cert" in path:
+            return {"region": "us-east-1", "cert": ""}
+        if "support_virtual_host" in path:
+            return {"supportVirtualHost": True}
+        if "storage_connection/remote" in path:
+            return {"connections": None}
+        if path == "/api/v1/external_storage":
+            return {"id": STORAGE_ID, "encryptionKey": ""}
+        return {}
+
+    async def fake_get(path: str, **kw: Any) -> dict[str, Any]:
+        return SAMPLE_STORAGE_RAW
+
+    with patched_session(session, post=fake_post, get=fake_get):
+        collection = RemoteStorageCollection(session)
+        req = GenericS3StorageAddRequest(
+            access_key="ak", secret_key="sk",
+            vault_name="tiering-remote", endpoint="https://s3.example.com:443",
+        )
+        result = await collection.add(req)
+
+    assert result.storage.storage_id == STORAGE_ID
 
 
 # ── update() ───────────────────────────────────────────────────────────────

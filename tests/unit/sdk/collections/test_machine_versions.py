@@ -2,17 +2,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
+from synology_apm.sdk.collections._shared import _parse_version, _parse_version_location
 from synology_apm.sdk.collections.machine import MachineWorkloadCollection
-from synology_apm.sdk.enums import MachineWorkloadType, VersionStatus, WorkloadCategory, WorkloadStatus
+from synology_apm.sdk.enums import (
+    MachineWorkloadType,
+    VersionCopyStatus,
+    VersionStatus,
+    WorkloadCategory,
+    WorkloadStatus,
+)
 from synology_apm.sdk.exceptions import APIError, ResourceNotFoundError
 from synology_apm.sdk.models.location import LocationInfo
 from synology_apm.sdk.models.protection_plan import ProtectionPlan
 from synology_apm.sdk.models.version import VersionLocation, WorkloadVersion
 from synology_apm.sdk.models.workload import MachineWorkload
-from tests.unit.sdk.conftest import assert_resource_error, make_session
+from tests.unit.sdk.conftest import assert_resource_error, make_session, null_out
 
 WORKLOAD_ID = "wl-id-001"
 NAMESPACE = "ns-001"
@@ -417,6 +425,153 @@ async def test_list_versions_parses_remote_storage_location() -> None:
     assert loc.location_id == "ver-ext-001"
 
 
+# ── _parse_version / _parse_version_location — null field handling ────────
+
+
+async def test_list_versions_versions_null_returns_empty_list() -> None:
+    """list_versions() returns an empty list without raising when the API's versions key
+    is JSON null (key present, value null) rather than absent."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"versions": None, "total": 0}
+        versions, total = await collection.list_versions(SAMPLE_WL_OBJ)
+
+    assert versions == []
+    assert total == 0
+
+
+_VALID_VERSION_RAW: dict[str, Any] = {
+    "id": VERSION_ID,
+    "namespace": NAMESPACE,
+    "spec": {"versionId": "portal-ver-001", "executionId": "EX_1", "locked": True, "snapshotId": "snap-001"},
+    "status": {"startTime": "1700100000", "status": "COMPLETED", "transferredSize": "1024"},
+    "locations": [],
+    "copyStatus": "COPY_STATUS_NONE",
+}
+
+
+@pytest.mark.parametrize("null_paths", [
+    (
+        "id", "namespace", "locations", "copyStatus",
+        "spec.versionId", "spec.executionId", "spec.locked", "spec.snapshotId",
+        "status.status", "status.transferredSize",
+    ),
+    ("spec", "status"),
+], ids=["null_nested_fields", "null_spec_and_status"])
+def test_parse_version_survives_null_fields(null_paths: tuple[str, ...]) -> None:
+    """_parse_version must not crash when every touched field is JSON null; all falsy-typed
+    fields fall back to their documented safe defaults, whether the null is a nested
+    sub-field of a present spec/status or the spec/status container itself."""
+    raw = null_out(_VALID_VERSION_RAW, *null_paths)
+    v = _parse_version(raw, WORKLOAD_ID)
+
+    assert v.portal_version_id == ""
+    assert v.execution_id == ""
+    assert v.locked is False
+    assert v.snapshot_id == ""
+    assert v.status == VersionStatus.NO_BACKUPS
+    assert v.changed_size_bytes == 0
+
+
+def test_parse_version_survives_null_top_level_fields() -> None:
+    """version_id/namespace/locations/copy_status fall back to their safe defaults when the
+    top-level id/namespace/locations/copyStatus fields are JSON null."""
+    raw = null_out(_VALID_VERSION_RAW, "id", "namespace", "locations", "copyStatus")
+    v = _parse_version(raw, WORKLOAD_ID)
+
+    assert v.version_id == ""
+    assert v.namespace == ""
+    assert v.locations == []
+    assert v.copy_status is None
+
+
+def test_parse_version_copy_reason_survives_null_inner_copy_status() -> None:
+    """copy_reason falls back to None when the inner status.copyStatus (used only to resolve
+    the reason for a RETRY/SKIPPED/FAILED copy_status) is JSON null, distinct from the outer
+    top-level copyStatus that determines copy_status itself."""
+    raw = {
+        **_VALID_VERSION_RAW,
+        "copyStatus": "COPY_STATUS_RETRY",
+        "status": {**_VALID_VERSION_RAW["status"], "copyStatus": None},
+    }
+    v = _parse_version(raw, WORKLOAD_ID)
+    assert v.copy_status == VersionCopyStatus.RETRY
+    assert v.copy_reason is None
+
+
+_VALID_EXT_LOCATION_RAW: dict[str, Any] = {
+    "namespace": NAMESPACE,
+    "locationType": "APV",
+    "externalStorageInfo": {
+        "storageUid": "ext-uid-001", "displayName": "APV Vault",
+        "endpoint": "apv.example.com", "vaultName": "my-bucket",
+    },
+    "versionUids": ["ver-ext-001"],
+}
+
+_VALID_BS_LOCATION_RAW: dict[str, Any] = {
+    "namespace": NAMESPACE,
+    "locationType": "APPLIANCE",
+    "backupServerInfo": {"hostName": "apm-server-01", "address": "192.0.2.1"},
+    "versionUids": ["ver-bs-001"],
+}
+
+
+@pytest.mark.parametrize("raw,null_paths", [
+    (
+        _VALID_EXT_LOCATION_RAW,
+        ("namespace", "locationType", "externalStorageInfo.storageUid",
+         "externalStorageInfo.displayName", "externalStorageInfo.endpoint"),
+    ),
+    (
+        _VALID_BS_LOCATION_RAW,
+        ("namespace", "locationType", "backupServerInfo.hostName", "backupServerInfo.address"),
+    ),
+    (_VALID_BS_LOCATION_RAW, ("namespace", "locationType", "backupServerInfo")),
+], ids=["null_external_storage_fields", "null_backup_server_fields", "null_backup_server_info_dict"])
+def test_parse_version_location_survives_null_fields(
+    raw: dict[str, Any], null_paths: tuple[str, ...]
+) -> None:
+    """_parse_version_location must not crash when locationType, externalStorageInfo /
+    backupServerInfo sub-fields (or the whole backupServerInfo dict), or namespace are
+    JSON null; all fall back to their documented safe defaults."""
+    loc_raw = null_out(raw, *null_paths)
+    locs = _parse_version_location(loc_raw)
+
+    assert len(locs) == 1
+    loc = locs[0]
+    assert loc.namespace == ""
+    assert loc.location_info.is_remote_storage is False  # locationType null -> "APPLIANCE" default
+    assert loc.location_info.identifier == ""
+    assert loc.location_info.name == ""
+    assert loc.location_info.endpoint == ""
+
+
+def test_parse_version_location_versionuids_null_returns_no_locations() -> None:
+    """_parse_version_location returns an empty list (not a crash) when versionUids is
+    JSON null rather than absent."""
+    raw = null_out(_VALID_BS_LOCATION_RAW, "versionUids")
+    assert _parse_version_location(raw) == []
+
+
+async def test_lock_version_no_error_when_errors_field_is_null() -> None:
+    """lock_version() completes without raising when the API response's errors key is
+    JSON null (key present, value null) rather than absent."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+    version = _make_version_with_locations()
+
+    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"errors": None, "allFailedSameReason": False}
+        await collection.lock_version(version)  # must not raise
+
+
 # ── copy status parsing ───────────────────────────────────────────────────
 
 
@@ -434,37 +589,23 @@ def _ver_raw(copy_status: str, inner_status: str = "", inner_reason: str = "") -
     return raw
 
 
-async def test_list_versions_parses_copy_status_completed() -> None:
-    """COPY_STATUS_NONE maps to VersionCopyStatus.COMPLETED with no copy_reason."""
+@pytest.mark.parametrize("copy_status_raw,expected_copy_status", [
+    ("COPY_STATUS_NONE", VersionCopyStatus.COMPLETED),
+    ("COPY_STATUS_NOT_ENABLED", VersionCopyStatus.NOT_ENABLED),
+])
+async def test_list_versions_copy_status_mapping(copy_status_raw: str, expected_copy_status: VersionCopyStatus) -> None:
+    """copyStatus maps to VersionCopyStatus, with copy_reason None for non-error statuses."""
     from unittest.mock import AsyncMock, patch
-
-    from synology_apm.sdk.enums import VersionCopyStatus
 
     session = make_session()
     collection = MachineWorkloadCollection(session)
 
     with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"versions": [_ver_raw("COPY_STATUS_NONE")], "total": 1}
+        mock_get.return_value = {"versions": [_ver_raw(copy_status_raw)], "total": 1}
         versions, _ = await collection.list_versions(SAMPLE_WL_OBJ)
 
-    assert versions[0].copy_status == VersionCopyStatus.COMPLETED
+    assert versions[0].copy_status == expected_copy_status
     assert versions[0].copy_reason is None
-
-
-async def test_list_versions_parses_copy_status_not_enabled() -> None:
-    """COPY_STATUS_NOT_ENABLED maps to VersionCopyStatus.NOT_ENABLED."""
-    from unittest.mock import AsyncMock, patch
-
-    from synology_apm.sdk.enums import VersionCopyStatus
-
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"versions": [_ver_raw("COPY_STATUS_NOT_ENABLED")], "total": 1}
-        versions, _ = await collection.list_versions(SAMPLE_WL_OBJ)
-
-    assert versions[0].copy_status == VersionCopyStatus.NOT_ENABLED
 
 
 async def test_list_versions_parses_copy_reason_for_retry() -> None:
@@ -509,23 +650,6 @@ async def test_list_versions_parses_copy_reason_skipped_with_reason() -> None:
 
     assert versions[0].copy_status == VersionCopyStatus.SKIPPED
     assert versions[0].copy_reason == CopyReason.SKIPPED_NAS_ENCRYPTED
-
-
-async def test_list_versions_copy_reason_none_when_status_is_completed() -> None:
-    """copy_reason is always None when copy_status is COMPLETED."""
-    from unittest.mock import AsyncMock, patch
-
-    from synology_apm.sdk.enums import VersionCopyStatus
-
-    session = make_session()
-    collection = MachineWorkloadCollection(session)
-
-    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"versions": [_ver_raw("COPY_STATUS_NONE")], "total": 1}
-        versions, _ = await collection.list_versions(SAMPLE_WL_OBJ)
-
-    assert versions[0].copy_status == VersionCopyStatus.COMPLETED
-    assert versions[0].copy_reason is None
 
 
 async def test_list_versions_unknown_copy_status_falls_back_to_none() -> None:

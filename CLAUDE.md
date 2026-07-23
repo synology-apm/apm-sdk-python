@@ -439,10 +439,18 @@ upgrades `uv.lock` within existing constraints — review `git diff` before comm
 `dependabot.yml` version-updates later. This is not scheduled or proactive; a human still
 decides when to run it.
 
-> **Warning:** `make github-act-simulation` (see "Common Commands") is scoped to the
-> `verify-dist` job only and must never be pointed at `publish-sdk`/`publish-cli`/
-> `publish-mcp` — those rely on PyPI Trusted Publishing (OIDC), which a local `act` run
-> can not and should not exercise.
+> **Warning:** `make github-act-simulation` (see "Common Commands") runs `docs.yml`'s
+> `build` job, then `release.yml`'s `verify-dist` job (which pulls in `test` — the
+> reusable call into `ci.yml` — and `build` as `needs:` dependencies, so all three run).
+> Never point it at `docs.yml`'s `deploy` job or `release.yml`'s
+> `publish-sdk`/`publish-cli`/`publish-mcp`/`github-release` — those publish to GitHub
+> Pages / PyPI via OIDC (`pages: write` / `id-token: write`, PyPI Trusted Publishing) or
+> create a real GitHub Release (`contents: write`), which a local `act` run can not and
+> should not exercise.
+>
+> `.github/workflows/dependabot-auto-merge.yml` has no local `act` simulation target —
+> its entire logic is a one-line author check gating a real `gh pr merge --auto` call
+> against a real pull request, which `act` cannot meaningfully fabricate.
 
 `.github/workflows/dependabot-auto-merge.yml` auto-merges every PR authored by `dependabot[bot]`
 (via `gh pr merge --auto --squash`, which only enables GitHub's native auto-merge — the actual
@@ -502,15 +510,16 @@ uv run pytest tests/integration/ --record-mode=new_episodes --import-mode=import
 # Force re-record all cassettes (after major SDK refactors)
 uv run pytest tests/integration/ --record-mode=all --import-mode=importlib -v
 
-# Scope smoke tests to one domain group (full runs: make smoke-test-cli / make smoke-test-sdk)
+# Scope smoke tests to one domain group (full run of both: make smoke-test)
 uv run python -m tests.smoke.cli --group infra
 uv run python -m tests.smoke.sdk --group machine
 
-# Build API reference docs (first-time: uv sync --group docs)
+# Build API reference docs (docs/Makefile syncs the "docs" dependency group itself)
 make docs
 
 # Makefile shortcuts (make test = unit + integration tests, lint, mypy, coverage, MCP coverage check, version consistency check)
 make test
+make test-unit                         # unit tests only, no coverage/lint/mypy/integration — same command CI's older-Python matrix uses
 make record-integration-cassettes
 make smoke-test                        # runs both CLI and SDK smoke tests
 make build                             # wheel + sdist (runs make test first)
@@ -518,7 +527,7 @@ make whl                               # wheel + sdist without running tests
 
 # Maintenance — none of these run as part of `make test`; each needs a human to run and review
 make bump-external-versions            # rewrite outdated GH Actions pins + upgrade uv.lock (needs network; review git diff, then make test)
-make github-act-simulation             # locally test release.yml's build+verify-dist via act (needs act + Docker)
+make github-act-simulation             # locally test docs.yml's build, then release.yml's test+build+verify-dist, via act (needs act + Docker)
 ```
 
 ---

@@ -202,38 +202,35 @@ class TestBuildHelpers:
         assert bw.allowed_hours[WeekDay.MONDAY] == frozenset(list(range(0, 9)) + list(range(13, 19)))
         assert bw.allowed_hours[WeekDay.TUESDAY] == frozenset(range(0, 24))
 
-    def test_parse_backup_window_unrecognized_weekday_raises(self):
-        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
-        with pytest.raises(ValueError, match="Unrecognized weekday"):
-            _parse_backup_window(True, "weekend:0-8")
-
-    def test_parse_backup_window_missing_colon_raises(self):
-        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
-        with pytest.raises(ValueError, match="Unrecognized backup window entry"):
-            _parse_backup_window(True, "mon-0-8")
-
     def test_parse_backup_window_single_hours_no_range(self):
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
         from synology_apm.sdk import WeekDay
         bw = _parse_backup_window(True, "wed:9,12,15")
         assert bw.allowed_hours[WeekDay.WEDNESDAY] == frozenset({9, 12, 15})
 
-    def test_parse_backup_window_overnight_range_raises(self):
-        """An overnight range (start > end) is rejected instead of silently becoming empty."""
+    @pytest.mark.parametrize(
+        "spec,match",
+        [
+            ("weekend:0-8", "Unrecognized weekday"),
+            ("mon-0-8", "Unrecognized backup window entry"),
+            ("mon:20-8", "start must be <= end"),
+            ("mon:30-40", "0-23"),
+            ("mon:99", "0-23"),
+        ],
+        ids=[
+            "unrecognized_weekday",
+            "missing_colon",
+            "overnight_range",
+            "out_of_range",
+            "single_hour_out_of_range",
+        ],
+    )
+    def test_parse_backup_window_invalid_spec_raises(self, spec, match):
+        """An unrecognized weekday/entry format, an overnight range (start > end), or an
+        hour outside 0-23 is rejected instead of being silently dropped or emptied."""
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
-        with pytest.raises(ValueError, match="start must be <= end"):
-            _parse_backup_window(True, "mon:20-8")
-
-    def test_parse_backup_window_out_of_range_raises(self):
-        """A range with an hour outside 0-23 is rejected instead of silently dropped."""
-        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
-        with pytest.raises(ValueError, match="0-23"):
-            _parse_backup_window(True, "mon:30-40")
-
-    def test_parse_backup_window_single_hour_out_of_range_raises(self):
-        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
-        with pytest.raises(ValueError, match="0-23"):
-            _parse_backup_window(True, "mon:99")
+        with pytest.raises(ValueError, match=match):
+            _parse_backup_window(True, spec)
 
     def test_parse_backup_window_disabled_does_not_validate_range(self):
         """When disabled, allowed_hours is ignored, so a malformed range must not raise."""
@@ -506,30 +503,24 @@ class TestBuildBackupCopy:
         mock_apm.backup_servers.get.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_missing_destination_type_raises(self, mock_apm):
+    @pytest.mark.parametrize(
+        "destination_type,retention_type,schedule_frequency,match",
+        [
+            (None, "keep_days", "daily", "backup_copy_destination_type is required"),
+            ("backup_server", None, "daily", "backup_copy_retention_type is required"),
+            ("backup_server", "keep_days", None, "backup_copy_schedule_frequency is required"),
+        ],
+        ids=["missing_destination_type", "missing_retention_type", "missing_schedule_frequency"],
+    )
+    async def test_missing_required_field_raises(
+        self, mock_apm, destination_type, retention_type, schedule_frequency, match
+    ):
         from synology_apm.mcp.tools.plans._builders_common import _build_backup_copy
 
-        with pytest.raises(ValueError, match="backup_copy_destination_type is required"):
+        with pytest.raises(ValueError, match=match):
             await _build_backup_copy(
-                mock_apm, None, "srv-002", "keep_days", 90, None, None, None, None, None, "daily", "23:00", None,
-            )
-
-    @pytest.mark.asyncio
-    async def test_missing_retention_type_raises(self, mock_apm):
-        from synology_apm.mcp.tools.plans._builders_common import _build_backup_copy
-
-        with pytest.raises(ValueError, match="backup_copy_retention_type is required"):
-            await _build_backup_copy(
-                mock_apm, "backup_server", "srv-002", None, 90, None, None, None, None, None, "daily", "23:00", None,
-            )
-
-    @pytest.mark.asyncio
-    async def test_missing_schedule_frequency_raises(self, mock_apm):
-        from synology_apm.mcp.tools.plans._builders_common import _build_backup_copy
-
-        with pytest.raises(ValueError, match="backup_copy_schedule_frequency is required"):
-            await _build_backup_copy(
-                mock_apm, "backup_server", "srv-002", "keep_days", 90, None, None, None, None, None, None, "23:00", None,
+                mock_apm, destination_type, "srv-002", retention_type, 90, None, None, None, None, None,
+                schedule_frequency, "23:00", None,
             )
 
     @pytest.mark.asyncio

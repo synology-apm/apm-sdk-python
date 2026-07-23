@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from synology_apm.sdk.collections.m365 import M365Collection, M365WorkloadCollection
+from synology_apm.sdk.collections.m365 import M365Collection, M365WorkloadCollection, _parse_m365_workload
 from synology_apm.sdk.collections.protection_plans import M365PlanCollection
 from synology_apm.sdk.enums import M365WorkloadType, VersionStatus, WorkloadCategory, WorkloadStatus
 from synology_apm.sdk.exceptions import ResourceNotFoundError
@@ -14,7 +14,7 @@ from synology_apm.sdk.models.protection_plan import ProtectionPlan
 from synology_apm.sdk.models.version import VersionLocation
 from synology_apm.sdk.models.version import WorkloadVersion as _WV
 from synology_apm.sdk.models.workload import M365UserInfo, M365Workload
-from tests.unit.sdk.conftest import BASE_URL, assert_resource_error, connected_session, make_session
+from tests.unit.sdk.conftest import BASE_URL, assert_resource_error, connected_session, make_session, null_out
 
 WORKLOAD_POST_URL = f"{BASE_URL}/api/v1/workload/m365_workload"
 
@@ -298,6 +298,73 @@ async def test_list_parses_group_workload() -> None:
     assert wl.info.display_name == "Marketing Group"
 
 
+# ── _parse_m365_workload: null vs. absent JSON field handling, per workload_type ──
+#
+# Called directly (not through list()) per the project's null-field testing convention —
+# see test_m365_workloads.py for the EXCHANGE/common-field and workloadType/entityMeta
+# variants; these three cover the remaining per-workload-type info blocks.
+
+
+def test_parse_m365_workload_survives_null_sharepoint_info_block() -> None:
+    """SHAREPOINT's siteInfo url/siteName, as JSON null (key present, value null —
+    distinct from an absent key), must not crash _parse_m365_workload(); both fall back
+    to empty strings."""
+    from synology_apm.sdk.models.workload import M365SiteInfo
+
+    raw = null_out(
+        SAMPLE_SHAREPOINT_WORKLOAD,
+        "entityMeta.spec.siteInfo.url", "entityMeta.spec.siteInfo.siteName",
+    )
+
+    wl = _parse_m365_workload(raw)
+
+    assert wl is not None
+    assert isinstance(wl.info, M365SiteInfo)
+    assert wl.info.site_url == ""
+    assert wl.info.site_name == ""
+    assert wl.name == ""
+
+
+def test_parse_m365_workload_survives_null_teams_info_block() -> None:
+    """TEAMS's teamInfo id/name/webUrl, as JSON null, must not crash
+    _parse_m365_workload(); all three fall back to empty strings."""
+    from synology_apm.sdk.models.workload import M365TeamInfo
+
+    raw = null_out(
+        SAMPLE_TEAMS_WORKLOAD,
+        "entityMeta.spec.teamInfo.id", "entityMeta.spec.teamInfo.name", "entityMeta.spec.teamInfo.webUrl",
+    )
+
+    wl = _parse_m365_workload(raw)
+
+    assert wl is not None
+    assert isinstance(wl.info, M365TeamInfo)
+    assert wl.info.team_id == ""
+    assert wl.info.team_name == ""
+    assert wl.info.web_url == ""
+    assert wl.name == ""
+
+
+def test_parse_m365_workload_survives_null_group_info_block() -> None:
+    """GROUP_EXCHANGE's groupInfo id/displayName/mail, as JSON null, must not crash
+    _parse_m365_workload(); all three fall back to empty strings."""
+    from synology_apm.sdk.models.workload import M365GroupInfo
+
+    raw = null_out(
+        SAMPLE_GROUP_WORKLOAD,
+        "entityMeta.spec.groupInfo.id", "entityMeta.spec.groupInfo.displayName", "entityMeta.spec.groupInfo.mail",
+    )
+
+    wl = _parse_m365_workload(raw)
+
+    assert wl is not None
+    assert isinstance(wl.info, M365GroupInfo)
+    assert wl.info.group_id == ""
+    assert wl.info.display_name == ""
+    assert wl.info.mail == ""
+    assert wl.name == ""
+
+
 async def test_get_by_name_matches_sharepoint_by_site_name() -> None:
     """get_by_name(site_name, tid, workload_type=SHAREPOINT) finds the workload by site name."""
     async with connected_session() as (session, m):
@@ -490,8 +557,12 @@ async def test_m365_get_version_raises_not_found_when_absent() -> None:
 # ── get_by_name() — is_retired filter params ────────────────────────────────
 
 
-async def test_m365_get_by_name_with_is_retired_true_sends_archive_plan_type() -> None:
-    """get_by_name(name, is_retired=True) should POST filter_body with planType=ARCHIVE."""
+@pytest.mark.parametrize("is_retired,expected_plan_type", [
+    (True, "ARCHIVE"),
+    (False, "BACKUP"),
+])
+async def test_m365_get_by_name_sends_plan_type_for_is_retired(is_retired: bool, expected_plan_type: str) -> None:
+    """get_by_name(name, is_retired=...) should POST filter_body with the matching planType."""
     from unittest.mock import AsyncMock, patch
 
     session = make_session()
@@ -499,25 +570,12 @@ async def test_m365_get_by_name_with_is_retired_true_sends_archive_plan_type() -
 
     with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
-        await collection.get_by_name("Alice", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=True)
+        await collection.get_by_name(
+            "Alice", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=is_retired
+        )
 
     body = mock_post.call_args[1]["json"]
-    assert body["filter"]["planType"] == "ARCHIVE"
-
-
-async def test_m365_get_by_name_with_is_retired_false_sends_backup_plan_type() -> None:
-    """get_by_name(name, is_retired=False) should POST filter_body with planType=BACKUP."""
-    from unittest.mock import AsyncMock, patch
-
-    session = make_session()
-    collection = M365WorkloadCollection(session)
-
-    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
-        mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
-        await collection.get_by_name("Alice", TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, is_retired=False)
-
-    body = mock_post.call_args[1]["json"]
-    assert body["filter"]["planType"] == "BACKUP"
+    assert body["filter"]["planType"] == expected_plan_type
 
 
 async def test_m365_get_by_name_skips_workload_with_unknown_type() -> None:

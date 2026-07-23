@@ -39,11 +39,11 @@ class SaasCollection:
                 resource_type="SaasTenant",
                 resource_id=tenant_id,
             )
-        tenant = raw.get("data", {}).get("tenant", {})
+        tenant = (raw.get("data") or {}).get("tenant") or {}
         return SaasTenant(
-            tenant_id=tenant.get("tenantId", tenant_id),
-            tenant_name=tenant.get("tenantName", ""),
-            tenant_email=tenant.get("tenantMail", ""),
+            tenant_id=tenant.get("tenantId") or tenant_id,
+            tenant_name=tenant.get("tenantName") or "",
+            tenant_email=tenant.get("tenantMail") or "",
             category=WorkloadCategory.M365,
             protected_data_bytes=0,
         )
@@ -69,8 +69,8 @@ class SaasCollection:
             "sortBy": "NAME_ASC",
         }
         raw = await self._session.post("/api/v1/application/cloudapp", json=body)
-        tenants: list[SaasTenant] = [_parse_m365_tenant(entry) for entry in raw.get("m365", [])]
-        tenants.extend(_parse_gws_tenant(entry) for entry in raw.get("gw", []))
+        tenants: list[SaasTenant] = [_parse_m365_tenant(entry) for entry in raw.get("m365") or []]
+        tenants.extend(_parse_gws_tenant(entry) for entry in raw.get("gw") or [])
 
         # cloudapp endpoint returns total as string — server-side bug
         raw_total = raw.get("total")
@@ -78,24 +78,24 @@ class SaasCollection:
 
 
 def _parse_m365_tenant(entry: dict[str, Any]) -> SaasTenant:
-    tenant = entry.get("tenant", {})
-    usage_info = tenant.get("dataUsageInfo", {})
+    tenant = entry.get("tenant") or {}
+    usage_info = tenant.get("dataUsageInfo") or {}
     return SaasTenant(
-        tenant_id=tenant.get("tenantId", ""),
-        tenant_name=tenant.get("tenantName", ""),
-        tenant_email=tenant.get("tenantMail", ""),
+        tenant_id=tenant.get("tenantId") or "",
+        tenant_name=tenant.get("tenantName") or "",
+        tenant_email=tenant.get("tenantMail") or "",
         category=WorkloadCategory.M365,
-        protected_data_bytes=int(usage_info.get("dataUsage", 0)),
+        protected_data_bytes=int(usage_info.get("dataUsage") or 0),
     )
 
 
 def _parse_gws_tenant(entry: dict[str, Any]) -> SaasTenant:
-    tenant = entry.get("tenant", {})
-    usage_info = tenant.get("dataUsageInfo", {})
+    tenant = entry.get("tenant") or {}
+    usage_info = tenant.get("dataUsageInfo") or {}
     return SaasTenant(
-        tenant_id=tenant.get("domainId", tenant.get("tenantId", "")),
-        tenant_name=tenant.get("tenantName", tenant.get("domainName", "")),
-        tenant_email=tenant.get("tenantMail", tenant.get("domain", "")),
+        tenant_id=tenant.get("domainId") or tenant.get("tenantId") or "",
+        tenant_name=tenant.get("tenantName") or tenant.get("domainName") or "",
+        tenant_email=tenant.get("tenantMail") or tenant.get("domain") or "",
         category=WorkloadCategory.GWS,
-        protected_data_bytes=int(usage_info.get("dataUsage", 0)),
+        protected_data_bytes=int(usage_info.get("dataUsage") or 0),
     )

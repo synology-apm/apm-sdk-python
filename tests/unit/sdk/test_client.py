@@ -19,6 +19,10 @@ from synology_apm.sdk.collections.protection_plans import ProtectionPlanCollecti
 from synology_apm.sdk.collections.remote_storages import RemoteStorageCollection
 from synology_apm.sdk.collections.retirement_plans import RetirementPlanCollection
 from synology_apm.sdk.collections.saas import SaasCollection
+from synology_apm.sdk.collections.system import (
+    _parse_site_storage_stats,
+    _parse_workload_usage_summary,
+)
 from synology_apm.sdk.collections.tiering_plans import TieringPlanCollection
 from synology_apm.sdk.enums import BackupServerRole, WorkloadStatType
 from synology_apm.sdk.exceptions import APIError, AuthenticationError, NotManagementServerError
@@ -394,6 +398,78 @@ async def test_get_site_info_no_management_server_when_none_found() -> None:
     assert site.primary_management_server is None
     assert site.secondary_management_server is None
 
+
+async def test_get_site_info_null_top_level_fields_fall_back_to_empty_string() -> None:
+    """site_uuid/external_address/port fall back to "" when the API returns them as JSON
+    null (key present, value null) rather than absent — distinct from the absent-key case
+    already covered by the paginate/no-management-server tests above."""
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        m.get(ME_URL, payload=ME_OK)
+        async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:
+            m.get(f"{BASE_URL}/api/v1/license/info", payload={"uuid": None})
+            m.get(f"{BASE_URL}/api/v1/cluster/site_info", payload={"externalAddress": None, "port": None})
+            m.get(
+                f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=500",
+                payload={"backupServers": [], "total": 0},
+            )
+            m.get(
+                f"{BASE_URL}/api/v1/infra/backup_server/storage_statistics",
+                payload={"transferBytes": 0, "backupServerUsageBytes": 0},
+            )
+            m.get(
+                f"{BASE_URL}/api/v1/dashboard/get_workload_statistics",
+                payload={"workloadStatistics": []},
+            )
+            site = await apm.get_site_info()
+            m.get(f"{BASE_URL}/api/v1/preference/logout", payload=LOGOUT_OK)
+
+    assert site.site_uuid == ""
+    assert site.external_address == ""
+    assert site.port == ""
+
+
+def test_parse_site_storage_stats_null_fields_fall_back_to_zero() -> None:
+    """_parse_site_storage_stats falls back to 0 when transferBytes/backupServerUsageBytes
+    are JSON null (key present, value null)."""
+    stats = _parse_site_storage_stats({"transferBytes": None, "backupServerUsageBytes": None})
+    assert stats.logical_backup_data_bytes == 0
+    assert stats.physical_backup_data_bytes == 0
+
+
+def test_parse_workload_usage_summary_handles_null_fields() -> None:
+    """_parse_workload_usage_summary falls back to safe defaults when workloadStatistics
+    itself, or an item's workloadType/count/usage fields, are JSON null."""
+    empty = _parse_workload_usage_summary({"workloadStatistics": None})
+    assert empty.by_type == ()
+
+    raw = {
+        "workloadStatistics": [
+            {
+                "workloadType": "MACHINE_PC",
+                "successCount": None,
+                "warningCount": None,
+                "errorCount": None,
+                "noBackupCount": None,
+                "dataUsage": None,
+            },
+            # a null workloadType is unrecognized and skipped, same as absent
+            {
+                "workloadType": None,
+                "successCount": "1",
+                "warningCount": "0",
+                "errorCount": "0",
+                "noBackupCount": "0",
+                "dataUsage": "100",
+            },
+        ],
+    }
+    summary = _parse_workload_usage_summary(raw)
+    assert len(summary.by_type) == 1
+    stat = summary.by_type[0]
+    assert stat.workload_type == WorkloadStatType.MACHINE_PC
+    assert stat.total_count == 0
+    assert stat.protected_data_bytes == 0
 
 
 def test_activity_collection_subcollection_wiring() -> None:

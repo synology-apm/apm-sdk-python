@@ -64,9 +64,9 @@ class SystemCollection:
         primary_management_server, secondary_management_server = management_servers
 
         return SiteInfo(
-            site_uuid=license_raw.get("uuid", ""),
-            external_address=site_raw.get("externalAddress", ""),
-            port=site_raw.get("port", ""),
+            site_uuid=license_raw.get("uuid") or "",
+            external_address=site_raw.get("externalAddress") or "",
+            port=site_raw.get("port") or "",
             primary_management_server=primary_management_server,
             secondary_management_server=secondary_management_server,
             site_storage=_parse_site_storage_stats(storage_raw),
@@ -76,26 +76,26 @@ class SystemCollection:
 
 def _parse_site_storage_stats(raw: dict[str, Any]) -> SiteStorageStats:
     return SiteStorageStats(
-        logical_backup_data_bytes=int(raw.get("transferBytes", 0)),
-        physical_backup_data_bytes=int(raw.get("backupServerUsageBytes", 0)),
+        logical_backup_data_bytes=int(raw.get("transferBytes") or 0),
+        physical_backup_data_bytes=int(raw.get("backupServerUsageBytes") or 0),
     )
 
 
 def _parse_workload_usage_summary(raw: dict[str, Any]) -> WorkloadUsageSummary:
     stats: list[WorkloadTypeStat] = []
-    for item in raw.get("workloadStatistics", []):
-        wtype = _WORKLOAD_STAT_TYPE_MAP.get(item.get("workloadType", ""))
+    for item in raw.get("workloadStatistics") or []:
+        wtype = _WORKLOAD_STAT_TYPE_MAP.get(item.get("workloadType") or "")
         if wtype is None:
             continue
         total = (
-            int(item.get("successCount", 0))
-            + int(item.get("warningCount", 0))
-            + int(item.get("errorCount", 0))
-            + int(item.get("noBackupCount", 0))
+            int(item.get("successCount") or 0)
+            + int(item.get("warningCount") or 0)
+            + int(item.get("errorCount") or 0)
+            + int(item.get("noBackupCount") or 0)
         )
         stats.append(WorkloadTypeStat(
             workload_type=wtype,
             total_count=total,
-            protected_data_bytes=int(item.get("dataUsage", 0)),
+            protected_data_bytes=int(item.get("dataUsage") or 0),
         ))
     return WorkloadUsageSummary(by_type=tuple(stats))

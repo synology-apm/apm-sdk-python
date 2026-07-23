@@ -108,10 +108,15 @@ def _sdk_error() -> ResourceNotFoundError:
 SAMPLE_WL_2 = dataclasses.replace(SAMPLE_WL, workload_id="wl-id-002", name="CORP-PC-002")
 
 
-def test_machine_list_invalid_type() -> None:
-    """machine list --type <invalid> should exit with code 1."""
+@pytest.mark.parametrize("option_flag,invalid_value", [
+    ("--type", "server"),
+    ("--status", "nope"),
+    ("--verify-status", "nope"),
+], ids=["type", "status", "verify-status"])
+def test_machine_list_invalid_filter_value(option_flag: str, invalid_value: str) -> None:
+    """machine list with an invalid filter option value should exit with code 1."""
     mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, ["machine", "list", "--type", "server"])
+    result = invoke_cli(mock_apm, ["machine", "list", option_flag, invalid_value])
     assert result.exit_code == 1
 
 
@@ -133,13 +138,21 @@ def test_machine_all_list_json_output() -> None:
     assert data[0]["workload_id"] == "wl-id-001"
 
 
-def test_machine_list_namespace_filter() -> None:
-    """machine list --namespace <ns> should pass namespace to the SDK."""
+@pytest.mark.parametrize("args,kwarg_name,expected_value", [
+    (["--namespace", "ns-001"], "namespace", "ns-001"),
+    (
+        ["--hypervisor", "978eabd4-e332-459f-a8e0-35a0aa312118"],
+        "hypervisor_id",
+        "978eabd4-e332-459f-a8e0-35a0aa312118",
+    ),
+], ids=["namespace", "hypervisor"])
+def test_machine_list_string_filter(args: list[str], kwarg_name: str, expected_value: object) -> None:
+    """machine list string filter options should pass their value through to the SDK."""
     mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, ["machine", "list", "--namespace", "ns-001"])
+    result = invoke_cli(mock_apm, ["machine", "list", *args])
     assert result.exit_code == 0, result.output
     call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
-    assert call_kwargs["namespace"] == "ns-001"
+    assert call_kwargs[kwarg_name] == expected_value
 
 
 def test_machine_list_plan_filter_resolves_by_name() -> None:
@@ -162,15 +175,6 @@ def test_machine_list_plan_filter_resolves_against_retirement_plans_when_retired
     assert call_kwargs["plan"] == [SAMPLE_RETIREMENT_PLAN]
 
 
-def test_machine_list_no_plan_passes_none() -> None:
-    """machine list without --plan passes plan=None to the SDK."""
-    mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, ["machine", "list"])
-    assert result.exit_code == 0, result.output
-    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
-    assert call_kwargs["plan"] is None
-
-
 def test_machine_list_shows_backup_server_name() -> None:
     """machine list table should display the backup server hostname."""
     mock_apm = make_mock_client()
@@ -179,81 +183,31 @@ def test_machine_list_shows_backup_server_name() -> None:
     assert "apm-server-01" in result.output
 
 
-def test_machine_list_hypervisor_filter() -> None:
-    """machine list --hypervisor <id> should pass hypervisor_id to the SDK."""
-    mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, [
-        "machine", "list", "--hypervisor", "978eabd4-e332-459f-a8e0-35a0aa312118",
-    ])
-    assert result.exit_code == 0, result.output
-    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
-    assert call_kwargs["hypervisor_id"] == "978eabd4-e332-459f-a8e0-35a0aa312118"
-
-
-@pytest.mark.parametrize("status_flags,expected_status", [
-    (["--status", "failed"], [WorkloadStatus.FAILED]),
+@pytest.mark.parametrize("status_flags,kwarg_name,expected_status", [
+    (["--status", "failed"], "status", [WorkloadStatus.FAILED]),
     (
         ["--status", "failed", "--status", "partial"],
+        "status",
         [WorkloadStatus.FAILED, WorkloadStatus.PARTIAL],
     ),
-])
-def test_machine_list_status_filter(status_flags: list[str], expected_status: list[WorkloadStatus]) -> None:
-    """machine list --status <value> (repeatable) should pass status= to the SDK."""
-    mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, ["machine", "list", *status_flags])
-    assert result.exit_code == 0, result.output
-    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
-    assert call_kwargs["status"] == expected_status
-
-
-def test_machine_list_no_status_passes_none() -> None:
-    """machine list without --status should pass status=None to the SDK."""
-    mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, ["machine", "list"])
-    assert result.exit_code == 0, result.output
-    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
-    assert call_kwargs["status"] is None
-
-
-def test_machine_list_invalid_status_exits_1() -> None:
-    """machine list --status <invalid> should exit with code 1."""
-    mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, ["machine", "list", "--status", "nope"])
-    assert result.exit_code == 1
-
-
-@pytest.mark.parametrize("status_flags,expected_status", [
-    (["--verify-status", "failed"], [VerifyStatus.FAILED]),
+    (["--verify-status", "failed"], "verify_status", [VerifyStatus.FAILED]),
     (
         ["--verify-status", "not_enabled", "--verify-status", "waiting"],
+        "verify_status",
         [VerifyStatus.NOT_ENABLED, VerifyStatus.WAITING],
     ),
-])
-def test_machine_list_verify_status_filter(
-    status_flags: list[str], expected_status: list[VerifyStatus]
+], ids=["status-single", "status-multi", "verify-status-single", "verify-status-multi"])
+def test_machine_list_enum_status_filter(
+    status_flags: list[str],
+    kwarg_name: str,
+    expected_status: list[WorkloadStatus] | list[VerifyStatus],
 ) -> None:
-    """machine list --verify-status <value> (repeatable) should pass verify_status= to the SDK."""
+    """machine list --status/--verify-status <value> (repeatable) should pass the filter to the SDK."""
     mock_apm = make_mock_client()
     result = invoke_cli(mock_apm, ["machine", "list", *status_flags])
     assert result.exit_code == 0, result.output
     call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
-    assert call_kwargs["verify_status"] == expected_status
-
-
-def test_machine_list_no_verify_status_passes_none() -> None:
-    """machine list without --verify-status should pass verify_status=None to the SDK."""
-    mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, ["machine", "list"])
-    assert result.exit_code == 0, result.output
-    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
-    assert call_kwargs["verify_status"] is None
-
-
-def test_machine_list_invalid_verify_status_exits_1() -> None:
-    """machine list --verify-status <invalid> should exit with code 1."""
-    mock_apm = make_mock_client()
-    result = invoke_cli(mock_apm, ["machine", "list", "--verify-status", "nope"])
-    assert result.exit_code == 1
+    assert call_kwargs[kwarg_name] == expected_status
 
 
 @pytest.mark.parametrize("subcommand,expected_type", [
@@ -279,13 +233,14 @@ def test_machine_list_multi_type_passes_workload_types() -> None:
     assert call_kwargs["workload_types"] == [MachineWorkloadType.VM, MachineWorkloadType.FS]
 
 
-def test_machine_list_no_type_passes_none() -> None:
-    """machine list without --type should pass workload_types=None to the SDK."""
+@pytest.mark.parametrize("kwarg_name", ["plan", "status", "verify_status", "workload_types"])
+def test_machine_list_no_filter_passes_none(kwarg_name: str) -> None:
+    """machine list without a given filter option passes None for that SDK kwarg."""
     mock_apm = make_mock_client()
     result = invoke_cli(mock_apm, ["machine", "list"])
     assert result.exit_code == 0, result.output
     call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
-    assert call_kwargs["workload_types"] is None
+    assert call_kwargs[kwarg_name] is None
 
 
 def test_machine_get_table_output() -> None:
