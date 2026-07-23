@@ -25,7 +25,8 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     @registrar.tool("admin", description=(
         f"Create an M365 protection plan (fails if the name is already taken). {_RETENTION_SCHEDULE_DESC} "
         "Optional backup_copy_* configures a cross-storage Backup Copy destination, retention, and "
-        "schedule (schedule_frequency accepts after_backup here in addition to daily/weekly)."
+        "schedule (backup_copy_schedule_frequency accepts after_backup here in addition to "
+        "daily/weekly; weekly requires at least one weekday in backup_copy_weekdays)."
     ))
     async def create_m365_protection_plan(
         ctx: Context,

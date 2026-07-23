@@ -371,6 +371,31 @@ async def test_create_backup_copy_unsupported_storage_type_raises() -> None:
     assert ("POST", URL(PLAN_URL)) not in m.requests
 
 
+def test_machine_plan_weekly_backup_copy_no_weekdays_raises() -> None:
+    """A WEEKLY Backup Copy schedule with no weekdays raises ValueError at construction time."""
+    with pytest.raises(ValueError, match="WEEKLY Backup Copy schedule requires at least one weekday"):
+        _make_request(
+            backup_copy=BackupCopyConfig(
+                destination=SAMPLE_COPY_DEST_SERVER,
+                retention=_copy_retention(),
+                schedule=ProtectionSchedule(frequency=ScheduleFrequency.WEEKLY, start_time=time(2, 0)),
+            )
+        )
+
+
+def test_machine_plan_after_backup_copy_is_accepted() -> None:
+    """AFTER_BACKUP remains a valid Backup Copy schedule (non-regression for the WEEKLY check)."""
+    request = _make_request(
+        backup_copy=BackupCopyConfig(
+            destination=SAMPLE_COPY_DEST_SERVER,
+            retention=_copy_retention(),
+            schedule=ProtectionSchedule(frequency=ScheduleFrequency.AFTER_BACKUP, start_time=None),
+        )
+    )
+    assert request.backup_copy is not None
+    assert request.backup_copy.schedule.frequency == ScheduleFrequency.AFTER_BACKUP
+
+
 # ── request model validation (construction-time ValueError) ────────────────
 
 
@@ -597,3 +622,16 @@ async def test_delete_reraises_non_in_use_api_error() -> None:
         await session.disconnect()
 
     assert exc_info.type is APIError
+
+
+def test_build_backup_window_rejects_out_of_range_hour() -> None:
+    """The request builder is a defensive last gate: an out-of-range hour that bypassed
+    construction-time validation (allowed_hours is a mutable dict on a frozen dataclass)
+    still raises instead of being silently dropped."""
+    from synology_apm.sdk.collections._protection_plan_builders import _build_backup_window_dict
+
+    window = MachineBackupWindow(enabled=True, allowed_hours={WeekDay.MONDAY: frozenset({8})})
+    window.allowed_hours[WeekDay.MONDAY] = frozenset({30})  # mutate past __post_init__
+
+    with pytest.raises(ValueError, match="out of range 0-23"):
+        _build_backup_window_dict(window)

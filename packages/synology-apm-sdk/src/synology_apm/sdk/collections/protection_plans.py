@@ -53,7 +53,7 @@ async def _build_location_cache(
     seen: set[str] = set()
 
     for p in plans_raw:
-        bc = p.get("spec", {}).get("backupCopy", {})
+        bc = p.get("spec", {}).get("backupCopy") or {}
         if not (bc.get("enabled") and bc.get("destination")):
             continue
         dest_id = bc["destination"]

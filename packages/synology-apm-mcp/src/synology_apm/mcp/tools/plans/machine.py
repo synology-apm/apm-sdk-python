@@ -33,7 +33,8 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         "backup_window_allowed_hours (format 'mon:0-8,13-18;tue:0-23'), tasks_json (JSON array overriding "
         "the per-workload-type task scope/schedule; omit for the default 6-entry task set), and "
         "backup_copy_* (cross-server/storage Backup Copy destination, retention, and schedule — "
-        "schedule_frequency accepts after_backup here in addition to daily/weekly)."
+        "backup_copy_schedule_frequency accepts after_backup here in addition to daily/weekly; "
+        "weekly requires at least one weekday in backup_copy_weekdays)."
     ))
     async def create_machine_protection_plan(
         ctx: Context,

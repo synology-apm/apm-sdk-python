@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, time
 from typing import Any
 
+import pytest
+
 from synology_apm.sdk.enums import (
     ActivityWorkloadType,
     APMActivityLogType,
@@ -51,9 +53,11 @@ from synology_apm.sdk.models.m365_auto_backup_rule import (
     M365CollabServiceSetting,
 )
 from synology_apm.sdk.models.protection_plan import (
+    BackupCopyConfig,
     BackupCopyPolicy,
     EventTriggerConfig,
     GFSRetention,
+    M365PlanCreateRequest,
     MachineBackupWindow,
     MachineDbConfig,
     MachinePcConfig,
@@ -659,6 +663,79 @@ def make_retirement_plan(**kwargs: Any) -> RetirementPlan:
     )
     defaults.update(kwargs)
     return RetirementPlan(**defaults)
+
+
+# ── Construction-time validation (raises before any API call) ──────────────
+
+_COPY_DEST = BackupServer(
+    backup_server_id="bs-dp-001",
+    namespace="123e4567-e89b-12d3-a456-426614174000",
+    server_type=BackupServerType.DP,
+    name="apm-server-01",
+    hostname="192.0.2.1",
+    model="DP320",
+    system_version="APM 1.2-71845",
+    status=ServerStatus.HEALTHY,
+    is_updating=False,
+    serial="SN001",
+    storage_total_bytes=None,
+    storage_used_bytes=None,
+    logical_backup_data_bytes=None,
+    physical_backup_data_bytes=None,
+)
+
+
+def _m365_request(backup_copy: BackupCopyConfig | None) -> M365PlanCreateRequest:
+    return M365PlanCreateRequest(
+        name="M365 Daily",
+        retention=ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=30),
+        schedule=ProtectionSchedule(frequency=ScheduleFrequency.DAILY, start_time=time(9, 0)),
+        backup_copy=backup_copy,
+    )
+
+
+def test_m365_plan_weekly_backup_copy_no_weekdays_raises() -> None:
+    """M365PlanCreateRequest with a WEEKLY Backup Copy schedule and no weekdays raises at construction."""
+    with pytest.raises(ValueError, match="WEEKLY Backup Copy schedule requires at least one weekday"):
+        _m365_request(
+            BackupCopyConfig(
+                destination=_COPY_DEST,
+                retention=ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=7),
+                schedule=ProtectionSchedule(frequency=ScheduleFrequency.WEEKLY, start_time=time(2, 0)),
+            )
+        )
+
+
+def test_m365_plan_after_backup_copy_is_accepted() -> None:
+    """AFTER_BACKUP remains valid for an M365 Backup Copy schedule (non-regression)."""
+    request = _m365_request(
+        BackupCopyConfig(
+            destination=_COPY_DEST,
+            retention=ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=7),
+            schedule=ProtectionSchedule(frequency=ScheduleFrequency.AFTER_BACKUP, start_time=None),
+        )
+    )
+    assert request.backup_copy is not None
+
+
+def test_backup_window_out_of_range_hour_raises_when_enabled() -> None:
+    """An allowed hour outside 0-23 raises at construction time when the window is enabled."""
+    with pytest.raises(ValueError, match="out of range 0-23"):
+        MachineBackupWindow(enabled=True, allowed_hours={WeekDay.MONDAY: frozenset({30})})
+
+
+def test_backup_window_out_of_range_hour_ignored_when_disabled() -> None:
+    """allowed_hours is ignored when the window is disabled, so out-of-range values are retained
+    without raising (the "Ignored when enabled is False" contract)."""
+    window = MachineBackupWindow(enabled=False, allowed_hours={WeekDay.MONDAY: frozenset({30})})
+    assert window.enabled is False
+    assert window.allowed_hours[WeekDay.MONDAY] == frozenset({30})
+
+
+def test_backup_window_boundary_hours_accepted() -> None:
+    """Hours 0 and 23 are valid boundaries and must not raise."""
+    window = MachineBackupWindow(enabled=True, allowed_hours={WeekDay.MONDAY: frozenset({0, 23})})
+    assert window.allowed_hours[WeekDay.MONDAY] == frozenset({0, 23})
 
 
 # ── Exhaustiveness: every response model must expose to_dict() ─────────────

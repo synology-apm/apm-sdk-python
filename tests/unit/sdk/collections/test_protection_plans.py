@@ -111,6 +111,19 @@ REMOTE_STORAGE_RAW: dict[str, Any] = {
     "vaultName": "my-bucket",
 }
 
+# A plan whose backupCopy is JSON null (key present, value null) — distinct from an
+# absent key or {"enabled": false}. Observed on real servers for locked FS plans.
+SAMPLE_PLAN_NULL_COPY: dict[str, Any] = {
+    "id": "null-copy-plan-001",
+    "spec": {
+        "name": "Null Copy Plan",
+        "retention": {"keepDays": 30},
+        "backupCopy": None,
+    },
+    "protectedWorkloadCount": 1,
+    "unprotectedWorkloadCount": 0,
+}
+
 
 
 
@@ -386,6 +399,47 @@ async def test_list_deduplicates_destination_lookups() -> None:
 
     servers_key = ("GET", URL(servers_url))
     assert len(m.requests[servers_key]) == 1
+
+
+async def test_list_survives_null_backup_copy() -> None:
+    """A plan whose backupCopy is JSON null must not crash list(); it yields backup_copy_policy=None
+    while a sibling plan with a valid APPLIANCE copy destination is still resolved."""
+    session = make_session()
+    servers_url = f"{BASE_URL}/api/v1/infra/backup_server?limit=3000&offset=0"
+    list_url = f"{BASE_URL}/api/v1/plan/backup_plan?offset=0&limit=500&serviceType=DEVICE"
+
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        await session.connect()
+
+        m.get(list_url, payload={
+            "plans": [SAMPLE_PLAN_NULL_COPY, SAMPLE_PLAN_WITH_COPY_APPLIANCE], "total": 2,
+        })
+        m.get(servers_url, payload={"backupServers": [BACKUP_SERVER_RAW], "total": 1})
+
+        plans = make_collections(session)
+        result, total = await plans.list()
+        await session.disconnect()
+
+    assert total == 2
+    null_plan = next(p for p in result if p.plan_id == "null-copy-plan-001")
+    copy_plan = next(p for p in result if p.plan_id == "copy-plan-001")
+    assert null_plan.backup_copy_policy is None
+    assert copy_plan.backup_copy_policy is not None
+    assert copy_plan.backup_copy_policy.destination.name == "My NAS"
+
+
+async def test_get_survives_null_backup_copy() -> None:
+    """get() of a plan whose backupCopy is JSON null must not crash; backup_copy_policy is None."""
+    async with connected_session() as (session, m):
+
+        m.get(f"{BASE_URL}/api/v1/plan/backup_plan/{PLAN_ID}", payload=SAMPLE_PLAN_NULL_COPY)
+        plans = make_collections(session)
+        plan = await plans.get(PLAN_ID)
+        await session.disconnect()
+
+    assert plan.name == "Null Copy Plan"
+    assert plan.backup_copy_policy is None
 
 
 async def test_list_backup_copy_policy_none_when_lookup_fails() -> None:
