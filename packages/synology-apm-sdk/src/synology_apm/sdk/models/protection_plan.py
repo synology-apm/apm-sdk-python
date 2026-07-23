@@ -263,9 +263,23 @@ class MachineBackupWindow:
         allowed_hours: Weekday → set of allowed hours (0–23). Absent weekdays
                        are fully blocked. Empty dict with enabled=True blocks all backup.
                        Ignored when enabled is False.
+
+    Raises:
+        ValueError: An allowed hour is outside 0–23 (checked only when enabled is True;
+                    allowed_hours is ignored when enabled is False).
     """
     enabled: bool
     allowed_hours: dict[WeekDay, frozenset[int]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.enabled:
+            return
+        for day, hours in self.allowed_hours.items():
+            for h in hours:
+                if not 0 <= h <= 23:
+                    raise ValueError(
+                        f"Backup window hour {h} for {day.name} is out of range 0-23."
+                    )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe dict representation."""
@@ -349,6 +363,16 @@ def _validate_plan_schedule_and_retention(
         raise ValueError("WEEKLY schedule requires at least one weekday.")
     if is_immutable and retention.retention_type != RetentionType.KEEP_DAYS:
         raise ValueError("Immutable plans require KEEP_DAYS retention.")
+
+
+def _validate_backup_copy(backup_copy: BackupCopyConfig | None) -> None:
+    """Validate a Backup Copy schedule. Unlike the main schedule, AFTER_BACKUP is allowed here;
+    only the WEEKLY-requires-a-weekday rule applies."""
+    if backup_copy is None:
+        return
+    schedule = backup_copy.schedule
+    if schedule.frequency == ScheduleFrequency.WEEKLY and not schedule.weekdays:
+        raise ValueError("WEEKLY Backup Copy schedule requires at least one weekday.")
 
 
 _MANDATORY_TASK_PAIRS: frozenset[tuple[MachineWorkloadType, MachineOsType]] = frozenset({
@@ -493,6 +517,7 @@ class MachinePlanCreateRequest:
     Raises:
         ValueError: schedule frequency cannot be AFTER_BACKUP.
         ValueError: WEEKLY schedule requires at least one weekday.
+        ValueError: WEEKLY Backup Copy schedule requires at least one weekday.
         ValueError: Immutable plans require KEEP_DAYS retention.
         ValueError: tasks is missing a mandatory (workload_type, os_type) pair.
         ValueError: tasks contains more than one FS or VM entry.
@@ -521,6 +546,7 @@ class MachinePlanCreateRequest:
 
     def __post_init__(self) -> None:
         _validate_plan_schedule_and_retention(self.schedule, self.retention, self.is_immutable)
+        _validate_backup_copy(self.backup_copy)
         if self.tasks is not None:
             pair_counts: dict[tuple[MachineWorkloadType, MachineOsType], int] = {}
             for task in self.tasks:
@@ -600,6 +626,7 @@ class M365PlanCreateRequest:
     Raises:
         ValueError: schedule frequency cannot be AFTER_BACKUP.
         ValueError: WEEKLY schedule requires at least one weekday.
+        ValueError: WEEKLY Backup Copy schedule requires at least one weekday.
         ValueError: Immutable plans require KEEP_DAYS retention.
     """
     name: str
@@ -612,3 +639,4 @@ class M365PlanCreateRequest:
 
     def __post_init__(self) -> None:
         _validate_plan_schedule_and_retention(self.schedule, self.retention, self.is_immutable)
+        _validate_backup_copy(self.backup_copy)

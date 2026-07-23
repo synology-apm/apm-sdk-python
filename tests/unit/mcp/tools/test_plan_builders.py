@@ -218,6 +218,30 @@ class TestBuildHelpers:
         bw = _parse_backup_window(True, "wed:9,12,15")
         assert bw.allowed_hours[WeekDay.WEDNESDAY] == frozenset({9, 12, 15})
 
+    def test_parse_backup_window_overnight_range_raises(self):
+        """An overnight range (start > end) is rejected instead of silently becoming empty."""
+        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
+        with pytest.raises(ValueError, match="start must be <= end"):
+            _parse_backup_window(True, "mon:20-8")
+
+    def test_parse_backup_window_out_of_range_raises(self):
+        """A range with an hour outside 0-23 is rejected instead of silently dropped."""
+        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
+        with pytest.raises(ValueError, match="0-23"):
+            _parse_backup_window(True, "mon:30-40")
+
+    def test_parse_backup_window_single_hour_out_of_range_raises(self):
+        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
+        with pytest.raises(ValueError, match="0-23"):
+            _parse_backup_window(True, "mon:99")
+
+    def test_parse_backup_window_disabled_does_not_validate_range(self):
+        """When disabled, allowed_hours is ignored, so a malformed range must not raise."""
+        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
+        bw = _parse_backup_window(False, "mon:20-8")
+        assert bw is not None
+        assert bw.enabled is False
+
     def test_parse_tasks_json_none_returns_none(self):
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         assert _parse_tasks_json(None) is None

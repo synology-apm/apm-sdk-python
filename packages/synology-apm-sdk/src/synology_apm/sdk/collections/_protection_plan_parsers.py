@@ -319,7 +319,7 @@ def _parse_plan(
 
     policy = ProtectionPlanPolicy(retention=retention, schedule=schedule)
 
-    bc = spec.get("backupCopy", {})
+    bc = spec.get("backupCopy") or {}
     backup_copy_policy: BackupCopyPolicy | None = None
     if bc.get("enabled") and bc.get("destination"):
         dest_loc = (location_cache or {}).get(bc["destination"])

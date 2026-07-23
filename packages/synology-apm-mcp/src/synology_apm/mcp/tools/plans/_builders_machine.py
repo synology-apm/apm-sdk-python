@@ -141,9 +141,20 @@ def _parse_backup_window(enabled: bool, spec: str | None) -> MachineBackupWindow
                 continue
             if "-" in rng:
                 start_s, end_s = rng.split("-", 1)
-                hours.update(range(int(start_s), int(end_s) + 1))
+                start, end = int(start_s), int(end_s)
+                if enabled and not (0 <= start <= 23 and 0 <= end <= 23):
+                    raise ValueError(f"Backup window hours must be 0-23, got {rng!r}.")
+                if enabled and start > end:
+                    raise ValueError(
+                        f"Backup window range start must be <= end, got {rng!r}. "
+                        f"For an overnight window use two ranges, e.g. 20-23,0-8."
+                    )
+                hours.update(range(start, end + 1))
             else:
-                hours.add(int(rng))
+                h = int(rng)
+                if enabled and not 0 <= h <= 23:
+                    raise ValueError(f"Backup window hour must be 0-23, got {rng!r}.")
+                hours.add(h)
         allowed_hours[WeekDay(_DAY_MAP[day_key])] = frozenset(hours)
     return MachineBackupWindow(enabled=enabled, allowed_hours=allowed_hours)
 

@@ -347,8 +347,11 @@ def _build_backup_window_dict(cfg: MachineBackupWindow | None) -> dict[str, Any]
     for day, hours in cfg.allowed_hours.items():
         base = day.value * 24
         for h in hours:
-            if 0 <= h <= 23:
-                data_chars[base + h] = "1"
+            if not 0 <= h <= 23:
+                raise ValueError(
+                    f"Backup window hour {h} for {day.name} is out of range 0-23."
+                )
+            data_chars[base + h] = "1"
     return {"enabled": True, "data": "".join(data_chars)}
 
 
