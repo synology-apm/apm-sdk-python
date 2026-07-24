@@ -652,13 +652,21 @@ def test_m365_exchange_export_download_reports_progress(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Saved to" in result.output
 
-def test_m365_exchange_export_download_oserror_removes_partial_file(tmp_path: Path) -> None:
-    """export download removes the partially written file when the download fails."""
+def test_m365_exchange_export_download_oserror_leaves_part_cleanup_to_sdk(tmp_path: Path) -> None:
+    """On download failure the CLI must not touch the filesystem itself.
+
+    The SDK stages into a .part file and cleans it up on failure (dest is never
+    written), so the CLI's only job is to report the error and exit non-zero. It
+    must not unlink dest_path — doing so would delete a pre-existing good file.
+    """
     mock_apm = make_mock_apm_with_export(group=False)
     mock_apm.m365.exchange_export.get_download_url_by_activity.return_value = "https://apm.example/dl/token"
 
     async def _fail_download(url: str, dest_path: str, on_progress: Any = None) -> None:
-        Path(dest_path).write_bytes(b"partial")
+        # Mirror the real SDK: stage into .part, remove it on failure, never touch dest.
+        part = Path(dest_path + ".part")
+        part.write_bytes(b"partial")
+        part.unlink()
         raise OSError("disk full")
 
     mock_apm.download_file = AsyncMock(side_effect=_fail_download)
@@ -673,3 +681,24 @@ def test_m365_exchange_export_download_oserror_removes_partial_file(tmp_path: Pa
     assert result.exit_code == 1
     assert "Download failed" in result.output
     assert not dest.exists()
+    assert not Path(str(dest) + ".part").exists()
+
+
+def test_m365_exchange_export_download_oserror_preserves_existing_file(tmp_path: Path) -> None:
+    """A failed download must NOT delete a pre-existing file at the destination path."""
+    dest = tmp_path / "out.pst"
+    dest.write_bytes(b"previous good backup")
+    mock_apm = make_mock_apm_with_export(group=False)
+    mock_apm.m365.exchange_export.get_download_url_by_activity.return_value = "https://apm.example/dl/token"
+    mock_apm.download_file.side_effect = OSError("disk full")
+
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--id", "act-uuid-001", "--filename", str(dest), "--yes",
+    ])
+
+    assert result.exit_code == 1
+    # The CLI must not have unlinked the user's existing file on failure.
+    assert dest.exists()
+    assert dest.read_bytes() == b"previous good backup"
