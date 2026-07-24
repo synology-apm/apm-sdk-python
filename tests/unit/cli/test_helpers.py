@@ -281,6 +281,11 @@ def test_parse_time_filter_invalid_raises_bad_parameter() -> None:
     with pytest.raises(typer.BadParameter):
         parse_time_filter("not-a-date")
 
+def test_parse_time_filter_malformed_relative_raises_bad_parameter() -> None:
+    """A malformed relative value (e.g. '1h30m') raises BadParameter, not a raw ValueError."""
+    with pytest.raises(typer.BadParameter):
+        parse_time_filter("1h30m")
+
 
 # ── WorkloadRef.resolve_machine / resolve_m365 ───────────────────────────────
 
