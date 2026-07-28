@@ -518,9 +518,10 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
                 await _download_with_progress(apm, url, dest_path)
 
         except OSError as exc:
-            if dest_path is not None:
-                with contextlib.suppress(OSError):
-                    await asyncio.to_thread(Path(dest_path).unlink, missing_ok=True)
+            # The SDK stages the download in a .part file and only moves it into
+            # place on success, so an existing file at dest_path is untouched on
+            # failure. Do not unlink dest_path here — that would delete the user's
+            # previous good download.
             err_console.print(f"[red]✗[/red] Download failed: {exc}")
             raise typer.Exit(EXIT_ERROR) from exc
 

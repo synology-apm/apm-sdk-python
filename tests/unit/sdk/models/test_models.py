@@ -369,6 +369,7 @@ class TestBackupServerToDict:
         d = server.to_dict()
         assert d["backup_server_id"] == "srv-001"
         assert d["server_type"] == "dp"
+        assert d["storage_usage_pct"] == 30.0
         assert d["backup_data_reduction_bytes"] == 5_000_000_000
         assert d["backup_data_reduction_ratio"] == 62.5
 

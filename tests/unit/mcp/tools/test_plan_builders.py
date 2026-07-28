@@ -239,6 +239,17 @@ class TestBuildHelpers:
         assert bw is not None
         assert bw.enabled is False
 
+    def test_parse_backup_window_non_numeric_range_raises_friendly(self):
+        """A non-numeric hour token yields a friendly message, not a raw int() error."""
+        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
+        with pytest.raises(ValueError, match="must be integers 0-23"):
+            _parse_backup_window(True, "mon:a-b")
+
+    def test_parse_backup_window_non_numeric_single_hour_raises_friendly(self):
+        from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
+        with pytest.raises(ValueError, match="must be an integer 0-23"):
+            _parse_backup_window(True, "mon:x")
+
     def test_parse_tasks_json_none_returns_none(self):
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         assert _parse_tasks_json(None) is None
@@ -257,6 +268,23 @@ class TestBuildHelpers:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         with pytest.raises(ValueError, match="must be a JSON object"):
             _parse_tasks_json(json.dumps(["not-a-dict"]))
+
+    def test_parse_tasks_json_custom_volumes_string_raises(self):
+        """A string custom_volumes (e.g. "C:") must raise, not silently char-split into ('C',':')."""
+        from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
+        raw = json.dumps([{"workload_type": "fs", "os_type": "windows", "custom_volumes": "C:"}])
+        with pytest.raises(ValueError, match="custom_volumes.*must be a JSON array"):
+            _parse_tasks_json(raw)
+
+    def test_parse_tasks_json_custom_volumes_list_accepted(self):
+        """A proper list custom_volumes is accepted and preserved."""
+        from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
+        raw = json.dumps(
+            [{"workload_type": "fs", "os_type": "windows", "scope": "custom_volume", "custom_volumes": ["C:", "D:"]}]
+        )
+        tasks = _parse_tasks_json(raw)
+        assert tasks is not None
+        assert tasks[0].custom_volumes == ("C:", "D:")
 
     def test_parse_tasks_json_with_schedule_and_event_trigger(self):
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json

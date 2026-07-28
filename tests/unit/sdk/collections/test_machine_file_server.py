@@ -448,6 +448,78 @@ async def test_fs_running_reads_items_backed_up_from_cache() -> None:
     assert wl.items_backed_up == 1234
 
 
+async def test_pc_running_empty_progress_parses_as_zero() -> None:
+    """PC RUNNING with an empty-string cache.progress degrades to 0 instead of crashing."""
+    session = make_session()
+    running_workload = {
+        "id": WORKLOAD_ID,
+        "namespace": NAMESPACE,
+        "spec": {"workloadType": "PC", "workloadName": "TestPC", "protectStatus": "PROTECT_STATUS_PROTECTED"},
+        "status": {"lastBackupTime": "0", "usage": "0", "jobStatus": "RUNNING"},
+        "cache": {"progress": ""},
+    }
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        await session.connect()
+        m.get(LIST_URL, payload={"workloads": [running_workload], "total": 1})
+        collection = MachineWorkloadCollection(session)
+        workloads, total = await collection.list()
+        await session.disconnect()
+
+    from synology_apm.sdk.enums import WorkloadStatus
+    wl = workloads[0]
+    assert wl.status == WorkloadStatus.BACKING_UP
+    assert wl.backup_progress == 0
+
+
+async def test_fs_running_empty_count_parses_as_none() -> None:
+    """FS RUNNING with an empty-string cache.processedSuccessCount degrades to None, not a crash."""
+    session = make_session()
+    running_fs = {
+        "id": "fs-id-001",
+        "namespace": NAMESPACE,
+        "spec": {"workloadType": "FS", "workloadName": "Corp Share", "protectStatus": "PROTECT_STATUS_PROTECTED"},
+        "status": {"lastBackupTime": "0", "usage": "0", "jobStatus": "RUNNING"},
+        "cache": {"processedSuccessCount": ""},
+    }
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        await session.connect()
+        m.get(LIST_URL, payload={"workloads": [running_fs], "total": 1})
+        collection = MachineWorkloadCollection(session)
+        workloads, total = await collection.list()
+        await session.disconnect()
+
+    from synology_apm.sdk.enums import WorkloadStatus
+    wl = workloads[0]
+    assert wl.status == WorkloadStatus.BACKING_UP
+    assert wl.items_backed_up is None
+
+
+async def test_fs_running_zero_count_preserved_as_zero() -> None:
+    """A legitimate integer 0 processedSuccessCount stays 0, not collapsed to None."""
+    session = make_session()
+    running_fs = {
+        "id": "fs-id-001",
+        "namespace": NAMESPACE,
+        "spec": {"workloadType": "FS", "workloadName": "Corp Share", "protectStatus": "PROTECT_STATUS_PROTECTED"},
+        "status": {"lastBackupTime": "0", "usage": "0", "jobStatus": "RUNNING"},
+        "cache": {"processedSuccessCount": 0},
+    }
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        await session.connect()
+        m.get(LIST_URL, payload={"workloads": [running_fs], "total": 1})
+        collection = MachineWorkloadCollection(session)
+        workloads, total = await collection.list()
+        await session.disconnect()
+
+    from synology_apm.sdk.enums import WorkloadStatus
+    wl = workloads[0]
+    assert wl.status == WorkloadStatus.BACKING_UP
+    assert wl.items_backed_up == 0
+
+
 async def test_waiting_task_maps_to_queuing_status() -> None:
     """WAITING_TASK job status should map to WorkloadStatus.QUEUING."""
     from unittest.mock import AsyncMock, patch

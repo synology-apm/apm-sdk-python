@@ -583,10 +583,10 @@ def _parse_workload(raw: dict[str, Any]) -> MachineWorkload:
         if api_type == "FS":
             backup_progress = None
             raw_items = cache.get("processedSuccessCount")
-            items_backed_up = int(raw_items) if raw_items is not None else None
+            items_backed_up = int(raw_items) if raw_items not in (None, "") else None
         else:
             raw_prog = cache.get("progress")
-            backup_progress = int(float(raw_prog)) if raw_prog is not None else 0
+            backup_progress = int(float(raw_prog)) if raw_prog not in (None, "") else 0
             items_backed_up = None
     elif job_status == "WAITING_TASK":
         backup_progress = None

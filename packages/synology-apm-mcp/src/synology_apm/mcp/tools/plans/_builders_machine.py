@@ -141,7 +141,12 @@ def _parse_backup_window(enabled: bool, spec: str | None) -> MachineBackupWindow
                 continue
             if "-" in rng:
                 start_s, end_s = rng.split("-", 1)
-                start, end = int(start_s), int(end_s)
+                try:
+                    start, end = int(start_s), int(end_s)
+                except ValueError:
+                    raise ValueError(
+                        f"Backup window hours must be integers 0-23, got {rng!r}."
+                    ) from None
                 if enabled and not (0 <= start <= 23 and 0 <= end <= 23):
                     raise ValueError(f"Backup window hours must be 0-23, got {rng!r}.")
                 if enabled and start > end:
@@ -152,7 +157,12 @@ def _parse_backup_window(enabled: bool, spec: str | None) -> MachineBackupWindow
                     )
                 hours.update(range(start, end + 1))
             else:
-                h = int(rng)
+                try:
+                    h = int(rng)
+                except ValueError:
+                    raise ValueError(
+                        f"Backup window hour must be an integer 0-23, got {rng!r}."
+                    ) from None
                 if enabled and not 0 <= h <= 23:
                     raise ValueError(f"Backup window hour must be 0-23, got {rng!r}.")
                 hours.add(h)
@@ -196,12 +206,18 @@ def _parse_tasks_json(raw: str | None) -> tuple[MachineTaskConfig, ...] | None:
                 )
             schedule = MachineTaskSchedule(time_schedule=time_schedule, event_trigger=event_trigger)
         scope_raw = entry.get("scope")
+        custom_volumes_raw = entry.get("custom_volumes", [])
+        if not isinstance(custom_volumes_raw, list):
+            raise ValueError(
+                "tasks_json entry 'custom_volumes' must be a JSON array of strings "
+                f'(e.g. ["C:", "D:"]), got {custom_volumes_raw!r}.'
+            )
         tasks.append(
             MachineTaskConfig(
                 workload_type=MachineWorkloadType(entry["workload_type"]),
                 os_type=MachineOsType(entry["os_type"]),
                 scope=MachineTaskScope(scope_raw) if scope_raw else None,
-                custom_volumes=tuple(entry.get("custom_volumes", ())),
+                custom_volumes=tuple(custom_volumes_raw),
                 include_external_drives=entry.get("include_external_drives", False),
                 include_boot_partition=entry.get("include_boot_partition", True),
                 use_main_schedule=entry.get("use_main_schedule", True),

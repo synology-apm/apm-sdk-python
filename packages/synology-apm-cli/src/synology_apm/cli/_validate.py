@@ -318,22 +318,24 @@ def parse_time_filter(value: str) -> datetime:
     """Parse a --since / --until time-filter argument; supports ISO 8601 and relative times (30m, 1h, 24h, 7d)."""
     now = datetime.now(tz=UTC)
     value = value.strip()
-    if value.endswith("h"):
-        return now - timedelta(hours=float(value[:-1]))
-    if value.endswith("d"):
-        return now - timedelta(days=float(value[:-1]))
-    if value.endswith("m"):
-        return now - timedelta(minutes=float(value[:-1]))
+    _bad_format = typer.BadParameter(
+        f"Cannot parse time format: {value!r}. "
+        "Supported: ISO 8601 (e.g. 2026-04-01) or relative (e.g. 30m, 1h, 24h, 7d)."
+    )
+    unit_to_field = {"h": "hours", "d": "days", "m": "minutes"}
+    if value and value[-1] in unit_to_field:
+        try:
+            amount = float(value[:-1])
+        except ValueError:
+            raise _bad_format from None
+        return now - timedelta(**{unit_to_field[value[-1]]: amount})
     try:
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=UTC)
         return dt
-    except ValueError as exc:
-        raise typer.BadParameter(
-            f"Cannot parse time format: {value!r}. "
-            "Supported: ISO 8601 (e.g. 2026-04-01) or relative (e.g. 30m, 1h, 24h, 7d)."
-        ) from exc
+    except ValueError:
+        raise _bad_format from None
 
 
 def parse_time_range(
