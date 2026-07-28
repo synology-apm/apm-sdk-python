@@ -14,11 +14,11 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 
 def _annotations_for(tool_name: str, required_mode: str) -> ToolAnnotations:
     """Derive readOnlyHint/destructiveHint/idempotentHint from information already
-    established by this codebase's own naming/mode conventions (see the MCP README):
-    readonly mode means list/get (no side effects, trivially idempotent);
-    delete_*/retire_* tools always go through destructive_tool(); update_* tools are
-    always full-replace (also idempotent). openWorldHint is deliberately left unset --
-    not clearly derivable from existing conventions."""
+    established by this codebase's own naming/mode conventions: readonly mode means
+    list/get (no side effects, trivially idempotent); delete_*/retire_* tools always
+    go through destructive_tool(); update_* tools are always full-replace (also
+    idempotent). openWorldHint is deliberately left unset -- not clearly derivable
+    from existing conventions."""
     is_readonly = required_mode == "readonly"
     return ToolAnnotations(
         readOnlyHint=is_readonly,

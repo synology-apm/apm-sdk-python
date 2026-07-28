@@ -438,6 +438,7 @@ class TestMachineWorkloadToDict:
         # base Workload fields
         assert d["workload_id"] == "wl-id-001"
         assert d["plan"] == {"plan_id": "plan-001", "name": "Test Plan", "kind": "protection"}
+        assert d["is_backing_up"] == wl.is_backing_up
         # MachineWorkload-specific fields
         assert d["workload_type"] == "pc"
         assert d["agent_version"] == "1.2.0"
@@ -473,7 +474,7 @@ class TestM365WorkloadToDict:
         wl = _make_m365_workload(M365UserInfo(user_principal_name="alice@contoso.com"))
         d = wl.to_dict()
         assert d["tenant_id"] == "tenant-001"
-        assert d["info"] == {"kind": "user", "user_principal_name": "alice@contoso.com"}
+        assert d["info"] == {"kind": "user", "user_principal_name": "alice@contoso.com", "label": "alice@contoso.com"}
 
     def test_site_info_variant(self) -> None:
         wl = _make_m365_workload(
@@ -484,6 +485,7 @@ class TestM365WorkloadToDict:
             "kind": "site",
             "site_url": "https://contoso.sharepoint.com/sites/Marketing",
             "site_name": "Marketing",
+            "label": "https://contoso.sharepoint.com/sites/Marketing",
         }
 
     def test_team_info_variant(self) -> None:
@@ -496,6 +498,7 @@ class TestM365WorkloadToDict:
             "team_id": "team-001",
             "team_name": "Engineering",
             "web_url": "https://teams.microsoft.com/l/team/team-001",
+            "label": "https://teams.microsoft.com/l/team/team-001",
         }
 
     def test_group_info_variant(self) -> None:
@@ -508,6 +511,7 @@ class TestM365WorkloadToDict:
             "group_id": "group-001",
             "display_name": "Marketing Group",
             "mail": "marketing@contoso.com",
+            "label": "marketing@contoso.com",
         }
 
 
@@ -596,6 +600,7 @@ class TestActivityToDict:
         assert d["activity_id"] == "a1"
         assert d["status"] == "backing_up"
         assert d["log_entries"] == [{"timestamp": "2026-01-01T00:00:00+00:00", "level": "info", "message": "m"}]
+        assert d["items_processed"] == act.items_processed
 
     def test_restore_activity_fields(self) -> None:
         act = RestoreActivity(

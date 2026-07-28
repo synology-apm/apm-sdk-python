@@ -116,6 +116,9 @@ class BackupActivity(Activity):
 class RestoreActivity(Activity):
     """A restore activity record.
 
+    destination_path is set for file-level restores, destination_inventory for machine-level
+    VM restores — not mutually exclusive by enforcement, just by what the source data contains.
+
     Attributes:
         status:               Current restore activity status.
         restore_type:         Method used for this restore; None when unavailable.

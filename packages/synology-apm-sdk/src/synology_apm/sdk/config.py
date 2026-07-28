@@ -41,8 +41,7 @@ CONFIG_DIR = _config_base_dir() / "synology-apm"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 DEFAULT_PROFILE = "default"
 
-# Stable, documented keyring "service" naming convention (see the CLI README's
-# Authentication Configuration section) — kept as "synology-apm-cli" even though
+# Stable keyring "service" naming prefix — kept as "synology-apm-cli" even though
 # this module is now shared, so existing pre-seeded credentials keep working.
 KEYRING_SERVICE_PREFIX = "synology-apm-cli"
 
@@ -58,9 +57,8 @@ class PasswordStorage(Enum):
 def _keyring_service(profile: str) -> str:
     """Return the keyring 'service' identifier for a profile's stored password.
 
-    Format: ``synology-apm-cli:<profile>``. This is a stable, documented convention
-    (see the CLI README's Authentication Configuration section) that can be used to
-    pre-seed a credential with the ``keyring`` CLI tool directly, e.g.
+    Format: ``synology-apm-cli:<profile>``. This naming is a stable public contract, so a
+    password can be pre-seeded directly with the ``keyring`` CLI tool, e.g.
     ``keyring set synology-apm-cli:<profile> <username>``.
     """
     return f"{KEYRING_SERVICE_PREFIX}:{profile}"

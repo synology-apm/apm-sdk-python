@@ -292,6 +292,8 @@ def _parse_restore_activity(raw: dict[str, Any]) -> RestoreActivity:
     # Restore API does not return durationTime; compute from start/end if available.
     duration_raw = status_raw.get("durationTime")
     finished_at: datetime | None = common["finished_at"]
+    # Not routed through _parse_int_or_none(): that helper's "-1" sentinel doesn't apply here,
+    # and this keeps only positive values rather than mapping a sentinel to None.
     if duration_raw not in (None, ""):
         _d = int(duration_raw)
         duration_seconds: int | None = _d if _d > 0 else None

@@ -70,6 +70,8 @@ class LogCollection:
 
     Accessed via APMClient.logs; should not be instantiated directly.
     All methods require a BackupServer to route the request to the correct backup server.
+    Only BackupServerType.DP (ActiveProtect Appliance) servers support these log queries;
+    the SDK does not pre-validate the server type before sending the request.
     """
 
     def __init__(self, session: WebAPISession) -> None:

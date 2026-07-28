@@ -126,7 +126,8 @@ class BackupServerCollection:
 
         Scans raw pages by role first and parses (resolving tiering info for)
         only the matched servers, so the scan cost does not grow with the number
-        of tiering plans assigned to unrelated servers.
+        of tiering plans assigned to unrelated servers. Stops as soon as both roles
+        are found; otherwise scans every page.
         """
         primary_raw: dict[str, Any] | None = None
         secondary_raw: dict[str, Any] | None = None
@@ -193,6 +194,9 @@ class BackupServerCollection:
 
     async def get(self, backup_server_id: str) -> BackupServer:
         """Fetch a backup server by ID.
+
+        Resolves this server's tiering plan (if any) with an on-demand query, rather than the
+        page-level bulk resolution `list()` uses.
 
         Raises:
             ResourceNotFoundError: The specified backup server does not exist.

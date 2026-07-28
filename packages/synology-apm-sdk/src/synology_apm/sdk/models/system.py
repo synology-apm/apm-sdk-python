@@ -34,13 +34,7 @@ class SiteStorageStats:
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe dict representation."""
-        return auto_to_dict(
-            self,
-            extra={
-                "backup_data_reduction_bytes": self.backup_data_reduction_bytes,
-                "backup_data_reduction_ratio": round(self.backup_data_reduction_ratio, 1),
-            },
-        )
+        return auto_to_dict(self, extra={"backup_data_reduction_ratio": round(self.backup_data_reduction_ratio, 1)})
 
 
 @dataclass(frozen=True)
@@ -82,13 +76,7 @@ class WorkloadUsageSummary:
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe dict representation."""
-        return auto_to_dict(
-            self,
-            extra={
-                "total_count": self.total_count,
-                "total_protected_data_bytes": self.total_protected_data_bytes,
-            },
-        )
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)

@@ -59,7 +59,7 @@ class M365CollabServiceSetting:
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe dict representation."""
-        return auto_to_dict(self, extra={"enabled": self.enabled})
+        return auto_to_dict(self)
 
 
 @dataclass(frozen=True)

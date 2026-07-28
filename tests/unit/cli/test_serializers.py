@@ -451,7 +451,7 @@ def test_m365_workload_to_dict_required_fields() -> None:
     assert d["workload_type"] == "exchange"
     assert d["status"] == "success"
     assert d["info_label"] == "alice@contoso.com"
-    assert d["info"] == {"kind": "user", "user_principal_name": "alice@contoso.com"}
+    assert d["info"] == {"kind": "user", "user_principal_name": "alice@contoso.com", "label": "alice@contoso.com"}
     assert d["backup_server"]["name"] == "apm-server-01"
     assert d["backup_copy_destination"] is None
 

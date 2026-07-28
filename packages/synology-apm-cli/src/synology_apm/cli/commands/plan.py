@@ -135,6 +135,8 @@ async def protection_get(
 ) -> None:
     """Show details for a Protection Plan.
 
+    Searches across both Machine and M365 categories; there is no --category filter.
+
     \b
     Examples:
       synology-apm-cli plan protection get "Daily Backup"                           # name search

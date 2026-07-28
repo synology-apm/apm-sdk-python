@@ -345,6 +345,7 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
 
 # errorCode confirmed live on /api/v2/activity/restore/activities when the workload.uid/
 # workload.namespace filter doesn't match any workload (errorString.key: "database_query_failed").
+# The backup-activities endpoint has no equivalent — it just responds with an empty page instead.
 _RESTORE_WORKLOAD_NOT_FOUND_CODE = 1002
 
 
@@ -478,6 +479,7 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
                 resource_type="RestoreActivity",
                 resource_id=activity.activity_id,
             )
+        # Keyed on the activity's workload rather than its own ID, unlike BackupActivity.cancel().
         await self._session.post(
             "/api/v1/activity/cancel/restore/activities",
             json={

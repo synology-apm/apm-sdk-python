@@ -90,7 +90,6 @@ class BackupServer:
             self,
             extra={
                 "storage_usage_pct": round(self.storage_usage_pct, 1),
-                "backup_data_reduction_bytes": self.backup_data_reduction_bytes,
                 "backup_data_reduction_ratio": (
                     round(self.backup_data_reduction_ratio, 1)
                     if self.backup_data_reduction_bytes is not None

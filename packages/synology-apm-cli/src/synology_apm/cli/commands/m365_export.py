@@ -218,6 +218,8 @@ async def _start_export_and_resolve_url(
     yes: bool,
 ) -> ExportDownloadTarget:
     """Auto-start mode: start a new export, wait until downloadable, return (url, dest_path)."""
+    # --archive-mailbox is hidden (not real) for group exports; force it off here too, since
+    # hidden only affects --help text, not whether the flag can still be passed.
     effective_archive = False if is_group else archive_mailbox
     effective_mailbox_label = mailbox_label if not effective_archive else "archive mailbox"
 

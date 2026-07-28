@@ -302,6 +302,7 @@ class MachineWorkloadCollection(_VersionMixin):
 
         Raises:
             DuplicateWorkloadError: The file server is already enrolled in the same plan on the same backup server.
+            APIError: APM rejected the registration for another reason.
         """
         body = {
             "requests": [
@@ -362,6 +363,7 @@ class MachineWorkloadCollection(_VersionMixin):
             DuplicateWorkloadError: The updated IP conflicts with another file server in the same plan.
             ResourceNotFoundError:  The workload no longer exists (e.g. deleted or retired
                                     since it was fetched).
+            APIError: APM rejected the update for another reason.
         """
         if workload.workload_type != MachineWorkloadType.FS:
             raise InvalidOperationError(
@@ -379,8 +381,9 @@ class MachineWorkloadCollection(_VersionMixin):
             "hostIp": request.host_ip,
             "hostPort": request.host_port,
             "loginUser": request.login_user,
-            # APM uses "" as the "keep existing password" sentinel; it does not support empty passwords,
-            # so "" is unambiguous. None -> "" here implements the "keep existing" contract.
+            # APM uses "" as the "keep existing password" sentinel: real passwords are never empty,
+            # and a read never returns the stored password, so "" is the only value that round-trips
+            # unchanged. None -> "" here implements that contract.
             "loginPassword": request.login_password if request.login_password is not None else "",
             "remoteSessionList": _build_remote_session_list(request.selectors),
             "agentlessEnableWindowsVss": request.enable_vss,

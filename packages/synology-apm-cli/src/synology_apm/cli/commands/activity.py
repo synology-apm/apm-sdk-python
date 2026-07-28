@@ -128,7 +128,11 @@ async def backup_list(
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
-    """List backup activity records."""
+    """List backup activity records.
+
+    Prints a hint instead of an empty table when there are no ongoing tasks and --history
+    was not given.
+    """
     status_enums = parse_enum_list(status, _BACKUP_STATUS_MAP, "status")
     machine_type_enums = parse_enum_list(machine_type, MACHINE_TYPE_ARGS, "machine-type", "pc / ps / vm / fs")
     m365_type_enums = parse_enum_list(
@@ -276,7 +280,11 @@ async def restore_list(
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
-    """List restore activity records."""
+    """List restore activity records.
+
+    Prints a hint instead of an empty table when there are no ongoing tasks and --history
+    was not given.
+    """
     status_enums = parse_enum_list(status, _RESTORE_STATUS_MAP, "status")
     since_dt, until_dt = parse_time_range(since, until)
 

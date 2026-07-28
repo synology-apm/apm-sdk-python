@@ -114,6 +114,11 @@ def config_set(
       - Password (leave blank to prompt on each command, not saved; --save-password forces saving)
       - SSL certificate verification (choose skip for self-signed certificates)
 
+    With --no-input, --host and --username must already be resolvable (from the flags here,
+    an existing profile, or environment variables) or the command errors instead of prompting;
+    --save-password is rejected (it requires an interactive password prompt), and the password
+    is left unsaved.
+
     \b
     Multi-profile examples:
       synology-apm-cli config set --profile lab
@@ -212,7 +217,11 @@ def config_set(
 def config_show(
     profile: str | None = typer.Option(None, "--profile", help="Profile to display"),
 ) -> None:
-    """Show current connection settings. Lists all profiles when --profile is not specified."""
+    """Show current connection settings. Lists all profiles when --profile is not specified.
+
+    Reports only whether a profile is configured to use keyring storage — it never queries
+    the OS keyring itself, so this read-only command can't trigger an unexpected unlock prompt.
+    """
     cfg = load_config()
 
     if profile:
@@ -231,7 +240,11 @@ def config_clear(
     all_profiles: bool = typer.Option(False, "--all", help="Clear all profiles"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
-    """Clear APM connection settings."""
+    """Clear APM connection settings.
+
+    Also removes the profile's OS keyring entry, if it has one. Clearing a profile that
+    doesn't exist prints a warning rather than failing.
+    """
     cfg = load_config()
 
     if all_profiles:

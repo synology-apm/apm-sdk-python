@@ -138,7 +138,11 @@ class WorkloadRef:
     is_direct: bool
 
     async def resolve_machine(self, apm: APMClient, is_retired: bool = False) -> MachineWorkload:
-        """Resolve to a MachineWorkload via get() (direct mode) or get_by_name() (search mode)."""
+        """Resolve to a MachineWorkload via get() (direct mode) or get_by_name() (search mode).
+
+        is_retired only applies in search mode; direct mode looks up the workload by ID
+        regardless of its retirement state.
+        """
         if self.namespace is not None:
             return await apm.machine.workloads.get(self.identifier, namespace=self.namespace)
         return await apm.machine.workloads.get_by_name(self.identifier, is_retired=is_retired)
@@ -148,7 +152,9 @@ class WorkloadRef:
     ) -> M365Workload:
         """Resolve to an M365Workload via get() (direct mode) or get_by_name() (search mode).
 
-        ``tenant_id`` is resolved automatically (falling back to the first M365 tenant) if not provided.
+        ``tenant_id`` is resolved automatically (falling back to the first M365 tenant) if not
+        provided. is_retired only applies in search mode; direct mode looks up the workload by
+        ID regardless of its retirement state.
         """
         tid = await _resolve_tenant(apm, tenant_id)
         if self.namespace is not None:

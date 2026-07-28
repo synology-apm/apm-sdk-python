@@ -35,7 +35,6 @@ def _dynamic_console(**kwargs: Any) -> Console:
 
 err_console = _dynamic_console(stderr=True)
 
-# Exit code table (see src/synology_apm/cli/README.md — Status and Color Conventions)
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_AUTH = 2

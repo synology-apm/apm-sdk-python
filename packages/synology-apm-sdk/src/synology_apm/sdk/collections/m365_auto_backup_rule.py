@@ -20,6 +20,8 @@ def _parse_collab_setting(raw: dict[str, Any]) -> M365CollabServiceSetting:
 
 
 def _is_terminating(raw: dict[str, Any]) -> bool:
+    # A rule set for deletion keeps a non-empty deletionTimestamp for up to ~2 minutes while a
+    # server-side finalizer runs (see list()'s docstring for how this is filtered).
     rule_obj: dict[str, Any] = raw.get("autoBackupRule") or {}
     metadata: dict[str, Any] = rule_obj.get("metadata") or {}
     ts = metadata.get("deletionTimestamp") or "0"

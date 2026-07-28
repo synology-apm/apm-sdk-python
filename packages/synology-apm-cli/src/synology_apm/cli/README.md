@@ -69,11 +69,30 @@ When adding or modifying commands, follow the conventions of existing commands (
 - **Global connection options that feed `resolve_connection()`'s priority cascade** (`--host`/`--username`/`--password`/`--profile`/`--no-verify-ssl`): declare with a `None` default, never a concrete value — a `None` means "not given" and lets the environment-variable/config-file fallback take effect, while an explicit value at any tier (CLI flag, env var, or config file) always wins over a lower-priority tier regardless of direction. Defaulting one of these options to a concrete value (e.g. `False`) instead of `None` silently breaks the cascade for that option, since the CLI would then always "explicitly" pass that default and the option could never fall through to the env var or config file.
 - **Shared option constants**: the recurring pagination (`--limit`/`--offset`/`--page-all`), output (`--output`), and time-filter (`--since`/`--until`) options are declared once in `synology_apm.cli._options` and referenced as parameter defaults (e.g. `limit: int = LIMIT_OPTION`); `--since`/`--until` values are parsed with `parse_time_range(since, until)` from `synology_apm.cli._validate`. Only declare an option inline when its default or help text genuinely differs.
 - **Destructive operations** (`retire`, overwrite-style `change-plan`): require interactive confirmation unless `--yes` is given; the summary message is always printed.
-- **Serialization**: when a resource needs no CLI-specific transform before output, command modules call the SDK model's `to_dict()` directly (or pass the unbound method, e.g. `Hypervisor.to_dict`, as a `dispatch_output`/`dispatch_list_output` callback) — do not add a zero-transform wrapper to `_serializers.py` just to route through it. When CLI-specific work *is* needed (local-time conversion, field renaming/flattening such as `plan_name`/`plan_id`, computed labels such as `schedule_label`/`info_label`), add a named function in `_serializers.py` (e.g. `workload_to_dict`, `protection_plan_to_dict`) and have command modules import and call it. Command modules must not define their own `*_to_dict` / `*_to_csv_row` helpers (auditable via `grep -r "def .*_to_dict" commands/` — expected empty). Do not call `print_json()` or `dataclasses.asdict()` directly on an SDK model. `_serializers.py`'s `*_to_dict` functions build on `d = obj.to_dict()` and mutate only the deltas (`d[key] = ...` for an override/addition, `d[new] = d.pop(old)` for a rename, `del d[key]` for a deliberate omission with a comment explaining why) — never manually reconstruct the full dict field-by-field, since that silently drops any field added to the SDK model later. `*_to_csv_row` functions build their flat, string-safe row independently — they are not required to source from `to_dict()`.
 - **Enum display text**: all enum → display-string mapping tables live in `_display.py` (e.g. `_SERVER_STATUS_DISPLAY`, `_FILE_SERVER_TYPE_DISPLAY`, `_RESTORE_TYPE_DISPLAY`); command modules import and use them — they do not define their own. Each table is accessed through a public `fmt_*` wrapper (e.g. `fmt_server_status`, `fmt_export_status`) that owns the fallback for unmapped values, and the wrapper is what commands call and unit tests exercise. SDK enums contain only semantic values, so adding or adjusting display text requires changes in `_display.py` only. Display maps must always contain final display strings — no intermediate empty-string sentinels requiring call-site post-processing.
-- **Datetime precision**: table/text output shows local time at second precision (`YYYY-MM-DD HH:MM:SS` via `fmt_datetime()`); JSON/CSV output uses local-timezone ISO 8601 (via `fmt_datetime_iso()` / `to_local_iso()`). **Exception**: schedule time-of-day fields (`schedule.start_time`, `daily_check_time`) are always `HH:MM` (no seconds, no timezone) in every output format, since APM schedules only support minute granularity.
+- **Datetime precision**: use `fmt_datetime()` for table/text output and `fmt_datetime_iso()` / `to_local_iso()` for JSON/CSV — see [Output Formats](#output-formats) for the resulting precision/format per mode. **Exception**: schedule time-of-day fields (`schedule.start_time`, `daily_check_time`) are always `HH:MM` (no seconds, no timezone) in every output format, since APM schedules only support minute granularity.
 - **External non-SDK dependencies** (e.g. the OS keyring): wrap calls with a narrow `try/except` and the SDK-defined `KeyringUnavailableError` (re-exported via `synology_apm.sdk`), not `apm_error_handler()` — that helper converts `APMError` to structured messages and also converts `ValueError` to a plain `EXIT_ERROR` message; it re-raises everything else.
-- **Shared backup/cancel/retire/change-plan action bodies**: `machine` and `m365` implement the same four destructive/state-changing commands (`backup`, `cancel`, `retire`, `change-plan`) with identical resolve → confirm → invoke → print-success flow. The domain-agnostic body of each lives once in `commands/_actions.py` (`_do_backup` / `_do_cancel` / `_do_retire` / `_do_change_plan`); each command module passes in closures for workload resolution and a `label_fn` callable (`_machine_type_label` for `machine`, `lambda wl: None` for `m365`, since M365 workloads have no type label in this output) to absorb the only real per-domain differences.
+- **Shared backup/cancel/retire/change-plan action bodies**: `machine` and `m365` implement the same four destructive/state-changing commands (`backup`, `cancel`, `retire`, `change-plan`) with identical resolve → confirm → invoke → print-success flow. The domain-agnostic body of each lives once in `commands/_actions.py` (`_do_backup` / `_do_cancel` / `_do_retire` / `_do_change_plan`); each command module passes in closures for workload resolution and a `label_fn` callable (`_machine_type_label` for `machine`, `lambda wl: None` for `m365`) to absorb the only real per-domain differences — see [Action confirmation flow](#action-confirmation-flow) for the resulting output difference.
+
+### Serialization Convention
+
+When a resource needs no CLI-specific transform before output, command modules call the SDK
+model's `to_dict()` directly (or pass the unbound method, e.g. `Hypervisor.to_dict`, as a
+`dispatch_output`/`dispatch_list_output` callback) — do not add a zero-transform wrapper to
+`_serializers.py` just to route through it. When CLI-specific work *is* needed (local-time
+conversion, field renaming/flattening such as `plan_name`/`plan_id`, computed labels such as
+`schedule_label`/`info_label`), add a named function in `_serializers.py` (e.g.
+`workload_to_dict`, `protection_plan_to_dict`) and have command modules import and call it.
+Command modules must not define their own `*_to_dict` / `*_to_csv_row` helpers (auditable via
+`grep -r "def .*_to_dict" commands/` — expected empty). Do not call `print_json()` or
+`dataclasses.asdict()` directly on an SDK model.
+
+`_serializers.py`'s `*_to_dict` functions build on `d = obj.to_dict()` and mutate only the
+deltas (`d[key] = ...` for an override/addition, `d[new] = d.pop(old)` for a rename, `del
+d[key]` for a deliberate omission with a comment explaining why) — never manually reconstruct
+the full dict field-by-field, since that silently drops any field added to the SDK model
+later. `*_to_csv_row` functions build their flat, string-safe row independently — they are not
+required to source from `to_dict()`.
 
 ### Technology Choices
 
@@ -451,7 +470,8 @@ $ synology-apm-cli machine retire "old-laptop" --plan "Compliance Retention"
 
 ### config — Configuration Management
 
-`config set` is an interactive wizard (host → username → password → SSL verify); `--host`/`--username` pre-fill their prompts, `--save-password {plaintext|keyring}` forces a confirmed password prompt and saves it, and `--no-input` requires `--host`/`--username` up front, rejects `--save-password`, and leaves the password unsaved.
+`config set` is an interactive wizard (host → username → password → SSL verify); see its own
+docstring for the `--no-input` behavior.
 
 ```
 $ synology-apm-cli config set
@@ -464,12 +484,8 @@ Skip SSL verification? (choose y for self-signed certificates) [y/N]: y
 ✓ Settings saved to ~/.config/synology-apm/config.toml (profile: default)
 ```
 
-`config show` reports each field's status without ever displaying the password, and without
-querying the OS keyring on a plain `show` (to avoid triggering an unexpected Keychain/Secret-Service
-unlock prompt on a read-only command) — it only reports whether the profile is *configured*
-to use keyring storage. `config clear` removes a profile (or `--all`, with confirmation
-unless `--yes`) and its OS keyring entry if it has one; clearing a nonexistent profile warns
-instead of failing.
+`config show` never displays the password itself; see its own docstring, and `config clear`'s,
+for their keyring-interaction behavior.
 
 **OS Keyring Storage**: a profile's password is stored under a stable, documented
 `service`/`username` pair — `synology-apm-cli:<profile>` / `<profile's APM account>` — which
@@ -493,8 +509,7 @@ Subcommands that support search mode (`get` / `version list` / `version get` / `
 probes retired workloads; if the workload is already retired, the error is `Workload
 '<name>' is already retired.` (exit 1) instead of a not-found error.
 
-`change-plan`: which plan type `--plan` resolves against follows the [Plan
-resolution](#development-conventions) rule (based on the workload's current state); in search
+`change-plan`: see its own docstring for how the target plan type is auto-detected; in search
 mode, add `--retired` to look up an already-retired Workload by name.
 
 `version get`: `--id` (Version ID) is optional; the latest version is fetched automatically
@@ -525,16 +540,13 @@ confirmation flows, and version subcommands), with the differences below.
 | `sharepoint` | SharePoint Sites | Site name |
 | `teams` | Teams Channels | Team name |
 
-The Tenant ID (`-t`/`--tenant-id`) can be obtained via `synology-apm-cli saas list`; when
-omitted, the first M365 tenant is used automatically (reported on stderr as `(Using tenant:
-<tenant-id>)`) — not required in direct mode. Only `exchange` and `group` support `export`
-(mailbox PST export; see the next section).
+Tenant ID auto-resolution (`-t`/`--tenant-id`; see [Search / Direct mode](#search--direct-mode)
+and the option's own help) is not required in direct mode. Only `exchange` and `group` support
+`export` (mailbox PST export; see the next section).
 
 Differences from `machine`:
 - M365 workloads have no verification concept (`--verify-status` doesn't exist; `get`/`version`
   detail views never show a Verification line).
-- Confirmation summaries show the workload without a type label (`alice@contoso.com`, not
-  `CORP-PC-001 (PC/Mac)`).
 - Backups are triggered directly by the API with no Job ID returned; use `synology-apm-cli
   activity backup list` to check progress.
 - `retire` requires at least one retirement plan already created in the APM UI.
@@ -550,8 +562,8 @@ Applies to the `exchange` and `group` subcommand groups, which share one impleme
 | Identifier | UPN | Group email |
 | `--archive-mailbox` | Supported | Hidden and silently ignored (no archive-mailbox concept for a group mailbox) |
 
-`download` starts a new export and waits for it to become downloadable (no `--id`), or
-downloads an already-started one directly (`--id`):
+`download`'s two modes (auto-start vs. direct) are described in its own `--help`; the internal
+flow once auto-start begins:
 
 1. Resolve the backup version (latest unless `--version-id`) → start the export.
 2. If immediately downloadable, download it.
@@ -563,9 +575,8 @@ downloads an already-started one directly (`--id`):
 4. Stream the file with a progress bar (stderr); if the local destination file already
    exists, prompt to overwrite (declined → exit 4; `--yes` skips).
 
-Local filenames are auto-generated when `--filename`/`-f` is omitted (auto-start:
-`{name}_{date}_{mailbox|archive_mailbox|group_mailbox}.pst`; direct download:
-`{name}_{first-8-chars-of-activity-id}.pst`); unsafe filesystem characters are replaced with `_`.
+Local filenames are auto-generated when `--filename`/`-f` is omitted — see
+`_auto_download_filename()` / `_auto_download_filename_by_id()` for the exact templates.
 
 ---
 
@@ -573,8 +584,8 @@ Local filenames are auto-generated when `--filename`/`-f` is omitted (auto-start
 
 Manages Protection Plans, Retirement Plans, and Tiering Plans. `plan protection get` and
 `plan retirement get`/`plan tiering get` support the standard [Search / Direct
-mode](#search--direct-mode) (`plan protection get` searches across both `machine`/`m365`
-categories regardless of `--category`).
+mode](#search--direct-mode); see `plan protection get`'s own docstring for its cross-category
+search scope.
 
 `plan retirement` is the source for the `--plan` parameter of `machine`/`m365 <scope>
 retire` and `change-plan` (on an already-retired Workload); `plan tiering` is the source for
@@ -591,7 +602,7 @@ rather than a hand-transcribed copy here.
 
 ### activity — Activity Log Queries
 
-Queries backup/restore activity records. `backup list` / `restore list` by default show only in-progress tasks (Ongoing); adding `--history` switches to showing completed historical records; if there are no in-progress tasks and `--history` is not given, a hint is printed instead of an empty table.
+Queries backup/restore activity records. `backup list` / `restore list` by default show only in-progress tasks (Ongoing); adding `--history` switches to showing completed historical records.
 
 #### `synology-apm-cli activity backup get`
 
@@ -600,25 +611,24 @@ synology-apm-cli activity backup get WORKLOAD_NAME       # Search mode (gets the
 synology-apm-cli activity backup get --id ACTIVITY_ID    # Direct mode (gets directly by Activity ID)
 ```
 
-This detail body (`Activity Detail — <workload name>` header) is reused as the Activity
-Detail section of `machine version get` / `m365 <scope> version get`. Its field set (Status
-/ Workload / Plan / Backup Scope / Start / End / Duration / Data Change / Transferred /
-Actual Capacity Used / Processed items / Logs) and each field's conditional-visibility rule
-are defined in `activity.py` / `_display.py` — the fields that only appear for certain
-workload categories (e.g. `Backup Scope` for machine workloads, `Processed items` for
-FS/M365) are exactly the kind of detail worth reading there rather than duplicating here.
+This detail body's shared use across `machine version get` / `m365 <scope> version get` is
+documented on `print_activity_detail()`'s own docstring (`_display.py`). Its field set and
+each field's conditional-visibility rule are defined next to that function and
+`activity.py` — the fields that only appear for certain workload categories (e.g. `Backup
+Scope` for machine workloads, `Processed items` for FS/M365) are exactly the kind of detail
+worth reading there rather than duplicating here.
 
 #### `synology-apm-cli activity backup cancel` / `activity restore cancel`
 
-`--yes` skips the confirmation prompt; exit code 1 if the activity is not found (or already
-completed); exit code 4 if the user declines.
+Exit code 1 if the activity is not found (or already completed); exit code 4 if the user
+declines the confirmation prompt.
 
 #### `synology-apm-cli activity restore get`
 
 Same search/direct dispatch as `activity backup get`. Its detail body additionally shows
-Restore Type / Version / Restore from / Destination / Destination path (file-level restores)
-/ Destination hypervisor (VM restores) / Operator — the latter two never appear on the same
-activity.
+Restore Type / Version / Restore from / Destination / Destination path / Destination
+hypervisor / Operator — see `RestoreActivity`'s own docstring (SDK) for why the latter two
+are never both set.
 
 ---
 
@@ -627,9 +637,7 @@ activity.
 Manages basic APM Management Server information, the backup server cluster, and remote storage devices.
 
 `infra info` shows site identity, Management Center/Recovery Portal URLs, Primary/Secondary
-Management Server health, site-wide storage statistics, and per-workload-type usage;
-`primary_management_server.system_version` shows `Updating...` while an update is in
-progress.
+Management Server health, site-wide storage statistics, and per-workload-type usage.
 
 `infra server change-plan` applies or removes a Tiering Plan on a (DP-only) backup server;
 exactly one of `--plan` or `--remove` is required. Follows the standard [action confirmation
@@ -643,15 +651,9 @@ being stopped (ongoing operations continue; immutable-workload lock durations ar
 
 ### `synology-apm-cli log` — Backup Server Logs
 
-Queries the system logs of a specified backup server; `<SERVER>` (search) or `--id` (direct)
-selects it, obtained via `synology-apm-cli infra server list --verbose`.
-
-> **Warning:** only DP (ActiveProtect) backup servers are supported — specifying a NAS server exits 1.
-
-All four `log * list` commands share `--level` / `--since` / `--until` / `--search` plus
-standard pagination; `log activity list` additionally has `--type`, and `log drive list` has
-`--location`. Column sets and the Level/Type → display-string mappings are defined in
-`log.py` / `_display.py`.
+Queries the system logs of a specified backup server; see `_run_log_list()`'s own docstring
+(`log.py`) for the DP-only server requirement, shared by all four `log * list` commands.
+Column sets and the Level/Type → display-string mappings are defined in `log.py` / `_display.py`.
 
 ---
 

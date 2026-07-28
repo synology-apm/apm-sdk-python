@@ -358,6 +358,10 @@ class EventTriggerConfig:
 class MachineTaskSchedule:
     """Per-task backup schedule for an individual task entry in a DEVICE plan.
 
+    For MachineWorkloadType.PC tasks, time_schedule and event_trigger combine into one of four
+    backup modes: neither set is manual (on-demand); one set alone is schedule-only or
+    event-only; both set combines them. Other task types cannot use event_trigger.
+
     Attributes:
         time_schedule:  Time-based schedule component; None when there is no time-based schedule
                         (event-triggered-only or on-demand backup).

@@ -127,6 +127,7 @@ async def _run_log_list(
 
     Validates the server argument, opens the session, pages via list_fn, and
     renders either the dispatched output format or the given table layout.
+    Only DP (ActiveProtect Appliance) servers are supported; a NAS server exits 1.
     """
     validate_name_or_id_args(ctx, name, server_id, exclusive_msg="<server> cannot be used with --id")
     since_dt, until_dt = parse_time_range(since, until)
