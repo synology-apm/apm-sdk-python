@@ -29,7 +29,7 @@ from synology_apm.mcp._errors import run_tool
 from synology_apm.mcp._helpers import (
     JSON_LIST_VALIDATOR,
     LIST_RESULT_SUFFIX,
-    clamp_limit,
+    ToolResult,
     get_tool,
     list_tool,
     resolve_plan_filter,
@@ -73,7 +73,7 @@ def register_workload_tools(  # pragma: no cover
     # ── list ─────────────────────────────────────────────────────────────────
 
     if not is_m365:
-        async def _list(  # type: ignore[misc]
+        async def _list(
             ctx: Context,
             workload_types: Annotated[list[MachineWorkloadTypeLiteral], JSON_LIST_VALIDATOR] | None = None,
             namespace: str | None = None,
@@ -85,7 +85,7 @@ def register_workload_tools(  # pragma: no cover
             verify_status: Annotated[list[VerifyStatusLiteral], JSON_LIST_VALIDATOR] | None = None,
             limit: int = 100,
             offset: int = 0,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             types = to_enum_list(MachineWorkloadType, workload_types)
             plans = await resolve_plan_filter(apm, plan_ids)
@@ -99,7 +99,7 @@ def register_workload_tools(  # pragma: no cover
                     hypervisor_id=hypervisor_id,
                     status=to_enum_list(WorkloadStatus, status),
                     verify_status=to_enum_list(VerifyStatus, verify_status),
-                    limit=clamp_limit(limit),
+                    limit=limit,
                     offset=offset,
                 ),
                 serializer,
@@ -118,7 +118,7 @@ def register_workload_tools(  # pragma: no cover
             status: Annotated[list[WorkloadStatusLiteral], JSON_LIST_VALIDATOR] | None = None,
             limit: int = 100,
             offset: int = 0,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             plans = await resolve_plan_filter(apm, plan_ids)
             return await list_tool(
@@ -130,7 +130,7 @@ def register_workload_tools(  # pragma: no cover
                     is_retired=is_retired,
                     keyword=keyword,
                     status=to_enum_list(WorkloadStatus, status),
-                    limit=clamp_limit(limit),
+                    limit=limit,
                     offset=offset,
                 ),
                 serializer,
@@ -155,11 +155,11 @@ def register_workload_tools(  # pragma: no cover
     # ── get ──────────────────────────────────────────────────────────────────
 
     if not is_m365:
-        async def _get(  # type: ignore[misc]
+        async def _get(
             ctx: Context,
             workload_id: str,
             namespace: str,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await get_tool(
                 resolve_workload(cat, apm, workload_id=workload_id, namespace=namespace),
@@ -173,7 +173,7 @@ def register_workload_tools(  # pragma: no cover
             namespace: str,
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await get_tool(
                 resolve_workload(cat, apm, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type),
@@ -190,11 +190,11 @@ def register_workload_tools(  # pragma: no cover
     # ── backup / cancel ──────────────────────────────────────────────────────
 
     if not is_m365:
-        async def _backup(  # type: ignore[misc]
+        async def _backup(
             ctx: Context,
             workload_id: str,
             namespace: str,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 backup_body(cat, apm, workload_id=workload_id, namespace=namespace),
@@ -202,11 +202,11 @@ def register_workload_tools(  # pragma: no cover
                 params=mutation_params(cat, workload_id, None, None),
             )
 
-        async def _cancel(  # type: ignore[misc]
+        async def _cancel(
             ctx: Context,
             workload_id: str,
             namespace: str,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 cancel_body(cat, apm, workload_id=workload_id, namespace=namespace),
@@ -221,7 +221,7 @@ def register_workload_tools(  # pragma: no cover
             namespace: str,
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 backup_body(cat, apm, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type),
@@ -236,7 +236,7 @@ def register_workload_tools(  # pragma: no cover
             namespace: str,
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 cancel_body(cat, apm, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type),
@@ -250,7 +250,7 @@ def register_workload_tools(  # pragma: no cover
     # ── versions ─────────────────────────────────────────────────────────────
 
     if not is_m365:
-        async def _list_versions(  # type: ignore[misc]
+        async def _list_versions(
             ctx: Context,
             workload_id: str,
             namespace: str,
@@ -258,7 +258,7 @@ def register_workload_tools(  # pragma: no cover
             until: str | None = None,
             limit: int = 20,
             offset: int = 0,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_tool(list_versions_body(cat, apm, workload_id=workload_id, namespace=namespace, since=since, until=until, limit=limit, offset=offset))
     else:
@@ -273,7 +273,7 @@ def register_workload_tools(  # pragma: no cover
             until: str | None = None,
             limit: int = 20,
             offset: int = 0,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_tool(list_versions_body(
                 cat, apm, workload_id=workload_id, namespace=namespace, since=since, until=until,
@@ -290,12 +290,12 @@ def register_workload_tools(  # pragma: no cover
     )(_list_versions)
 
     if not is_m365:
-        async def _get_version(  # type: ignore[misc]
+        async def _get_version(
             ctx: Context,
             workload_id: str,
             namespace: str,
             version_id: str | None = None,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_tool(get_version_body(cat, apm, workload_id=workload_id, namespace=namespace, version_id=version_id))
     else:
@@ -307,7 +307,7 @@ def register_workload_tools(  # pragma: no cover
             namespace: str,
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_tool(get_version_body(
                 cat, apm, workload_id=workload_id, namespace=namespace, version_id=version_id,
@@ -319,12 +319,12 @@ def register_workload_tools(  # pragma: no cover
     # ── lock / unlock versions ────────────────────────────────────────────────
 
     if not is_m365:
-        async def _lock_version(  # type: ignore[misc]
+        async def _lock_version(
             ctx: Context,
             version_id: str,
             workload_id: str,
             namespace: str,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 lock_version_body(cat, apm, workload_id=workload_id, namespace=namespace, version_id=version_id),
@@ -332,12 +332,12 @@ def register_workload_tools(  # pragma: no cover
                 params=mutation_params(cat, workload_id, None, None, version_id=version_id),
             )
 
-        async def _unlock_version(  # type: ignore[misc]
+        async def _unlock_version(
             ctx: Context,
             version_id: str,
             workload_id: str,
             namespace: str,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 unlock_version_body(cat, apm, workload_id=workload_id, namespace=namespace, version_id=version_id),
@@ -353,7 +353,7 @@ def register_workload_tools(  # pragma: no cover
             namespace: str,
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 lock_version_body(cat, apm, workload_id=workload_id, namespace=namespace, version_id=version_id, tenant_id=tenant_id, workload_type=workload_type),
@@ -369,7 +369,7 @@ def register_workload_tools(  # pragma: no cover
             namespace: str,
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 unlock_version_body(cat, apm, workload_id=workload_id, namespace=namespace, version_id=version_id, tenant_id=tenant_id, workload_type=workload_type),
@@ -383,12 +383,12 @@ def register_workload_tools(  # pragma: no cover
     # ── admin mutations ───────────────────────────────────────────────────────
 
     if not is_m365:
-        async def _change_plan(  # type: ignore[misc]
+        async def _change_plan(
             ctx: Context,
             plan_id: str,
             workload_id: str,
             namespace: str,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 change_plan_body(cat, apm, plan_id=plan_id, workload_id=workload_id, namespace=namespace),
@@ -404,7 +404,7 @@ def register_workload_tools(  # pragma: no cover
             namespace: str,
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_audited_tool(
                 change_plan_body(cat, apm, plan_id=plan_id, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type),
@@ -426,7 +426,7 @@ def register_workload_tools(  # pragma: no cover
     async def _retire_via(
         apm: APMClient, *, retirement_plan_id: str, workload_id: str, namespace: str, confirm: bool,
         tenant_id: str | None = None, workload_type: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         return await destructive_workload_mutation(
             cat, apm,
             action_verb="retire",
@@ -437,13 +437,13 @@ def register_workload_tools(  # pragma: no cover
         )
 
     if not is_m365:
-        async def _retire(  # type: ignore[misc]
+        async def _retire(
             ctx: Context,
             retirement_plan_id: str,
             workload_id: str,
             namespace: str,
             confirm: bool = False,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await _retire_via(apm, retirement_plan_id=retirement_plan_id, workload_id=workload_id, namespace=namespace, confirm=confirm)
     else:
@@ -456,7 +456,7 @@ def register_workload_tools(  # pragma: no cover
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
             confirm: bool = False,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await _retire_via(
                 apm, retirement_plan_id=retirement_plan_id, workload_id=workload_id, namespace=namespace,
@@ -476,7 +476,7 @@ def register_workload_tools(  # pragma: no cover
     async def _delete_via(
         apm: APMClient, *, workload_id: str, namespace: str, confirm: bool,
         tenant_id: str | None = None, workload_type: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         return await destructive_workload_mutation(
             cat, apm,
             action_verb="delete",
@@ -487,12 +487,12 @@ def register_workload_tools(  # pragma: no cover
         )
 
     if not is_m365:
-        async def _delete(  # type: ignore[misc]
+        async def _delete(
             ctx: Context,
             workload_id: str,
             namespace: str,
             confirm: bool = False,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await _delete_via(apm, workload_id=workload_id, namespace=namespace, confirm=confirm)
     else:
@@ -504,7 +504,7 @@ def register_workload_tools(  # pragma: no cover
             tenant_id: str,
             workload_type: M365WorkloadTypeLiteral,
             confirm: bool = False,
-        ) -> str:
+        ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await _delete_via(
                 apm, workload_id=workload_id, namespace=namespace, confirm=confirm,

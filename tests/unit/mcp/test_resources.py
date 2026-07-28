@@ -9,9 +9,11 @@ time, so this is the only way to drive the real @server.resource wiring
 from __future__ import annotations
 
 import json
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
-from fastmcp import Client
+from fastmcp import Client, FastMCP
 
 from synology_apm.sdk import SiteInfo, SiteStorageStats, WorkloadUsageSummary
 from tests.unit.mcp.conftest import (
@@ -23,7 +25,7 @@ from tests.unit.mcp.conftest import (
 )
 
 
-def _make_site_info():
+def _make_site_info() -> SiteInfo:
     return SiteInfo(
         site_uuid="uuid-001",
         external_address="apm.corp.com",
@@ -35,15 +37,15 @@ def _make_site_info():
     )
 
 
-async def _read(resource_server, uri: str) -> dict:
+async def _read(resource_server: FastMCP, uri: str) -> dict[str, Any]:
     async with Client(resource_server) as client:
         result = await client.read_resource(uri)
-        return json.loads(result[0].text)
+        return cast("dict[str, Any]", json.loads(result[0].text))
 
 
 class TestSiteResource:
     @pytest.mark.asyncio
-    async def test_returns_site_info_dict(self, mock_apm, resource_server):
+    async def test_returns_site_info_dict(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
         mock_apm.get_site_info.return_value = _make_site_info()
 
         parsed = await _read(resource_server, "apm://site")
@@ -54,7 +56,7 @@ class TestSiteResource:
 
 class TestServersResource:
     @pytest.mark.asyncio
-    async def test_returns_items_and_total(self, mock_apm, resource_server):
+    async def test_returns_items_and_total(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
         bs = make_backup_server()
         mock_apm.backup_servers.list.return_value = ([bs], 1)
 
@@ -66,7 +68,7 @@ class TestServersResource:
 
 class TestProtectionPlansResource:
     @pytest.mark.asyncio
-    async def test_returns_plans(self, mock_apm, resource_server):
+    async def test_returns_plans(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
         plan = make_protection_plan()
         mock_apm.plans.list.return_value = ([plan], 1)
 
@@ -77,7 +79,7 @@ class TestProtectionPlansResource:
 
 class TestRetirementPlansResource:
     @pytest.mark.asyncio
-    async def test_returns_plans(self, mock_apm, resource_server):
+    async def test_returns_plans(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
         plan = make_retirement_plan()
         mock_apm.retirement_plans.list.return_value = ([plan], 1)
 
@@ -89,7 +91,7 @@ class TestRetirementPlansResource:
 
 class TestTieringPlansResource:
     @pytest.mark.asyncio
-    async def test_returns_plans(self, mock_apm, resource_server):
+    async def test_returns_plans(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
         plan = make_tiering_plan()
         mock_apm.tiering_plans.list.return_value = ([plan], 1)
 
@@ -101,7 +103,7 @@ class TestTieringPlansResource:
 
 class TestTenantsResource:
     @pytest.mark.asyncio
-    async def test_returns_tenants(self, mock_apm, resource_server):
+    async def test_returns_tenants(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
         tenant = make_saas_tenant()
         mock_apm.saas.list.return_value = ([tenant], 1)
 
@@ -112,7 +114,7 @@ class TestTenantsResource:
 
 class TestServerByIdResource:
     @pytest.mark.asyncio
-    async def test_extracts_server_id_from_uri_template(self, mock_apm, resource_server):
+    async def test_extracts_server_id_from_uri_template(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
         bs = make_backup_server(backup_server_id="srv-002", name="apm-server-02")
         mock_apm.backup_servers.get.return_value = bs
 
@@ -125,12 +127,17 @@ class TestServerByIdResource:
 
 class TestResourceError:
     @pytest.mark.asyncio
-    async def test_returns_error_json_on_exception(self, mock_apm, resource_server):
+    async def test_returns_error_json_on_exception(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
+        from mcp.shared.exceptions import McpError
+
         from synology_apm.sdk import ResourceNotFoundError
 
         mock_apm.backup_servers.get.side_effect = ResourceNotFoundError("not found", "server", "srv-001")
 
-        parsed = await _read(resource_server, "apm://server/srv-001")
+        async with Client(resource_server) as client:
+            with pytest.raises(McpError) as exc_info:
+                await client.read_resource("apm://server/srv-001")
 
+        parsed = json.loads(str(exc_info.value))
         assert parsed["error"] == "not_found"
         assert parsed["resource_id"] == "srv-001"

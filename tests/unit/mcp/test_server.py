@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -29,7 +30,7 @@ _EXPECTED_TOOL_MODES = _load_expected_tool_modes()
 
 
 class TestCreateServer:
-    def test_returns_fastmcp_instance(self):
+    def test_returns_fastmcp_instance(self) -> None:
         from synology_apm.mcp._server import create_server
 
         server = create_server(mode="admin")
@@ -37,7 +38,7 @@ class TestCreateServer:
         assert server.name == "synology-apm"
 
     @pytest.mark.asyncio
-    async def test_readonly_mode_registers_fewer_tools(self):
+    async def test_readonly_mode_registers_fewer_tools(self) -> None:
         from synology_apm.mcp._server import create_server
 
         readonly = create_server(mode="readonly")
@@ -52,7 +53,7 @@ class TestCreateServer:
         assert "list_machine_workloads" in admin_names
 
     @pytest.mark.asyncio
-    async def test_hidden_tool_raises_not_found_when_called_directly(self):
+    async def test_hidden_tool_raises_not_found_when_called_directly(self) -> None:
         """Mode gating works by never registering the tool, not by filtering
         tools/list after the fact — calling a hidden tool's name directly
         (as a client that learned it elsewhere would) must fail at lookup."""
@@ -72,7 +73,7 @@ class TestPerToolModeGating:
     without touching _EXPECTED_TOOL_MODES, so the mismatch surfaces immediately."""
 
     @pytest.mark.asyncio
-    async def test_table_covers_every_registered_tool(self):
+    async def test_table_covers_every_registered_tool(self) -> None:
         """Guards the guard: a newly added tool with no entry in
         _EXPECTED_TOOL_MODES must fail loudly here rather than silently
         skipping mode-gate coverage."""
@@ -85,7 +86,7 @@ class TestPerToolModeGating:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("mode", ["readonly", "operator", "admin"])
-    async def test_registered_tools_match_expected_modes(self, mode):
+    async def test_registered_tools_match_expected_modes(self, mode: str) -> None:
         from synology_apm.mcp._security import mode_allows
         from synology_apm.mcp._server import create_server
 
@@ -103,7 +104,7 @@ class TestFailedConnectionClient:
     """The placeholder yielded by build_lifespan() when the initial APM connection fails."""
 
     @pytest.mark.asyncio
-    async def test_direct_method_call_raises_original_exception(self):
+    async def test_direct_method_call_raises_original_exception(self) -> None:
         from synology_apm.mcp._server import _FailedConnectionClient
         from synology_apm.sdk import AuthenticationError
 
@@ -114,7 +115,7 @@ class TestFailedConnectionClient:
             await client.get_site_info()
 
     @pytest.mark.asyncio
-    async def test_nested_attribute_chain_raises_original_exception(self):
+    async def test_nested_attribute_chain_raises_original_exception(self) -> None:
         """Mirrors real tool usage like apm.machine.workloads.get(...)."""
         from synology_apm.mcp._server import _FailedConnectionClient
         from synology_apm.sdk import APIError
@@ -132,7 +133,7 @@ class TestBuildLifespan:
     or not-the-primary-management-server)."""
 
     @pytest.mark.asyncio
-    async def test_yields_apm_client_on_successful_connect(self):
+    async def test_yields_apm_client_on_successful_connect(self) -> None:
         from synology_apm.mcp._server import build_lifespan
         from synology_apm.sdk import ResolvedConnection
 
@@ -142,11 +143,11 @@ class TestBuildLifespan:
         with patch("synology_apm.mcp._server.APMClient", return_value=mock_client):
             resolved = ResolvedConnection("apm.corp.com", "admin", "secret", True)
             lifespan = build_lifespan(resolved, debug=False)
-            async with lifespan(None) as ctx:
+            async with lifespan(cast(FastMCP, None)) as ctx:
                 assert ctx["apm"] is mock_client
 
     @pytest.mark.asyncio
-    async def test_yields_failed_connection_client_on_authentication_error(self):
+    async def test_yields_failed_connection_client_on_authentication_error(self) -> None:
         from synology_apm.mcp._server import _FailedConnectionClient, build_lifespan
         from synology_apm.sdk import AuthenticationError, ResolvedConnection
 
@@ -157,13 +158,13 @@ class TestBuildLifespan:
         with patch("synology_apm.mcp._server.APMClient", return_value=mock_client):
             resolved = ResolvedConnection("apm.corp.com", "admin", "wrong", True)
             lifespan = build_lifespan(resolved, debug=False)
-            async with lifespan(None) as ctx:
+            async with lifespan(cast(FastMCP, None)) as ctx:
                 assert isinstance(ctx["apm"], _FailedConnectionClient)
                 with pytest.raises(AuthenticationError):
                     await ctx["apm"].get_site_info()
 
     @pytest.mark.asyncio
-    async def test_yields_failed_connection_client_on_unreachable_host(self):
+    async def test_yields_failed_connection_client_on_unreachable_host(self) -> None:
         from synology_apm.mcp._server import _FailedConnectionClient, build_lifespan
         from synology_apm.sdk import APIError, ResolvedConnection
 
@@ -174,13 +175,13 @@ class TestBuildLifespan:
         with patch("synology_apm.mcp._server.APMClient", return_value=mock_client):
             resolved = ResolvedConnection("apm.corp.com", "admin", "secret", True)
             lifespan = build_lifespan(resolved, debug=False)
-            async with lifespan(None) as ctx:
+            async with lifespan(cast(FastMCP, None)) as ctx:
                 assert isinstance(ctx["apm"], _FailedConnectionClient)
                 with pytest.raises(APIError):
                     await ctx["apm"].backup_servers.list()
 
     @pytest.mark.asyncio
-    async def test_config_error_yields_failed_connection_client_without_connecting(self):
+    async def test_config_error_yields_failed_connection_client_without_connecting(self) -> None:
         """When credentials couldn't be resolved at all (see _config.py::load_credentials()),
         build_lifespan() must skip the real connection attempt entirely -- there's nothing
         usable to connect with -- and go straight to the same degraded-mode placeholder."""
@@ -192,7 +193,7 @@ class TestBuildLifespan:
         with patch("synology_apm.mcp._server.APMClient") as mock_apm_client_cls:
             resolved = ResolvedConnection("", "", "", True)
             lifespan = build_lifespan(resolved, debug=False, config_error=exc)
-            async with lifespan(None) as ctx:
+            async with lifespan(cast(FastMCP, None)) as ctx:
                 assert isinstance(ctx["apm"], _FailedConnectionClient)
                 with pytest.raises(AuthenticationError, match="Missing credentials"):
                     await ctx["apm"].get_site_info()

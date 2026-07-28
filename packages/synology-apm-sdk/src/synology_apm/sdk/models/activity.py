@@ -103,7 +103,7 @@ class BackupActivity(Activity):
         verify_status:      Backup verification result (PS/VM only); None otherwise.
         data_change_bytes:  Changed data size (bytes); None when not available.
         data_deduped_bytes: Actual storage consumed after deduplication (bytes); None when not available.
-        backup_scope:       Data scope of the backup; None for M365 activities.
+        backup_scope:       Data scope of the backup; populated only by get() / get_by_version().
     """
     status: BackupActivityStatus
     verify_status: VerifyStatus | None = None

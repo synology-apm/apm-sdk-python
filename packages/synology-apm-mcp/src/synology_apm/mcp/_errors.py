@@ -4,11 +4,17 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Awaitable, Callable
-from typing import Any, NoReturn, TypeVar
+from typing import Any, NoReturn, TypeAlias, TypeVar
+
+from fastmcp.exceptions import ToolError
 
 from synology_apm.sdk import APMError, classify_error
 
 _T = TypeVar("_T")
+
+ToolResult: TypeAlias = dict[str, Any]
+"""The structured result every MCP tool returns; FastMCP derives each tool's outputSchema
+from this annotation and populates structuredContent from the returned dict directly."""
 
 RECONFIGURE_HINT = (
     "Run `uvx synology-apm-cli config set` to update the connection settings, or if "
@@ -68,14 +74,24 @@ def sdk_error_to_dict(exc: Exception) -> dict[str, Any]:
     return {"error": "unexpected_error", "message": str(exc)}
 
 
-async def run_resource(coro: Awaitable[_T], serializer: Callable[[_T], Any]) -> str:
-    """Await a coroutine, apply serializer, JSON-serialize, or return an error JSON."""
+def raise_tool_error(exc: Exception) -> NoReturn:
+    """Raise a ToolError carrying the JSON-encoded standardized error dict as its message.
+
+    Surfaces as isError=true to the MCP client (FastMCP passes an explicitly raised
+    ToolError through untouched), while keeping the message text machine-parseable JSON
+    for any client that only reads the message.
+    """
+    raise ToolError(json.dumps(sdk_error_to_dict(exc), ensure_ascii=False)) from exc
+
+
+async def run_resource(coro: Awaitable[_T], serializer: Callable[[_T], ToolResult]) -> ToolResult:
+    """Await a coroutine and apply serializer, or raise a ToolError on exception."""
     try:
-        return json.dumps(serializer(await coro), ensure_ascii=False)
+        return serializer(await coro)
     except Exception as exc:
-        return json.dumps(sdk_error_to_dict(exc), ensure_ascii=False)
+        raise_tool_error(exc)
 
 
-async def run_tool(coro: Awaitable[Any]) -> str:
-    """Await a coroutine, JSON-serialize the result, or return an error JSON on exception."""
+async def run_tool(coro: Awaitable[Any]) -> ToolResult:
+    """Await a coroutine and return its result, or raise a ToolError on exception."""
     return await run_resource(coro, lambda x: x)

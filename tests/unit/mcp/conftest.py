@@ -1,9 +1,9 @@
 """Shared fixtures for MCP unit tests."""
 from __future__ import annotations
 
-import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -48,7 +48,7 @@ from synology_apm.sdk import (
 
 
 @pytest.fixture
-def mock_apm():
+def mock_apm() -> MagicMock:
     """Return a deeply-mocked APMClient."""
     apm = MagicMock()
 
@@ -173,7 +173,7 @@ def mock_apm():
 
 
 @pytest.fixture
-def mock_ctx(mock_apm):
+def mock_ctx(mock_apm: MagicMock) -> MagicMock:
     """Return a mocked FastMCP Context with lifespan_context["apm"] set."""
     ctx = MagicMock()
     ctx.lifespan_context = {"apm": mock_apm}
@@ -181,7 +181,7 @@ def mock_ctx(mock_apm):
 
 
 @pytest.fixture(scope="session")
-def admin_server():
+def admin_server() -> FastMCP:
     """Return a FastMCP server with every tool registered (mode="admin").
 
     Session-scoped: registration depends only on mode, not on any per-test mock
@@ -195,7 +195,7 @@ def admin_server():
 
 
 @pytest.fixture
-def resource_server(mock_apm):
+def resource_server(mock_apm: MagicMock) -> FastMCP:
     """Return a FastMCP server with only resources registered, plus a real
     lifespan yielding mock_apm — required because FastMCP resolves a resource's
     ctx via contextvar-based dependency injection rather than accepting it as an
@@ -205,7 +205,7 @@ def resource_server(mock_apm):
     from synology_apm.mcp import resources
 
     @asynccontextmanager
-    async def lifespan(server: FastMCP):
+    async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
         yield {"apm": mock_apm}
 
     server = FastMCP("synology-apm", lifespan=lifespan)
@@ -213,11 +213,12 @@ def resource_server(mock_apm):
     return server
 
 
-async def call_tool(server: FastMCP, tool_name: str, ctx: Any, **kwargs: Any) -> str:
+async def call_tool(server: FastMCP, tool_name: str, ctx: Any, **kwargs: Any) -> dict[str, Any]:
     """Invoke a registered tool by name through its real FastMCP wiring."""
     tool = await server.get_tool(tool_name)
     assert tool is not None, f"tool {tool_name!r} is not registered"
-    return await tool.fn(ctx=ctx, **kwargs)  # type: ignore[attr-defined]
+    result = await tool.fn(ctx=ctx, **kwargs)  # type: ignore[attr-defined]
+    return cast("dict[str, Any]", result)
 
 
 async def assert_destructive_preview_then_execute(
@@ -232,8 +233,7 @@ async def assert_destructive_preview_then_execute(
     wiring, asserting the preview-then-execute contract shared by every
     delete/retire tool: no execution without confirmation, exactly one execution
     once confirmed."""
-    preview_raw = await call_tool(server, tool_name, ctx, confirm=False, **tool_kwargs)
-    preview = json.loads(preview_raw)
+    preview = await call_tool(server, tool_name, ctx, confirm=False, **tool_kwargs)
     assert preview["preview"] is True
     if expected_target is not None:
         assert preview["target"] == expected_target
@@ -245,7 +245,7 @@ async def assert_destructive_preview_then_execute(
 
 # ── Model factory helpers ─────────────────────────────────────────────────────
 
-def make_backup_server(**kwargs) -> BackupServer:
+def make_backup_server(**kwargs: Any) -> BackupServer:
     defaults: dict[str, Any] = dict(
         backup_server_id="srv-001",
         namespace="default",
@@ -271,7 +271,7 @@ def make_backup_server(**kwargs) -> BackupServer:
     return BackupServer(**defaults)
 
 
-def make_hypervisor(**kwargs) -> Hypervisor:
+def make_hypervisor(**kwargs: Any) -> Hypervisor:
     defaults: dict[str, Any] = dict(
         hypervisor_id="hyp-001",
         hostname="esxi1.example.com",
@@ -286,7 +286,7 @@ def make_hypervisor(**kwargs) -> Hypervisor:
     return Hypervisor(**defaults)
 
 
-def make_remote_storage(**kwargs) -> RemoteStorage:
+def make_remote_storage(**kwargs: Any) -> RemoteStorage:
     defaults: dict[str, Any] = dict(
         storage_id="stor-001",
         name="DSM-Storage",
@@ -303,7 +303,7 @@ def make_remote_storage(**kwargs) -> RemoteStorage:
     return RemoteStorage(**defaults)
 
 
-def make_protection_plan(**kwargs) -> ProtectionPlan:
+def make_protection_plan(**kwargs: Any) -> ProtectionPlan:
     from synology_apm.sdk import ProtectionPlanPolicy
 
     defaults: dict[str, Any] = dict(
@@ -339,7 +339,7 @@ def make_protection_plan(**kwargs) -> ProtectionPlan:
     return ProtectionPlan(**defaults)
 
 
-def make_retirement_plan(**kwargs) -> RetirementPlan:
+def make_retirement_plan(**kwargs: Any) -> RetirementPlan:
     from synology_apm.sdk import RetirementRetentionPolicy
 
     defaults: dict[str, Any] = dict(
@@ -354,7 +354,7 @@ def make_retirement_plan(**kwargs) -> RetirementPlan:
     return RetirementPlan(**defaults)
 
 
-def make_saas_tenant(**kwargs) -> SaasTenant:
+def make_saas_tenant(**kwargs: Any) -> SaasTenant:
     defaults: dict[str, Any] = dict(
         tenant_id="tenant-001",
         tenant_name="Contoso",
@@ -366,7 +366,7 @@ def make_saas_tenant(**kwargs) -> SaasTenant:
     return SaasTenant(**defaults)
 
 
-def make_machine_workload(**kwargs) -> MachineWorkload:
+def make_machine_workload(**kwargs: Any) -> MachineWorkload:
     from datetime import UTC, datetime
 
     defaults: dict[str, Any] = dict(
@@ -397,7 +397,7 @@ def make_machine_workload(**kwargs) -> MachineWorkload:
     return MachineWorkload(**defaults)
 
 
-def make_workload_version(**kwargs) -> WorkloadVersion:
+def make_workload_version(**kwargs: Any) -> WorkloadVersion:
     from datetime import UTC, datetime
     defaults: dict[str, Any] = dict(
         version_id="ver-001",
@@ -413,7 +413,7 @@ def make_workload_version(**kwargs) -> WorkloadVersion:
     return WorkloadVersion(**defaults)
 
 
-def make_backup_activity(**kwargs) -> BackupActivity:
+def make_backup_activity(**kwargs: Any) -> BackupActivity:
     from datetime import UTC, datetime
     defaults: dict[str, Any] = dict(
         activity_id="act-001",
@@ -436,7 +436,7 @@ def make_backup_activity(**kwargs) -> BackupActivity:
     return BackupActivity(**defaults)
 
 
-def make_restore_activity(**kwargs) -> RestoreActivity:
+def make_restore_activity(**kwargs: Any) -> RestoreActivity:
     from datetime import UTC, datetime
     defaults: dict[str, Any] = dict(
         activity_id="rst-001",
@@ -459,7 +459,7 @@ def make_restore_activity(**kwargs) -> RestoreActivity:
     return RestoreActivity(**defaults)
 
 
-def make_tiering_plan(**kwargs) -> TieringPlan:
+def make_tiering_plan(**kwargs: Any) -> TieringPlan:
     from datetime import time
     defaults: dict[str, Any] = dict(
         plan_id="tier-001",
@@ -476,7 +476,7 @@ def make_tiering_plan(**kwargs) -> TieringPlan:
     return TieringPlan(**defaults)
 
 
-def make_export_activity(**kwargs) -> M365ExportActivity:
+def make_export_activity(**kwargs: Any) -> M365ExportActivity:
     defaults: dict[str, Any] = dict(
         activity_id="exp-001",
         execution_id="exec-exp-001",
@@ -494,7 +494,7 @@ def make_export_activity(**kwargs) -> M365ExportActivity:
     return M365ExportActivity(**defaults)
 
 
-def make_m365_workload(**kwargs) -> M365Workload:
+def make_m365_workload(**kwargs: Any) -> M365Workload:
     from datetime import UTC, datetime
     defaults: dict[str, Any] = dict(
         workload_id="123e4567-e89b-12d3-a456-426614174002",

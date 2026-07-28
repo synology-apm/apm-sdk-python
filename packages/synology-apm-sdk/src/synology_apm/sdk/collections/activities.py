@@ -308,6 +308,11 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
         Args:
             version: WorkloadVersion object (obtained from workloads.list_versions() or
                      workloads.get_version()).
+
+        Returns:
+            BackupActivity for the matching execution_id/workload_id/namespace. If no
+            activity matches, returns a BackupActivity with default/empty field values
+            instead of raising.
         """
         detail = await _fetch_backup_activity_detail(
             self._session,
@@ -326,10 +331,6 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
 
         Args:
             activity: The backup activity to cancel (obtained from list()).
-
-        Raises:
-            PermissionDeniedError: Insufficient permission to cancel backups.
-            APIError: APM rejected the cancel request.
         """
         pair = {"namespace": activity.namespace, "uid": activity.activity_id}
         if activity.category == WorkloadCategory.M365:
@@ -389,6 +390,10 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
 
         Returns:
             (list of RestoreActivity, total) for the selected mode.
+
+        Raises:
+            ResourceNotFoundError: Raised for any cause other than a non-matching
+                ``workload`` filter (which instead returns ``([], 0)``, see above).
         """
         status_api = [api for s in (status or []) for api in _RESTORE_STATUS_TO_API.get(s, [])]
         extra_params: list[tuple[str, str | int]] | None = None
@@ -464,8 +469,7 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
             activity: The restore activity to cancel (obtained from list()).
 
         Raises:
-            PermissionDeniedError: Insufficient permission to cancel restores.
-            APIError: APM rejected the cancel request.
+            InvalidOperationError: activity.workload_type has no known cancel mapping.
         """
         cancel_type = _SUBTYPE_TO_CANCEL_TYPE.get(activity.workload_type)
         if cancel_type is None:

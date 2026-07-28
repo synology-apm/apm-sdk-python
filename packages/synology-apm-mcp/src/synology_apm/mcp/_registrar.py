@@ -6,9 +6,25 @@ from typing import Any, TypeVar
 
 from fastmcp import FastMCP
 
+from mcp.types import ToolAnnotations
 from synology_apm.mcp._security import mode_allows
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _annotations_for(tool_name: str, required_mode: str) -> ToolAnnotations:
+    """Derive readOnlyHint/destructiveHint/idempotentHint from information already
+    established by this codebase's own naming/mode conventions (see the MCP README):
+    readonly mode means list/get (no side effects, trivially idempotent);
+    delete_*/retire_* tools always go through destructive_tool(); update_* tools are
+    always full-replace (also idempotent). openWorldHint is deliberately left unset --
+    not clearly derivable from existing conventions."""
+    is_readonly = required_mode == "readonly"
+    return ToolAnnotations(
+        readOnlyHint=is_readonly,
+        destructiveHint=tool_name.startswith(("delete_", "retire_")),
+        idempotentHint=is_readonly or tool_name.startswith("update_"),
+    )
 
 
 class ToolRegistrar:
@@ -29,14 +45,23 @@ class ToolRegistrar:
         self._mode = mode
         self.required_modes: dict[str, str] = {}
 
-    def tool(self, required_mode: str = "readonly", *, name: str | None = None, description: str) -> Callable[[_F], _F]:
+    def tool(
+        self,
+        required_mode: str = "readonly",
+        *,
+        name: str | None = None,
+        description: str,
+    ) -> Callable[[_F], _F]:
         def decorate(fn: _F) -> _F:
             tool_name = name if name is not None else fn.__name__
             self.required_modes[tool_name] = required_mode
             if mode_allows(required_mode, self._mode):
                 if name is not None:
                     fn.__name__ = name
-                self._server.tool(description=description)(fn)
+                self._server.tool(
+                    description=description,
+                    annotations=_annotations_for(tool_name, required_mode),
+                )(fn)
             return fn
 
         return decorate

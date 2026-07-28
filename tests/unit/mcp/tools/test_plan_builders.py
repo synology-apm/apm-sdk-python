@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import json
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from fastmcp import FastMCP
 
 from tests.unit.mcp.conftest import make_backup_server, make_remote_storage
 
 
 class TestScheduleFrequencyChoices:
-    def test_after_backup_not_a_valid_main_schedule_frequency(self):
+    def test_after_backup_not_a_valid_main_schedule_frequency(self) -> None:
         """AFTER_BACKUP is only valid for Backup Copy schedules, not main plan schedules
         (see ProtectionSchedule._validate_plan_schedule_and_retention in the SDK); it must
         not be offered as a schedule_frequency choice on these tools.
@@ -22,28 +25,29 @@ class TestScheduleFrequencyChoices:
 
 
 class TestBuildHelpers:
-    def test_parse_time_hhmm(self):
+    def test_parse_time_hhmm(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_time
         t = _parse_time("02:30")
+        assert t is not None
         assert t.hour == 2
         assert t.minute == 30
 
-    def test_parse_time_none(self):
+    def test_parse_time_none(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_time
         assert _parse_time(None) is None
 
-    def test_parse_required_time_hhmm(self):
+    def test_parse_required_time_hhmm(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_required_time
         t = _parse_required_time("21:00")
         assert t.hour == 21
         assert t.minute == 0
 
-    def test_parse_required_time_empty_string_raises(self):
+    def test_parse_required_time_empty_string_raises(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_required_time
         with pytest.raises(ValueError, match="Unrecognized time: ''"):
             _parse_required_time("")
 
-    def test_parse_weekdays(self):
+    def test_parse_weekdays(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_weekdays
         from synology_apm.sdk import WeekDay
         days = _parse_weekdays(["mon", "wed", "fri"])
@@ -52,16 +56,16 @@ class TestBuildHelpers:
         assert WeekDay(3) in days  # wed
         assert WeekDay(5) in days  # fri
 
-    def test_parse_weekdays_empty(self):
+    def test_parse_weekdays_empty(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_weekdays
         assert _parse_weekdays(None) == ()
 
-    def test_parse_weekdays_unrecognized_token_raises(self):
+    def test_parse_weekdays_unrecognized_token_raises(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_weekdays
         with pytest.raises(ValueError, match="Unrecognized weekday: 'weekend'"):
             _parse_weekdays(["mon", "weekend"])
 
-    def test_parse_weekdays_covers_all_sdk_weekdays(self):
+    def test_parse_weekdays_covers_all_sdk_weekdays(self) -> None:
         """WeekDayLiteral's 3-letter tokens must resolve to every WeekDay member -- this
         is the behavioral half of the _enums.py/SDK Enum parity check (see
         test_weekday_literal_has_seven_distinct_days in test_enums.py), since WeekDay's
@@ -75,7 +79,7 @@ class TestBuildHelpers:
         days = _parse_weekdays(list(get_args(WeekDayLiteral)))
         assert set(days) == set(WeekDay)
 
-    def test_build_retention_keep_days(self):
+    def test_build_retention_keep_days(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_retention
         from synology_apm.sdk import RetentionType
         ret = _build_retention("keep_days", retention_days=30, retention_versions=None)
@@ -83,14 +87,14 @@ class TestBuildHelpers:
         assert ret.days == 30
         assert ret.versions is None
 
-    def test_build_retention_keep_versions(self):
+    def test_build_retention_keep_versions(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_retention
         from synology_apm.sdk import RetentionType
         ret = _build_retention("keep_versions", retention_days=None, retention_versions=10)
         assert ret.retention_type == RetentionType.KEEP_VERSIONS
         assert ret.versions == 10
 
-    def test_build_schedule_daily(self):
+    def test_build_schedule_daily(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_schedule
         from synology_apm.sdk import ScheduleFrequency
         sched = _build_schedule("daily", schedule_time="03:00", weekdays=None)
@@ -98,19 +102,19 @@ class TestBuildHelpers:
         assert sched.start_time is not None
         assert sched.start_time.hour == 3
 
-    def test_parse_time_hour_only(self):
+    def test_parse_time_hour_only(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_time
         t = _parse_time("20")
         assert t is not None
         assert t.hour == 20
         assert t.minute == 0
 
-    def test_parse_time_with_seconds_raises(self):
+    def test_parse_time_with_seconds_raises(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _parse_time
         with pytest.raises(ValueError, match="Unrecognized time: '20:00:00'"):
             _parse_time("20:00:00")
 
-    def test_build_schedule_weekly_with_weekdays(self):
+    def test_build_schedule_weekly_with_weekdays(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_schedule
         from synology_apm.sdk import ScheduleFrequency, WeekDay
         sched = _build_schedule("weekly", schedule_time=None, weekdays=["mon", "fri"])
@@ -118,7 +122,7 @@ class TestBuildHelpers:
         assert WeekDay(1) in sched.weekdays
         assert WeekDay(5) in sched.weekdays
 
-    def test_build_retention_keep_advanced_builds_gfs(self):
+    def test_build_retention_keep_advanced_builds_gfs(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_retention
         from synology_apm.sdk import RetentionType
         ret = _build_retention(
@@ -126,12 +130,13 @@ class TestBuildHelpers:
             gfs_daily_versions=7, gfs_weekly_versions=4, gfs_monthly_versions=12, gfs_yearly_versions=5,
         )
         assert ret.retention_type == RetentionType.KEEP_ADVANCED
+        assert ret.gfs is not None
         assert ret.gfs.daily_versions == 7
         assert ret.gfs.weekly_versions == 4
         assert ret.gfs.monthly_versions == 12
         assert ret.gfs.yearly_versions == 5
 
-    def test_build_retention_keep_advanced_missing_field_raises(self):
+    def test_build_retention_keep_advanced_missing_field_raises(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_retention
         with pytest.raises(ValueError, match="keep_advanced requires"):
             _build_retention(
@@ -139,38 +144,41 @@ class TestBuildHelpers:
                 gfs_daily_versions=7, gfs_weekly_versions=None, gfs_monthly_versions=12, gfs_yearly_versions=5,
             )
 
-    def test_build_retention_keep_days_ignores_gfs_params(self):
+    def test_build_retention_keep_days_ignores_gfs_params(self) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_retention
         ret = _build_retention("keep_days", retention_days=30, retention_versions=None)
         assert ret.gfs is None
 
-    def test_build_vm_config_all_none_returns_none(self):
+    def test_build_vm_config_all_none_returns_none(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_vm_config
         assert _build_vm_config(None, None, None, None, None) is None
 
-    def test_build_vm_config_partial_fills_declared_defaults(self):
+    def test_build_vm_config_partial_fills_declared_defaults(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_vm_config
         cfg = _build_vm_config(None, True, None, None, None)
+        assert cfg is not None
         assert cfg.enable_verification is True
         assert cfg.enable_app_aware_bkp is True  # dataclass default, untouched
 
-    def test_build_pc_config_all_none_returns_none(self):
+    def test_build_pc_config_all_none_returns_none(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_pc_config
         assert _build_pc_config(None, None, None) is None
 
-    def test_build_pc_config_partial(self):
+    def test_build_pc_config_partial(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_pc_config
         cfg = _build_pc_config(True, None, None)
+        assert cfg is not None
         assert cfg.shutdown_after_backup is True
         assert cfg.wake_for_backup is False  # dataclass default
 
-    def test_build_ps_config_all_none_returns_none(self):
+    def test_build_ps_config_all_none_returns_none(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_ps_config
         assert _build_ps_config(None, None, None, None, None, None) is None
 
-    def test_build_ps_config_partial(self):
+    def test_build_ps_config_partial(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_ps_config
         cfg = _build_ps_config(False, True, 60, True, True, True)
+        assert cfg is not None
         assert cfg.enable_app_aware_bkp is False
         assert cfg.enable_verification is True
         assert cfg.verification_video_duration_seconds == 60
@@ -178,34 +186,37 @@ class TestBuildHelpers:
         assert cfg.wake_for_backup is True
         assert cfg.prevent_sleep_during_backup is True
 
-    def test_build_db_config_all_none_returns_none(self):
+    def test_build_db_config_all_none_returns_none(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_db_config
         assert _build_db_config(None, None, None) is None
 
-    def test_build_db_config_converts_enums(self):
+    def test_build_db_config_converts_enums(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_db_config
         from synology_apm.sdk import DbActionOnError, MssqlLogSetting, OracleLogSetting
         cfg = _build_db_config("stop", "truncate", "delete")
+        assert cfg is not None
         assert cfg.action_on_error == DbActionOnError.STOP
         assert cfg.mssql_log_setting == MssqlLogSetting.TRUNCATE
         assert cfg.oracle_log_setting == OracleLogSetting.DELETE
 
-    def test_parse_backup_window_disabled_and_no_spec_returns_none(self):
+    def test_parse_backup_window_disabled_and_no_spec_returns_none(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
         assert _parse_backup_window(False, None) is None
 
-    def test_parse_backup_window_parses_ranges(self):
+    def test_parse_backup_window_parses_ranges(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
         from synology_apm.sdk import WeekDay
         bw = _parse_backup_window(True, "mon:0-8,13-18;tue:0-23")
+        assert bw is not None
         assert bw.enabled is True
         assert bw.allowed_hours[WeekDay.MONDAY] == frozenset(list(range(0, 9)) + list(range(13, 19)))
         assert bw.allowed_hours[WeekDay.TUESDAY] == frozenset(range(0, 24))
 
-    def test_parse_backup_window_single_hours_no_range(self):
+    def test_parse_backup_window_single_hours_no_range(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
         from synology_apm.sdk import WeekDay
         bw = _parse_backup_window(True, "wed:9,12,15")
+        assert bw is not None
         assert bw.allowed_hours[WeekDay.WEDNESDAY] == frozenset({9, 12, 15})
 
     @pytest.mark.parametrize(
@@ -225,58 +236,58 @@ class TestBuildHelpers:
             "single_hour_out_of_range",
         ],
     )
-    def test_parse_backup_window_invalid_spec_raises(self, spec, match):
+    def test_parse_backup_window_invalid_spec_raises(self, spec: str, match: str) -> None:
         """An unrecognized weekday/entry format, an overnight range (start > end), or an
         hour outside 0-23 is rejected instead of being silently dropped or emptied."""
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
         with pytest.raises(ValueError, match=match):
             _parse_backup_window(True, spec)
 
-    def test_parse_backup_window_disabled_does_not_validate_range(self):
+    def test_parse_backup_window_disabled_does_not_validate_range(self) -> None:
         """When disabled, allowed_hours is ignored, so a malformed range must not raise."""
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
         bw = _parse_backup_window(False, "mon:20-8")
         assert bw is not None
         assert bw.enabled is False
 
-    def test_parse_backup_window_non_numeric_range_raises_friendly(self):
+    def test_parse_backup_window_non_numeric_range_raises_friendly(self) -> None:
         """A non-numeric hour token yields a friendly message, not a raw int() error."""
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
         with pytest.raises(ValueError, match="must be integers 0-23"):
             _parse_backup_window(True, "mon:a-b")
 
-    def test_parse_backup_window_non_numeric_single_hour_raises_friendly(self):
+    def test_parse_backup_window_non_numeric_single_hour_raises_friendly(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_backup_window
         with pytest.raises(ValueError, match="must be an integer 0-23"):
             _parse_backup_window(True, "mon:x")
 
-    def test_parse_tasks_json_none_returns_none(self):
+    def test_parse_tasks_json_none_returns_none(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         assert _parse_tasks_json(None) is None
 
-    def test_parse_tasks_json_invalid_json_raises(self):
+    def test_parse_tasks_json_invalid_json_raises(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         with pytest.raises(ValueError, match="not valid JSON"):
             _parse_tasks_json("not json")
 
-    def test_parse_tasks_json_not_a_list_raises(self):
+    def test_parse_tasks_json_not_a_list_raises(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         with pytest.raises(ValueError, match="JSON array"):
             _parse_tasks_json(json.dumps({"workload_type": "pc"}))
 
-    def test_parse_tasks_json_entry_not_a_dict_raises(self):
+    def test_parse_tasks_json_entry_not_a_dict_raises(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         with pytest.raises(ValueError, match="must be a JSON object"):
             _parse_tasks_json(json.dumps(["not-a-dict"]))
 
-    def test_parse_tasks_json_custom_volumes_string_raises(self):
+    def test_parse_tasks_json_custom_volumes_string_raises(self) -> None:
         """A string custom_volumes (e.g. "C:") must raise, not silently char-split into ('C',':')."""
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         raw = json.dumps([{"workload_type": "fs", "os_type": "windows", "custom_volumes": "C:"}])
         with pytest.raises(ValueError, match="custom_volumes.*must be a JSON array"):
             _parse_tasks_json(raw)
 
-    def test_parse_tasks_json_custom_volumes_list_accepted(self):
+    def test_parse_tasks_json_custom_volumes_list_accepted(self) -> None:
         """A proper list custom_volumes is accepted and preserved."""
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         raw = json.dumps(
@@ -286,7 +297,7 @@ class TestBuildHelpers:
         assert tasks is not None
         assert tasks[0].custom_volumes == ("C:", "D:")
 
-    def test_parse_tasks_json_with_schedule_and_event_trigger(self):
+    def test_parse_tasks_json_with_schedule_and_event_trigger(self) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
         from synology_apm.sdk import MachineOsType, MachineWorkloadType, ScheduleFrequency
 
@@ -302,17 +313,22 @@ class TestBuildHelpers:
             }
         ])
         tasks = _parse_tasks_json(raw)
+        assert tasks is not None
         assert len(tasks) == 1
         task = tasks[0]
         assert task.workload_type == MachineWorkloadType.PC
         assert task.os_type == MachineOsType.WINDOWS
         assert task.use_main_schedule is False
+        assert task.schedule is not None
+        assert task.schedule.time_schedule is not None
         assert task.schedule.time_schedule.frequency == ScheduleFrequency.DAILY
+        assert task.schedule.time_schedule.start_time is not None
         assert task.schedule.time_schedule.start_time.hour == 3
+        assert task.schedule.event_trigger is not None
         assert task.schedule.event_trigger.on_lock is True
         assert task.schedule.event_trigger.min_interval.total_seconds() == 1800
 
-    def test_parse_tasks_json_with_schedule_weekdays(self):
+    def test_parse_tasks_json_with_schedule_weekdays(self) -> None:
         """Regression test: tasks_json's nested time_schedule.weekdays is a JSON array of
         day tokens that must reach _parse_weekdays as a list, not be re-joined into a string."""
         from synology_apm.mcp.tools.plans._builders_machine import _parse_tasks_json
@@ -328,11 +344,15 @@ class TestBuildHelpers:
             }
         ])
         tasks = _parse_tasks_json(raw)
-        assert WeekDay(1) in tasks[0].schedule.time_schedule.weekdays  # mon
-        assert WeekDay(3) in tasks[0].schedule.time_schedule.weekdays  # wed
+        assert tasks is not None
+        task = tasks[0]
+        assert task.schedule is not None
+        assert task.schedule.time_schedule is not None
+        assert WeekDay(1) in task.schedule.time_schedule.weekdays  # mon
+        assert WeekDay(3) in task.schedule.time_schedule.weekdays  # wed
 
 
-_MACHINE_PLAN_REQUEST_KWARGS: dict = dict(
+_MACHINE_PLAN_REQUEST_KWARGS: dict[str, Any] = dict(
     name="Daily Backup", retention_type="keep_days", retention_days=30, retention_versions=None,
     gfs_daily_versions=None, gfs_weekly_versions=None, gfs_monthly_versions=None, gfs_yearly_versions=None,
     schedule_frequency="daily", schedule_time="02:00", weekdays=None,
@@ -351,7 +371,7 @@ _MACHINE_PLAN_REQUEST_KWARGS: dict = dict(
     backup_copy_schedule_frequency=None, backup_copy_schedule_time=None, backup_copy_weekdays=None,
 )
 
-_M365_PLAN_REQUEST_KWARGS: dict = dict(
+_M365_PLAN_REQUEST_KWARGS: dict[str, Any] = dict(
     name="Daily Backup", retention_type="keep_days", retention_days=30, retention_versions=None,
     gfs_daily_versions=None, gfs_weekly_versions=None, gfs_monthly_versions=None, gfs_yearly_versions=None,
     schedule_frequency="daily", schedule_time="02:00", weekdays=None,
@@ -366,7 +386,7 @@ _M365_PLAN_REQUEST_KWARGS: dict = dict(
 
 class TestBuildMachinePlanRequest:
     @pytest.mark.asyncio
-    async def test_builds_request_with_retention_and_schedule(self, mock_apm):
+    async def test_builds_request_with_retention_and_schedule(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_machine_plan_request
         from synology_apm.sdk import RetentionType, ScheduleFrequency
 
@@ -381,7 +401,7 @@ class TestBuildMachinePlanRequest:
         assert request.tasks is None
 
     @pytest.mark.asyncio
-    async def test_builds_request_with_device_configs_and_backup_copy(self, mock_apm):
+    async def test_builds_request_with_device_configs_and_backup_copy(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.plans._builders_machine import _build_machine_plan_request
 
         server = make_backup_server(backup_server_id="srv-002")
@@ -399,14 +419,16 @@ class TestBuildMachinePlanRequest:
         )
         request = await _build_machine_plan_request(mock_apm, **kwargs)
 
+        assert request.vm_config is not None
         assert request.vm_config.enable_verification is True
+        assert request.backup_copy is not None
         assert request.backup_copy.destination is server
         assert request.backup_copy.retention.days == 90
 
 
 class TestBuildM365PlanRequest:
     @pytest.mark.asyncio
-    async def test_builds_request_with_retention_and_schedule(self, mock_apm):
+    async def test_builds_request_with_retention_and_schedule(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_m365_plan_request
         from synology_apm.sdk import RetentionType, ScheduleFrequency
 
@@ -419,7 +441,7 @@ class TestBuildM365PlanRequest:
         assert request.backup_copy is None
 
     @pytest.mark.asyncio
-    async def test_builds_request_with_backup_copy(self, mock_apm):
+    async def test_builds_request_with_backup_copy(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_m365_plan_request
 
         storage = make_remote_storage(storage_id="stor-002")
@@ -435,6 +457,7 @@ class TestBuildM365PlanRequest:
         )
         request = await _build_m365_plan_request(mock_apm, **kwargs)
 
+        assert request.backup_copy is not None
         assert request.backup_copy.destination is storage
         assert request.backup_copy.retention.versions == 10
 
@@ -446,53 +469,57 @@ class TestCreateUpdatePlanParamsMatchBuilder:
     keyword list — see the comment above each build_kwargs assignment)."""
 
     @pytest.mark.asyncio
-    async def test_machine_create_params_match_builder(self, admin_server):
+    async def test_machine_create_params_match_builder(self, admin_server: FastMCP) -> None:
         import inspect
 
         from synology_apm.mcp.tools.plans._builders_machine import _build_machine_plan_request
 
         tool = await admin_server.get_tool("create_machine_protection_plan")
-        tool_params = set(inspect.signature(tool.fn).parameters) - {"ctx"}
+        assert tool is not None
+        tool_params = set(inspect.signature(tool.fn).parameters) - {"ctx"}  # type: ignore[attr-defined]
         builder_params = set(inspect.signature(_build_machine_plan_request).parameters) - {"apm"}
         assert tool_params == builder_params
 
     @pytest.mark.asyncio
-    async def test_machine_update_params_match_builder(self, admin_server):
+    async def test_machine_update_params_match_builder(self, admin_server: FastMCP) -> None:
         import inspect
 
         from synology_apm.mcp.tools.plans._builders_machine import _build_machine_plan_request
 
         tool = await admin_server.get_tool("update_machine_protection_plan")
-        tool_params = set(inspect.signature(tool.fn).parameters) - {"ctx", "plan_id"}
+        assert tool is not None
+        tool_params = set(inspect.signature(tool.fn).parameters) - {"ctx", "plan_id"}  # type: ignore[attr-defined]
         builder_params = set(inspect.signature(_build_machine_plan_request).parameters) - {"apm"}
         assert tool_params == builder_params
 
     @pytest.mark.asyncio
-    async def test_m365_create_params_match_builder(self, admin_server):
+    async def test_m365_create_params_match_builder(self, admin_server: FastMCP) -> None:
         import inspect
 
         from synology_apm.mcp.tools.plans._builders_common import _build_m365_plan_request
 
         tool = await admin_server.get_tool("create_m365_protection_plan")
-        tool_params = set(inspect.signature(tool.fn).parameters) - {"ctx"}
+        assert tool is not None
+        tool_params = set(inspect.signature(tool.fn).parameters) - {"ctx"}  # type: ignore[attr-defined]
         builder_params = set(inspect.signature(_build_m365_plan_request).parameters) - {"apm"}
         assert tool_params == builder_params
 
     @pytest.mark.asyncio
-    async def test_m365_update_params_match_builder(self, admin_server):
+    async def test_m365_update_params_match_builder(self, admin_server: FastMCP) -> None:
         import inspect
 
         from synology_apm.mcp.tools.plans._builders_common import _build_m365_plan_request
 
         tool = await admin_server.get_tool("update_m365_protection_plan")
-        tool_params = set(inspect.signature(tool.fn).parameters) - {"ctx", "plan_id"}
+        assert tool is not None
+        tool_params = set(inspect.signature(tool.fn).parameters) - {"ctx", "plan_id"}  # type: ignore[attr-defined]
         builder_params = set(inspect.signature(_build_m365_plan_request).parameters) - {"apm"}
         assert tool_params == builder_params
 
 
 class TestBuildBackupCopy:
     @pytest.mark.asyncio
-    async def test_returns_none_without_destination_id(self, mock_apm):
+    async def test_returns_none_without_destination_id(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_backup_copy
 
         result = await _build_backup_copy(
@@ -503,7 +530,7 @@ class TestBuildBackupCopy:
         mock_apm.remote_storages.get.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_resolves_backup_server_destination(self, mock_apm):
+    async def test_resolves_backup_server_destination(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_backup_copy
 
         server = make_backup_server(backup_server_id="srv-002")
@@ -512,12 +539,13 @@ class TestBuildBackupCopy:
         result = await _build_backup_copy(
             mock_apm, "backup_server", "srv-002", "keep_days", 90, None, None, None, None, None, "daily", "23:00", None,
         )
+        assert result is not None
         assert result.destination is server
         assert result.retention.days == 90
         mock_apm.remote_storages.get.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_resolves_remote_storage_destination(self, mock_apm):
+    async def test_resolves_remote_storage_destination(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_backup_copy
 
         storage = make_remote_storage(storage_id="stor-002")
@@ -526,6 +554,7 @@ class TestBuildBackupCopy:
         result = await _build_backup_copy(
             mock_apm, "remote_storage", "stor-002", "keep_versions", None, 10, None, None, None, None, "after_backup", None, None,
         )
+        assert result is not None
         assert result.destination is storage
         assert result.retention.versions == 10
         mock_apm.backup_servers.get.assert_not_called()
@@ -541,8 +570,13 @@ class TestBuildBackupCopy:
         ids=["missing_destination_type", "missing_retention_type", "missing_schedule_frequency"],
     )
     async def test_missing_required_field_raises(
-        self, mock_apm, destination_type, retention_type, schedule_frequency, match
-    ):
+        self,
+        mock_apm: MagicMock,
+        destination_type: str | None,
+        retention_type: str | None,
+        schedule_frequency: str | None,
+        match: str,
+    ) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_backup_copy
 
         with pytest.raises(ValueError, match=match):
@@ -552,7 +586,7 @@ class TestBuildBackupCopy:
             )
 
     @pytest.mark.asyncio
-    async def test_unknown_destination_type_raises(self, mock_apm):
+    async def test_unknown_destination_type_raises(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.plans._builders_common import _build_backup_copy
 
         with pytest.raises(ValueError, match="Unsupported backup_copy_destination_type"):

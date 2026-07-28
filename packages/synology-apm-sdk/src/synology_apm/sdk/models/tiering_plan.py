@@ -17,7 +17,9 @@ class TieringStatus:
 
     Attributes:
         status:               Overall tiering status.
-        reason:               Detail reason when status is SKIPPED, RETRY, or FAILED; None otherwise.
+        reason:               Detail reason when status is SKIPPED, RETRY, or FAILED;
+                              NO_VERSIONS_TO_COPY when the plan has no versions eligible for
+                              tiering; None otherwise.
         pending_version_count: Number of versions waiting to be tiered. Meaningful when
                               IN_PROGRESS, WAITING, RETRY, or FAILED.
         remaining_bytes:      Estimated bytes remaining for the pending tiering operation;

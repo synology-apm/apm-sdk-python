@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from synology_apm.mcp._helpers import (
+    ToolResult,
     VersionResolution,
-    clamp_limit,
     list_result,
     parse_dt_optional,
     resolve_m365_version,
@@ -122,7 +122,7 @@ async def list_versions_body(
             workload,
             since=parse_dt_optional(since),
             until=parse_dt_optional(until),
-            limit=clamp_limit(limit),
+            limit=limit,
             offset=offset,
         ),
         lambda x: x.to_dict(),
@@ -135,7 +135,7 @@ async def get_version_body(
     tenant_id: str | None = None, workload_type: str | None = None,
 ) -> dict[str, Any]:
     _, version = await resolve_version(cat, apm, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type, version_id=version_id)
-    return version.to_dict()  # type: ignore[no-any-return]
+    return version.to_dict()
 
 
 async def lock_version_body(
@@ -185,7 +185,7 @@ async def destructive_workload_mutation(
     execute_fn: Callable[[Any], Awaitable[Any]],
     tenant_id: str | None = None,
     workload_type: str | None = None,
-) -> str:
+) -> ToolResult:
     """Shared resolve-then-preview-or-execute helper for retire/delete workload
     tools, which differ only in their action verb, warning text, and execute_fn."""
     return await destructive_tool(

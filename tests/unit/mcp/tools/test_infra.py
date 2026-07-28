@@ -2,8 +2,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 from synology_apm.sdk import (
     AmazonS3ChinaStorageAddRequest,
@@ -35,7 +41,7 @@ _STORAGE_CASES = [
 
 class TestGetSiteInfo:
     @pytest.mark.asyncio
-    async def test_calls_sdk_and_returns_json(self, mock_apm, mock_ctx, admin_server):
+    async def test_calls_sdk_and_returns_json(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         from synology_apm.sdk import SiteInfo, SiteStorageStats, WorkloadUsageSummary
 
         mock_apm.get_site_info.return_value = SiteInfo(
@@ -48,8 +54,7 @@ class TestGetSiteInfo:
             workload_usage=WorkloadUsageSummary(by_type=()),
         )
 
-        raw = await call_tool(admin_server, "get_site_info", mock_ctx)
-        result = json.loads(raw)
+        result = await call_tool(admin_server, "get_site_info", mock_ctx)
 
         assert result["site_uuid"] == "uuid-001"
         assert result["external_address"] == "apm.corp.com"
@@ -77,13 +82,13 @@ class TestListInfraResources:
         _LIST_CASES, ids=[c[0] for c in _LIST_CASES],
     )
     async def test_returns_items_and_total(
-        self, mock_apm, mock_ctx, admin_server, tool_name, collection_attr, resource_factory, check_field, check_value,
-    ):
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP, tool_name: str,
+        collection_attr: str, resource_factory: Callable[[], Any], check_field: str, check_value: str,
+    ) -> None:
         resource = resource_factory()
         getattr(mock_apm, collection_attr).list.return_value = ([resource], 1)
 
-        raw = await call_tool(admin_server, tool_name, mock_ctx)
-        result = json.loads(raw)
+        result = await call_tool(admin_server, tool_name, mock_ctx)
 
         assert result["total"] == 1
         assert len(result["items"]) == 1
@@ -92,7 +97,7 @@ class TestListInfraResources:
 
 class TestListBackupServersFilters:
     @pytest.mark.asyncio
-    async def test_forwards_name_status_and_type_filters(self, mock_apm, mock_ctx, admin_server):
+    async def test_forwards_name_status_and_type_filters(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         from synology_apm.sdk import BackupServerType, ServerStatus
 
         mock_apm.backup_servers.list.return_value = ([], 0)
@@ -108,7 +113,7 @@ class TestListBackupServersFilters:
         assert kwargs["type_filter"] == [BackupServerType.DP]
 
     @pytest.mark.asyncio
-    async def test_filters_default_to_none(self, mock_apm, mock_ctx, admin_server):
+    async def test_filters_default_to_none(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         mock_apm.backup_servers.list.return_value = ([], 0)
 
         await call_tool(admin_server, "list_backup_servers", mock_ctx)
@@ -126,13 +131,14 @@ class TestGetInfraResource:
         _GET_CASES, ids=[c[0] for c in _GET_CASES],
     )
     async def test_resolves_by_id_and_returns_dict(
-        self, mock_apm, mock_ctx, admin_server, tool_name, collection_attr, resource_factory, id_kwarg, id_value, check_field, check_value,
-    ):
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP, tool_name: str,
+        collection_attr: str, resource_factory: Callable[[], Any], id_kwarg: str, id_value: str,
+        check_field: str, check_value: str,
+    ) -> None:
         resource = resource_factory()
         getattr(mock_apm, collection_attr).get.return_value = resource
 
-        raw = await call_tool(admin_server, tool_name, mock_ctx, **{id_kwarg: id_value})
-        result = json.loads(raw)
+        result = await call_tool(admin_server, tool_name, mock_ctx, **{id_kwarg: id_value})
 
         assert result[check_field] == check_value
         getattr(mock_apm, collection_attr).get.assert_called_once_with(id_value)
@@ -140,37 +146,35 @@ class TestGetInfraResource:
 
 class TestChangeTieringPlan:
     @pytest.mark.asyncio
-    async def test_removes_tiering_plan_when_no_plan_provided(self, mock_apm, mock_ctx, admin_server):
+    async def test_removes_tiering_plan_when_no_plan_provided(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         server = make_backup_server()
         mock_apm.backup_servers.get.return_value = server
         mock_apm.backup_servers.change_tiering_plan.return_value = None
 
-        raw = await call_tool(admin_server, "change_backup_server_tiering_plan", mock_ctx, server_id="srv-001")
-        result = json.loads(raw)
+        result = await call_tool(admin_server, "change_backup_server_tiering_plan", mock_ctx, server_id="srv-001")
 
         assert result["ok"] is True
         assert result["tiering_plan_id"] is None
         mock_apm.backup_servers.change_tiering_plan.assert_called_once_with(server, None)
 
     @pytest.mark.asyncio
-    async def test_sets_tiering_plan_when_provided(self, mock_apm, mock_ctx, admin_server):
+    async def test_sets_tiering_plan_when_provided(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         server = make_backup_server()
         plan = make_tiering_plan()
         mock_apm.backup_servers.get.return_value = server
         mock_apm.tiering_plans.get.return_value = plan
 
-        raw = await call_tool(
+        result = await call_tool(
             admin_server, "change_backup_server_tiering_plan", mock_ctx,
             server_id="srv-001", tiering_plan_id="tier-001",
         )
-        result = json.loads(raw)
 
         assert result["ok"] is True
         assert result["tiering_plan_id"] == "tier-001"
         mock_apm.backup_servers.change_tiering_plan.assert_called_once_with(server, plan)
 
     @pytest.mark.asyncio
-    async def test_plan_not_found_returns_structured_error(self, mock_apm, mock_ctx, admin_server):
+    async def test_plan_not_found_returns_structured_error(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         from synology_apm.sdk import ResourceNotFoundError
 
         server = make_backup_server()
@@ -179,11 +183,12 @@ class TestChangeTieringPlan:
             "not found", resource_type="TieringPlan", resource_id="tier-missing",
         )
 
-        raw = await call_tool(
-            admin_server, "change_backup_server_tiering_plan", mock_ctx,
-            server_id="srv-001", tiering_plan_id="tier-missing",
-        )
-        result = json.loads(raw)
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(
+                admin_server, "change_backup_server_tiering_plan", mock_ctx,
+                server_id="srv-001", tiering_plan_id="tier-missing",
+            )
+        result = json.loads(str(exc_info.value))
 
         assert result["error"] == "not_found"
         mock_apm.backup_servers.change_tiering_plan.assert_not_called()
@@ -195,7 +200,7 @@ class TestBuildStorageRequest:
         _STORAGE_CASES,
         ids=[c[0] for c in _STORAGE_CASES],
     )
-    def test_storage_type(self, storage_type, cls, has_endpoint, has_vault):
+    def test_storage_type(self, storage_type: str, cls: type[Any], has_endpoint: bool, has_vault: bool) -> None:
         from synology_apm.mcp.tools.infra import _build_storage_request
         req = _build_storage_request(storage_type, "key", "secret", "vault", "ep:8080", False, "", False)
         assert isinstance(req, cls)
@@ -206,17 +211,17 @@ class TestBuildStorageRequest:
         if has_endpoint:
             assert req.endpoint == "ep:8080"
 
-    def test_unknown_type_raises(self):
+    def test_unknown_type_raises(self) -> None:
         from synology_apm.mcp.tools.infra import _build_storage_request
         with pytest.raises(ValueError, match="Unsupported storage_type"):
             _build_storage_request("ftp", "key", "secret", "vault", "", False, "", False)
 
-    def test_unmanaged_retirement_plan_defaults_to_none(self):
+    def test_unmanaged_retirement_plan_defaults_to_none(self) -> None:
         from synology_apm.mcp.tools.infra import _build_storage_request
         req = _build_storage_request("s3_compatible", "key", "secret", "vault", "ep:8080", False, "", False)
         assert req.unmanaged_retirement_plan is None
 
-    def test_unmanaged_retirement_plan_passthrough(self):
+    def test_unmanaged_retirement_plan_passthrough(self) -> None:
         from synology_apm.mcp.tools.infra import _build_storage_request
         plan = make_retirement_plan()
         req = _build_storage_request(
@@ -227,7 +232,7 @@ class TestBuildStorageRequest:
 
 class TestAddRemoteStorage:
     @pytest.mark.asyncio
-    async def test_calls_sdk_and_returns_dict(self, mock_apm, mock_ctx):
+    async def test_calls_sdk_and_returns_dict(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp.tools.infra import _add_remote_storage
         from synology_apm.sdk import RemoteStorageAddResult
 
@@ -240,7 +245,7 @@ class TestAddRemoteStorage:
         assert result["encryption_key"] is None
 
     @pytest.mark.asyncio
-    async def test_resolves_retirement_plan_and_forwards_to_request(self, mock_apm, mock_ctx):
+    async def test_resolves_retirement_plan_and_forwards_to_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
         from synology_apm.sdk import RemoteStorageAddResult
 
@@ -252,9 +257,8 @@ class TestAddRemoteStorage:
         )
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("add_remote_storage")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "add_remote_storage", mock_ctx,
             storage_type="s3_compatible",
             access_key="key",
             secret_key="secret",
@@ -269,7 +273,7 @@ class TestAddRemoteStorage:
         assert request.unmanaged_retirement_plan is plan
 
     @pytest.mark.asyncio
-    async def test_no_retirement_plan_when_not_provided(self, mock_apm, mock_ctx):
+    async def test_no_retirement_plan_when_not_provided(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
         from synology_apm.sdk import RemoteStorageAddResult
 
@@ -279,9 +283,8 @@ class TestAddRemoteStorage:
         )
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("add_remote_storage")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "add_remote_storage", mock_ctx,
             storage_type="s3_compatible",
             access_key="key",
             secret_key="secret",
@@ -294,7 +297,7 @@ class TestAddRemoteStorage:
         assert request.unmanaged_retirement_plan is None
 
     @pytest.mark.asyncio
-    async def test_audit_log_records_storage_type(self, mock_apm, mock_ctx, tmp_path):
+    async def test_audit_log_records_storage_type(self, mock_apm: MagicMock, mock_ctx: MagicMock, tmp_path: Path) -> None:
         import os
         from unittest.mock import patch
 
@@ -305,12 +308,11 @@ class TestAddRemoteStorage:
         mock_apm.remote_storages.add.return_value = RemoteStorageAddResult(storage=storage, encryption_key=None)
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("add_remote_storage")
 
         log_file = tmp_path / "audit.jsonl"
         with patch.dict(os.environ, {"APM_MCP_AUDIT_LOG": str(log_file)}):
-            await tool.fn(
-                ctx=mock_ctx,
+            await call_tool(
+                server, "add_remote_storage", mock_ctx,
                 storage_type="s3_compatible",
                 access_key="key",
                 secret_key="secret",
@@ -326,24 +328,23 @@ class TestAddRemoteStorage:
 
 class TestUpdateRemoteStorage:
     @pytest.mark.asyncio
-    async def test_resolves_and_updates(self, mock_apm, mock_ctx, admin_server):
+    async def test_resolves_and_updates(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         storage = make_remote_storage()
         updated = make_remote_storage(endpoint="new-endpoint:9000")
         mock_apm.remote_storages.get.return_value = storage
         mock_apm.remote_storages.update.return_value = updated
 
-        raw = await call_tool(
+        result = await call_tool(
             admin_server, "update_remote_storage", mock_ctx,
             storage_id="stor-001", access_key="key", secret_key="secret",
             endpoint="new-endpoint:9000", trust_self_signed=False,
         )
-        result = json.loads(raw)
 
         assert result["name"] == "DSM-Storage"
         mock_apm.remote_storages.get.assert_called_once_with("stor-001")
 
     @pytest.mark.asyncio
-    async def test_audit_log_records_storage_id(self, mock_apm, mock_ctx, tmp_path):
+    async def test_audit_log_records_storage_id(self, mock_apm: MagicMock, mock_ctx: MagicMock, tmp_path: Path) -> None:
         import os
         from unittest.mock import patch
 
@@ -354,12 +355,11 @@ class TestUpdateRemoteStorage:
         mock_apm.remote_storages.update.return_value = storage
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("update_remote_storage")
 
         log_file = tmp_path / "audit.jsonl"
         with patch.dict(os.environ, {"APM_MCP_AUDIT_LOG": str(log_file)}):
-            await tool.fn(
-                ctx=mock_ctx,
+            await call_tool(
+                server, "update_remote_storage", mock_ctx,
                 storage_id="stor-001", access_key="key", secret_key="secret",
                 endpoint="new-endpoint:9000", trust_self_signed=False,
             )
@@ -372,7 +372,7 @@ class TestUpdateRemoteStorage:
 
 class TestDeleteRemoteStorage:
     @pytest.mark.asyncio
-    async def test_preview_then_execute(self, mock_apm, mock_ctx, admin_server):
+    async def test_preview_then_execute(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         storage = make_remote_storage()
         mock_apm.remote_storages.get.return_value = storage
         mock_apm.remote_storages.delete.return_value = None

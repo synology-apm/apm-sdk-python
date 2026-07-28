@@ -3,19 +3,21 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
-from synology_apm.sdk import APMActivityLogType, BackupServerType, LogLevel
+from synology_apm.sdk import APMActivityLogType, BackupServerType, DriveLog, LogLevel
 from tests.unit.mcp.conftest import call_tool, make_backup_server
 
 
-def _make_drive_log(**kwargs):
+def _make_drive_log(**kwargs: Any) -> DriveLog:
     from datetime import UTC, datetime
 
-    from synology_apm.sdk import DriveLog, LogLevel
-
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         level=LogLevel.INFO,
         timestamp=datetime(2026, 7, 14, 2, 30, tzinfo=UTC),
         description="Drive healthy",
@@ -30,7 +32,7 @@ def _make_drive_log(**kwargs):
 
 class TestResolveDpServer:
     @pytest.mark.asyncio
-    async def test_accepts_dp_server(self, mock_apm):
+    async def test_accepts_dp_server(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.log import _resolve_dp_server
 
         bs = make_backup_server(server_type=BackupServerType.DP)
@@ -40,7 +42,7 @@ class TestResolveDpServer:
         assert result.name == "apm-server-01"
 
     @pytest.mark.asyncio
-    async def test_rejects_nas_server(self, mock_apm):
+    async def test_rejects_nas_server(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools.log import _resolve_dp_server
 
         nas = make_backup_server(name="nas-server-01", server_type=BackupServerType.NAS)
@@ -62,12 +64,20 @@ class TestNasServerRejectedByAllLogTools:
         ("list_connection_logs", "list_connection"),
         ("list_system_logs", "list_system"),
     ])
-    async def test_nas_server_raises_before_list(self, mock_apm, mock_ctx, admin_server, tool_name, list_mock_attr):
+    async def test_nas_server_raises_before_list(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        tool_name: str,
+        list_mock_attr: str,
+    ) -> None:
         nas = make_backup_server(name="nas-server-01", server_type=BackupServerType.NAS)
         mock_apm.backup_servers.get.return_value = nas
 
-        raw = await call_tool(admin_server, tool_name, mock_ctx, server_id="srv-nas")
-        parsed = json.loads(raw)
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(admin_server, tool_name, mock_ctx, server_id="srv-nas")
+        parsed = json.loads(str(exc_info.value))
 
         assert parsed["error"] == "invalid_argument"
         assert "NAS-type" in parsed["message"]
@@ -86,8 +96,13 @@ class TestLogListFilterForwarding:
         ("list_system_logs", "list_system"),
     ])
     async def test_forwards_levels_since_until_keyword(
-        self, mock_apm, mock_ctx, admin_server, tool_name, list_mock_attr
-    ):
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        tool_name: str,
+        list_mock_attr: str,
+    ) -> None:
         bs = make_backup_server(server_type=BackupServerType.DP)
         mock_apm.backup_servers.get.return_value = bs
         getattr(mock_apm.logs, list_mock_attr).return_value = ([], 0)
@@ -108,7 +123,9 @@ class TestLogListFilterForwarding:
         assert kwargs["keyword"] == "backup"
 
     @pytest.mark.asyncio
-    async def test_activity_forwards_log_type(self, mock_apm, mock_ctx, admin_server):
+    async def test_activity_forwards_log_type(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
         bs = make_backup_server(server_type=BackupServerType.DP)
         mock_apm.backup_servers.get.return_value = bs
         mock_apm.logs.list_activity.return_value = ([], 0)
@@ -119,7 +136,9 @@ class TestLogListFilterForwarding:
         assert kwargs["log_type"] == APMActivityLogType.SYSTEM
 
     @pytest.mark.asyncio
-    async def test_drive_forwards_location(self, mock_apm, mock_ctx, admin_server):
+    async def test_drive_forwards_location(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
         bs = make_backup_server(server_type=BackupServerType.DP)
         mock_apm.backup_servers.get.return_value = bs
         mock_apm.logs.list_drive.return_value = ([], 0)
@@ -132,7 +151,9 @@ class TestLogListFilterForwarding:
 
 class TestListActivityLogs:
     @pytest.mark.asyncio
-    async def test_calls_sdk_and_returns_result(self, mock_apm, mock_ctx, admin_server):
+    async def test_calls_sdk_and_returns_result(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
         from datetime import UTC, datetime
 
         from synology_apm.sdk import APMActivityLog, APMActivityLogType, LogLevel
@@ -149,8 +170,7 @@ class TestListActivityLogs:
         )
         mock_apm.logs.list_activity.return_value = ([entry], None)
 
-        raw = await call_tool(admin_server, "list_activity_logs", mock_ctx, server_id="srv-001")
-        result = json.loads(raw)
+        result = await call_tool(admin_server, "list_activity_logs", mock_ctx, server_id="srv-001")
 
         assert result["items"][0]["level"] == "info"
         assert "Backup completed" in result["items"][0]["description"]
@@ -159,27 +179,29 @@ class TestListActivityLogs:
 
 class TestListDriveLogs:
     @pytest.mark.asyncio
-    async def test_reports_real_total_and_truncated(self, mock_apm, mock_ctx, admin_server):
+    async def test_reports_real_total_and_truncated(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
         bs = make_backup_server(server_type=BackupServerType.DP)
         mock_apm.backup_servers.get.return_value = bs
         mock_apm.logs.list_drive.return_value = ([_make_drive_log()], 5)
 
-        raw = await call_tool(admin_server, "list_drive_logs", mock_ctx, server_id="srv-001")
-        result = json.loads(raw)
+        result = await call_tool(admin_server, "list_drive_logs", mock_ctx, server_id="srv-001")
 
         assert result["total"] == 5
         assert result["truncated"] is True
 
     @pytest.mark.asyncio
-    async def test_no_truncated_flag_on_last_page_with_offset(self, mock_apm, mock_ctx, admin_server):
+    async def test_no_truncated_flag_on_last_page_with_offset(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
         """Regression test: offset + len(items) == total on the true last page must not
         be flagged truncated."""
         bs = make_backup_server(server_type=BackupServerType.DP)
         mock_apm.backup_servers.get.return_value = bs
         mock_apm.logs.list_drive.return_value = ([_make_drive_log()] * 5, 95)
 
-        raw = await call_tool(admin_server, "list_drive_logs", mock_ctx, server_id="srv-001", limit=10, offset=90)
-        result = json.loads(raw)
+        result = await call_tool(admin_server, "list_drive_logs", mock_ctx, server_id="srv-001", limit=10, offset=90)
 
         assert result["total"] == 95
         assert "truncated" not in result
@@ -187,7 +209,9 @@ class TestListDriveLogs:
 
 class TestListConnectionLogs:
     @pytest.mark.asyncio
-    async def test_calls_sdk_and_returns_result(self, mock_apm, mock_ctx, admin_server):
+    async def test_calls_sdk_and_returns_result(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
         from datetime import UTC, datetime
 
         from synology_apm.sdk import ConnectionLog, LogLevel
@@ -202,8 +226,7 @@ class TestListConnectionLogs:
         )
         mock_apm.logs.list_connection.return_value = ([entry], None)
 
-        raw = await call_tool(admin_server, "list_connection_logs", mock_ctx, server_id="srv-001")
-        result = json.loads(raw)
+        result = await call_tool(admin_server, "list_connection_logs", mock_ctx, server_id="srv-001")
 
         assert result["items"][0]["level"] == "warning"
         assert "Login failed" in result["items"][0]["description"]
@@ -213,7 +236,9 @@ class TestListConnectionLogs:
 
 class TestListSystemLogs:
     @pytest.mark.asyncio
-    async def test_calls_sdk_and_returns_result(self, mock_apm, mock_ctx, admin_server):
+    async def test_calls_sdk_and_returns_result(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
         from datetime import UTC, datetime
 
         from synology_apm.sdk import LogLevel, SystemLog
@@ -228,8 +253,7 @@ class TestListSystemLogs:
         )
         mock_apm.logs.list_system.return_value = ([entry], None)
 
-        raw = await call_tool(admin_server, "list_system_logs", mock_ctx, server_id="srv-001")
-        result = json.loads(raw)
+        result = await call_tool(admin_server, "list_system_logs", mock_ctx, server_id="srv-001")
 
         assert result["items"][0]["level"] == "error"
         assert "Disk failure detected" in result["items"][0]["description"]

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from fastmcp import FastMCP
 
 from synology_apm.sdk import WeekDay, WorkloadCategory
 from tests.unit.mcp.conftest import call_tool, make_protection_plan, make_remote_storage
@@ -11,7 +14,9 @@ from tests.unit.mcp.conftest import call_tool, make_protection_plan, make_remote
 
 class TestCreateM365ProtectionPlan:
     @pytest.mark.asyncio
-    async def test_run_schedule_by_controller_time_and_backup_copy_reach_request(self, mock_apm, mock_ctx):
+    async def test_run_schedule_by_controller_time_and_backup_copy_reach_request(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock
+    ) -> None:
         from synology_apm.mcp._server import create_server
 
         storage = make_remote_storage(storage_id="stor-003")
@@ -19,9 +24,8 @@ class TestCreateM365ProtectionPlan:
         mock_apm.m365.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_m365_protection_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "create_m365_protection_plan", mock_ctx,
             name="M365 Plan",
             run_schedule_by_controller_time=True,
             backup_copy_destination_type="remote_storage",
@@ -38,7 +42,9 @@ class TestCreateM365ProtectionPlan:
         assert request.backup_copy.retention.days == 60
 
     @pytest.mark.asyncio
-    async def test_audit_log_records_name(self, mock_apm, mock_ctx, admin_server, tmp_path):
+    async def test_audit_log_records_name(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP, tmp_path: Path
+    ) -> None:
         import os
         from unittest.mock import patch
 
@@ -56,7 +62,9 @@ class TestCreateM365ProtectionPlan:
 
 class TestUpdateM365ProtectionPlan:
     @pytest.mark.asyncio
-    async def test_sends_base_fields_and_resets_backup_copy_when_unset(self, mock_apm, mock_ctx, admin_server):
+    async def test_sends_base_fields_and_resets_backup_copy_when_unset(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
         mock_apm.m365.plans.update.return_value = make_protection_plan(category=WorkloadCategory.M365)
 
         await call_tool(
@@ -81,12 +89,14 @@ class TestUpdateM365ProtectionPlan:
         assert request.backup_copy is None
 
     @pytest.mark.asyncio
-    async def test_missing_required_field_raises(self, mock_ctx, admin_server):
+    async def test_missing_required_field_raises(self, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         with pytest.raises(TypeError):
             await call_tool(admin_server, "update_m365_protection_plan", mock_ctx, plan_id="plan-001", name="Renamed")
 
     @pytest.mark.asyncio
-    async def test_audit_log_records_plan_id(self, mock_apm, mock_ctx, admin_server, tmp_path):
+    async def test_audit_log_records_plan_id(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP, tmp_path: Path
+    ) -> None:
         import os
         from unittest.mock import patch
 

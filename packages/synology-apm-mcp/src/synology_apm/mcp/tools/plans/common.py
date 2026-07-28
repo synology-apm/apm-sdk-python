@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from fastmcp import Context
 
-from synology_apm.mcp._helpers import LIST_RESULT_SUFFIX, clamp_limit, get_tool, list_tool
+from synology_apm.mcp._helpers import LIST_RESULT_SUFFIX, ToolResult, get_tool, list_tool
 from synology_apm.mcp._registrar import ToolRegistrar
 from synology_apm.mcp._security import DESTRUCTIVE_PREVIEW_SUFFIX, destructive_tool
 from synology_apm.sdk import APMClient, WorkloadCategory
@@ -28,7 +28,7 @@ def register_delete_plan_tool(
     identical apart from which SDK collection is used and the warning text.
     """
 
-    async def _delete(ctx: Context, plan_id: str, confirm: bool = False) -> str:
+    async def _delete(ctx: Context, plan_id: str, confirm: bool = False) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await destructive_tool(
             confirm=confirm,
@@ -53,11 +53,11 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         name_contains: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         cat = WorkloadCategory(category) if category else None
         return await list_tool(
-            apm.plans.list(category=cat, name_contains=name_contains, limit=clamp_limit(limit), offset=offset),
+            apm.plans.list(category=cat, name_contains=name_contains, limit=limit, offset=offset),
             lambda x: x.to_dict(),
             offset=offset,
         )
@@ -66,7 +66,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     async def get_protection_plan(
         ctx: Context,
         plan_id: str,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.plans.get(plan_id), lambda x: x.to_dict())
 

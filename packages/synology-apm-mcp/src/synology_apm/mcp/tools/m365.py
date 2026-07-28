@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastmcp import Context
 
@@ -11,7 +11,7 @@ from synology_apm.mcp._errors import run_tool
 from synology_apm.mcp._helpers import (
     JSON_LIST_VALIDATOR,
     LIST_RESULT_SUFFIX,
-    clamp_limit,
+    ToolResult,
     get_tool,
     list_result,
     list_tool,
@@ -31,7 +31,8 @@ async def _get_m365_workload(
 ) -> M365Workload:
     """Resolve an M365 workload for export tools, reusing the same lookup logic
     register_workload_tools() uses for the shared workload tools."""
-    return await resolve_workload(_M365_CATEGORY, apm, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type)
+    workload = await resolve_workload(_M365_CATEGORY, apm, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type)
+    return cast(M365Workload, workload)
 
 
 async def _find_rule(apm: APMClient, tenant_id: str, rule_uid: str) -> M365AutoBackupRule:
@@ -87,13 +88,13 @@ def _register_export_tools(
         workload_type: M365WorkloadTypeLiteral = default_workload_type,
         limit: int = 100,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _do() -> dict[str, Any]:
             workload = await _get_m365_workload(apm, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type)
             return await list_result(
-                collection_fn(apm).list(workload, limit=clamp_limit(limit), offset=offset),
+                collection_fn(apm).list(workload, limit=limit, offset=offset),
                 lambda x: x.to_dict(),
                 offset=offset,
             )
@@ -113,7 +114,7 @@ def _register_export_tools(
         namespace: str,
         tenant_id: str,
         workload_type: M365WorkloadTypeLiteral = default_workload_type,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _do() -> dict[str, Any]:
@@ -141,7 +142,7 @@ def _register_export_tools(
         namespace: str,
         tenant_id: str,
         workload_type: M365WorkloadTypeLiteral = default_workload_type,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _do() -> dict[str, Any]:
@@ -170,12 +171,12 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         "List all SaaS tenants connected to APM — Microsoft 365 and Google Workspace, M365 tenants listed "
         f"first. {LIST_RESULT_SUFFIX}"
     ))
-    async def list_saas_tenants(ctx: Context, limit: int = 100, offset: int = 0) -> str:
+    async def list_saas_tenants(ctx: Context, limit: int = 100, offset: int = 0) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await list_tool(apm.saas.list(limit=clamp_limit(limit), offset=offset), lambda x: x.to_dict(), offset=offset)
+        return await list_tool(apm.saas.list(limit=limit, offset=offset), lambda x: x.to_dict(), offset=offset)
 
     @registrar.tool(description="Get M365 tenant details by tenant_id (see list_saas_tenants for valid IDs). protected_data_bytes in the response is always 0; use list_saas_tenants for actual usage.")
-    async def get_saas_tenant(ctx: Context, tenant_id: str) -> str:
+    async def get_saas_tenant(ctx: Context, tenant_id: str) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.saas.get_m365_tenant(tenant_id), lambda x: x.to_dict())
 
@@ -195,7 +196,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         ctx: Context,
         *,
         tenant_id: str,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.m365.auto_backup_rules.list(tenant_id), lambda x: x.to_dict())
 
@@ -223,7 +224,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         archive_mailbox: bool = False,
         export_name: str | None = None,
         location_id: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _start() -> dict[str, Any]:
@@ -263,7 +264,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         workload_type: M365WorkloadTypeLiteral = "group",
         export_name: str | None = None,
         location_id: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _start() -> dict[str, Any]:
@@ -290,7 +291,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         exchange_group_ids: Annotated[list[str], JSON_LIST_VALIDATOR] | None = None,
         onedrive_group_ids: Annotated[list[str], JSON_LIST_VALIDATOR] | None = None,
         chat_group_ids: Annotated[list[str], JSON_LIST_VALIDATOR] | None = None,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _create() -> dict[str, Any]:
@@ -320,7 +321,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         chat_group_ids: Annotated[list[str], JSON_LIST_VALIDATOR] | None = None,
         *,
         tenant_id: str,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _update() -> dict[str, Any]:
@@ -358,7 +359,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         sharepoint_namespace: str | None = None,
         teams_plan_id: str | None = None,
         teams_namespace: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _update() -> dict[str, Any]:
@@ -387,7 +388,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         *,
         tenant_id: str,
         confirm: bool = False,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         return await destructive_tool(

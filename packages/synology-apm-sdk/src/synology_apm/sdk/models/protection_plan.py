@@ -59,7 +59,14 @@ class ProtectionSchedule:
 
 @dataclass(frozen=True)
 class GFSRetention:
-    """GFS (Grandfather-Father-Son) rotation retention policy details."""
+    """GFS (Grandfather-Father-Son) rotation retention policy details.
+
+    Attributes:
+        daily_versions:   Number of daily versions to retain.
+        weekly_versions:  Number of weekly versions to retain.
+        monthly_versions: Number of monthly versions to retain.
+        yearly_versions:  Number of yearly versions to retain.
+    """
     daily_versions: int
     weekly_versions: int
     monthly_versions: int
@@ -72,7 +79,18 @@ class GFSRetention:
 
 @dataclass(frozen=True)
 class ProtectionRetentionPolicy:
-    """Version retention policy for a Protection Plan."""
+    """Version retention policy for a Protection Plan.
+
+    Attributes:
+        retention_type: Which retention rule applies (KEEP_ALL / KEEP_DAYS / KEEP_VERSIONS /
+                        KEEP_ADVANCED / NONE).
+        days:           Number of days to retain versions. Meaningful when retention_type is
+                        KEEP_DAYS or KEEP_ADVANCED.
+        versions:       Number of versions to retain. Meaningful when retention_type is
+                        KEEP_VERSIONS or KEEP_ADVANCED.
+        gfs:            GFS rotation retention rules. Only meaningful when retention_type is
+                        KEEP_ADVANCED.
+    """
     retention_type: RetentionType
     days: int | None = None
     versions: int | None = None

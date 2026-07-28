@@ -1,7 +1,7 @@
 """MCP server factory and entry point."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -84,7 +84,7 @@ def build_lifespan(
     """
 
     @asynccontextmanager
-    async def lifespan(server: FastMCP):
+    async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
         if config_error is not None:
             yield {"apm": _FailedConnectionClient(config_error)}
             return

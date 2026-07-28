@@ -103,6 +103,9 @@ def _parse_m365_workload(raw: dict[str, Any]) -> M365Workload | None:
         workload_status = WorkloadStatus.RETIRED
     elif _backup_status == "BACKUPING":
         workload_status = WorkloadStatus.BACKING_UP
+        # processItemCount is declared int32, not string, in the API schema — same reasoning
+        # as MachineWorkloadCollection._parse_workload's processedSuccessCount guard: a
+        # compliant numeric field can't legally serialize as "", so only None is guarded here.
         raw_items = raw.get("processItemCount")
         items_backed_up = int(raw_items) if raw_items is not None else None
     elif _backup_status == "QUEUING":
@@ -185,10 +188,6 @@ class M365WorkloadCollection(_VersionMixin):
     """Collection interface for managing M365 SaaS backup Workloads.
 
     Accessed via APMClient.m365.workloads; should not be instantiated directly.
-
-    get() fetches a single Workload by workload_id + namespace; get_by_name() looks up a
-    Workload by display name, UPN, or group email via keyword search and exact match.
-    Neither performs a full list-all scan.
     """
 
     def __init__(self, session: WebAPISession) -> None:
@@ -405,7 +404,6 @@ class M365WorkloadCollection(_VersionMixin):
             InvalidOperationError: The workload is already retired, or APM rejected the
                 retirement because the workload is in a state that does not allow it
                 (e.g., still initializing).
-            PermissionDeniedError: Insufficient permission to retire workloads.
         """
         _check_not_retired(workload)
         await self._put_plan_change(workload, plan.plan_id, "ARCHIVE")
@@ -437,8 +435,6 @@ class M365WorkloadCollection(_VersionMixin):
 
         Raises:
             InvalidOperationError: APM rejected the delete request.
-            AuthenticationError:   Session expired.
-            APIError:              Unexpected error from APM.
         """
         resp = await self._session.delete(
             "/api/v1/workload/m365_workload/batch",
@@ -478,7 +474,8 @@ class M365Collection:
     """Entry collection for M365 SaaS backup resources.
 
     Accessed via APMClient.m365; should not be instantiated directly.
-    Provides workloads, plans, exchange_export, and group_export sub-collections.
+    Provides workloads, plans, exchange_export, group_export, and auto_backup_rules
+    sub-collections.
     """
 
     def __init__(self, session: WebAPISession) -> None:

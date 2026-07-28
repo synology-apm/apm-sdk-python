@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 
 class TestModeAllows:
@@ -20,13 +23,13 @@ class TestModeAllows:
         ("admin",     "operator",  False),
         ("admin",     "admin",     True),
     ])
-    def test_all_mode_pairs(self, required, current, expected):
+    def test_all_mode_pairs(self, required: str, current: str, expected: bool) -> None:
         from synology_apm.mcp._security import mode_allows
         assert mode_allows(required, current) is expected
 
 
 class TestAuditLog:
-    def test_writes_when_enabled(self, tmp_path):
+    def test_writes_when_enabled(self, tmp_path: Path) -> None:
         from synology_apm.mcp._security import audit_log
 
         log_file = tmp_path / "audit.jsonl"
@@ -41,7 +44,7 @@ class TestAuditLog:
         assert entry["outcome"] == "ok"
         assert "ts" in entry
 
-    def test_skips_when_disabled(self, tmp_path):
+    def test_skips_when_disabled(self, tmp_path: Path) -> None:
         from synology_apm.mcp._security import audit_log
 
         log_file = tmp_path / "audit.jsonl"
@@ -51,7 +54,7 @@ class TestAuditLog:
         assert not log_file.exists()
         assert not any(tmp_path.iterdir())
 
-    def test_appends_multiple_entries(self, tmp_path):
+    def test_appends_multiple_entries(self, tmp_path: Path) -> None:
         from synology_apm.mcp._security import audit_log
 
         log_file = tmp_path / "audit.jsonl"
@@ -64,7 +67,9 @@ class TestAuditLog:
         assert json.loads(lines[0])["tool"] == "tool_a"
         assert json.loads(lines[1])["outcome"] == "error: ValueError"
 
-    def test_logs_warning_on_unwritable_path(self, tmp_path, capsys):
+    def test_logs_warning_on_unwritable_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         from synology_apm.mcp._security import audit_log
 
         # Passing a directory path triggers an OSError; audit_log must not raise,
@@ -75,7 +80,7 @@ class TestAuditLog:
         captured = capsys.readouterr()
         assert "audit log write failed" in captured.err
 
-    def test_non_json_serializable_param_does_not_raise(self, tmp_path):
+    def test_non_json_serializable_param_does_not_raise(self, tmp_path: Path) -> None:
         """A non-primitive value in params (e.g. a datetime) must not escape as an
         unhandled TypeError; it is coerced to its str() form instead."""
         from datetime import datetime
@@ -93,7 +98,7 @@ class TestAuditLog:
 
 class TestRunAuditedTool:
     @pytest.mark.asyncio
-    async def test_success_logs_ok(self, tmp_path):
+    async def test_success_logs_ok(self, tmp_path: Path) -> None:
         from synology_apm.mcp._security import run_audited_tool
 
         log_file = tmp_path / "audit.jsonl"
@@ -104,29 +109,29 @@ class TestRunAuditedTool:
                 params={"x": 1},
             )
 
-        assert json.loads(result) == {"ok": True}
+        assert result == {"ok": True}
         entry = json.loads(log_file.read_text().strip())
         assert entry["outcome"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_exception_logs_error_type(self, tmp_path):
+    async def test_exception_logs_error_type(self, tmp_path: Path) -> None:
         from synology_apm.mcp._security import run_audited_tool
         from synology_apm.sdk import ResourceNotFoundError
 
-        async def _fail():
+        async def _fail() -> None:
             raise ResourceNotFoundError("not found", "workload", "wl-001")
 
         log_file = tmp_path / "audit.jsonl"
-        with patch.dict(os.environ, {"APM_MCP_AUDIT_LOG": str(log_file)}):
-            result = await run_audited_tool(_fail(), action="test_action", params={})
+        with patch.dict(os.environ, {"APM_MCP_AUDIT_LOG": str(log_file)}), pytest.raises(ToolError) as exc_info:
+            await run_audited_tool(_fail(), action="test_action", params={})
 
-        parsed = json.loads(result)
+        parsed = json.loads(str(exc_info.value))
         assert parsed["error"] == "not_found"
         entry = json.loads(log_file.read_text().strip())
         assert "ResourceNotFoundError" in entry["outcome"]
 
     @pytest.mark.asyncio
-    async def test_audit_log_runs_in_thread(self):
+    async def test_audit_log_runs_in_thread(self) -> None:
         """audit_log() does blocking file I/O; run_audited_tool must not call it
         directly on the event loop, so a slow/network-mounted log path can't stall
         other concurrent tool calls."""
@@ -148,7 +153,7 @@ class TestRunAuditedTool:
 
 class TestDestructiveTool:
     @pytest.mark.asyncio
-    async def test_returns_preview_when_not_confirmed(self):
+    async def test_returns_preview_when_not_confirmed(self) -> None:
         from synology_apm.mcp._security import destructive_tool
 
         result = await destructive_tool(
@@ -161,13 +166,12 @@ class TestDestructiveTool:
             params={"id": "x"},
         )
 
-        parsed = json.loads(result)
-        assert parsed["preview"] is True
-        assert parsed["action"] == "delete_something"
-        assert parsed["target"]["name"] == "foo"
+        assert result["preview"] is True
+        assert result["action"] == "delete_something"
+        assert result["target"]["name"] == "foo"
 
     @pytest.mark.asyncio
-    async def test_executes_when_confirmed(self):
+    async def test_executes_when_confirmed(self) -> None:
         from synology_apm.mcp._security import destructive_tool
 
         execute = AsyncMock(return_value={"deleted": True})
@@ -182,44 +186,44 @@ class TestDestructiveTool:
             params={"id": "x"},
         )
 
-        parsed = json.loads(result)
-        assert parsed == {"deleted": True}
+        assert result == {"deleted": True}
         execute.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_resolve_error_returns_error_json(self):
+    async def test_resolve_error_returns_error_json(self) -> None:
         from synology_apm.mcp._security import destructive_tool
         from synology_apm.sdk import ResourceNotFoundError
 
-        async def _fail():
+        async def _fail() -> None:
             raise ResourceNotFoundError("not found", "workload", "wl-001")
 
-        result = await destructive_tool(
-            confirm=True,
-            action="delete_something",
-            warning="...",
-            resolve_coro=_fail(),
-            preview_target_fn=lambda t: {},
-            execute_fn=AsyncMock(),
-            params={},
-        )
+        with pytest.raises(ToolError) as exc_info:
+            await destructive_tool(
+                confirm=True,
+                action="delete_something",
+                warning="...",
+                resolve_coro=_fail(),
+                preview_target_fn=lambda t: {},
+                execute_fn=AsyncMock(),
+                params={},
+            )
 
-        parsed = json.loads(result)
+        parsed = json.loads(str(exc_info.value))
         assert parsed["error"] == "not_found"
 
     @pytest.mark.asyncio
-    async def test_resolve_error_with_confirm_is_audit_logged(self, tmp_path):
+    async def test_resolve_error_with_confirm_is_audit_logged(self, tmp_path: Path) -> None:
         """A resolve failure during a confirm=True call is an attempted action
         that failed, and must leave an audit trail like an execute-time failure."""
         from synology_apm.mcp._security import destructive_tool
         from synology_apm.sdk import ResourceNotFoundError
 
-        async def _fail():
+        async def _fail() -> None:
             raise ResourceNotFoundError("not found", "workload", "wl-001")
 
         log_file = tmp_path / "audit.jsonl"
-        with patch.dict(os.environ, {"APM_MCP_AUDIT_LOG": str(log_file)}):
-            result = await destructive_tool(
+        with patch.dict(os.environ, {"APM_MCP_AUDIT_LOG": str(log_file)}), pytest.raises(ToolError) as exc_info:
+            await destructive_tool(
                 confirm=True,
                 action="delete_something",
                 warning="...",
@@ -229,7 +233,7 @@ class TestDestructiveTool:
                 params={"workload_id": "wl-001"},
             )
 
-        parsed = json.loads(result)
+        parsed = json.loads(str(exc_info.value))
         assert parsed["error"] == "not_found"
         entry = json.loads(log_file.read_text().strip())
         assert entry["tool"] == "delete_something"
@@ -237,18 +241,18 @@ class TestDestructiveTool:
         assert "ResourceNotFoundError" in entry["outcome"]
 
     @pytest.mark.asyncio
-    async def test_resolve_error_without_confirm_is_not_audit_logged(self, tmp_path):
+    async def test_resolve_error_without_confirm_is_not_audit_logged(self, tmp_path: Path) -> None:
         """A resolve failure during a confirm=False (preview-only) call attempted
         nothing, so it must not be logged."""
         from synology_apm.mcp._security import destructive_tool
         from synology_apm.sdk import ResourceNotFoundError
 
-        async def _fail():
+        async def _fail() -> None:
             raise ResourceNotFoundError("not found", "workload", "wl-001")
 
         log_file = tmp_path / "audit.jsonl"
-        with patch.dict(os.environ, {"APM_MCP_AUDIT_LOG": str(log_file)}):
-            result = await destructive_tool(
+        with patch.dict(os.environ, {"APM_MCP_AUDIT_LOG": str(log_file)}), pytest.raises(ToolError) as exc_info:
+            await destructive_tool(
                 confirm=False,
                 action="delete_something",
                 warning="...",
@@ -258,14 +262,14 @@ class TestDestructiveTool:
                 params={"workload_id": "wl-001"},
             )
 
-        parsed = json.loads(result)
+        parsed = json.loads(str(exc_info.value))
         assert parsed["error"] == "not_found"
         assert not log_file.exists()
 
     @pytest.mark.asyncio
-    async def test_preview_does_not_escape_non_ascii(self):
-        """Preview and execute paths must render non-ASCII resource names identically
-        (both as clean UTF-8), not just the execute path."""
+    async def test_preview_preserves_non_ascii(self) -> None:
+        """Preview and execute paths must both surface non-ASCII resource names
+        verbatim (no lossy mangling), not just the execute path."""
         from synology_apm.mcp._security import destructive_tool
 
         result = await destructive_tool(
@@ -278,35 +282,34 @@ class TestDestructiveTool:
             params={"id": "x"},
         )
 
-        assert "\\u" not in result
-        parsed = json.loads(result)
-        assert parsed["target"]["name"] == "vm-日本-01"
+        assert result["target"]["name"] == "vm-日本-01"
 
     @pytest.mark.asyncio
-    async def test_preview_target_fn_error_returns_error_json(self):
+    async def test_preview_target_fn_error_raises_tool_error(self) -> None:
         """A failure while building the preview (not just during resolve) must also
-        return the standardized error JSON instead of propagating unhandled."""
+        raise the standardized ToolError instead of propagating unhandled."""
         from synology_apm.mcp._security import destructive_tool
 
-        def _bad_preview(_target):
+        def _bad_preview(_target: Any) -> dict[str, Any]:
             raise AttributeError("boom")
 
-        result = await destructive_tool(
-            confirm=False,
-            action="delete_something",
-            warning="...",
-            resolve_coro=AsyncMock(return_value={"id": "x"})(),
-            preview_target_fn=_bad_preview,
-            execute_fn=AsyncMock(),
-            params={},
-        )
+        with pytest.raises(ToolError) as exc_info:
+            await destructive_tool(
+                confirm=False,
+                action="delete_something",
+                warning="...",
+                resolve_coro=AsyncMock(return_value={"id": "x"})(),
+                preview_target_fn=_bad_preview,
+                execute_fn=AsyncMock(),
+                params={},
+            )
 
-        parsed = json.loads(result)
+        parsed = json.loads(str(exc_info.value))
         assert parsed["error"] == "unexpected_error"
 
 
 class TestConfirmOrPreview:
-    def test_shape(self):
+    def test_shape(self) -> None:
         from synology_apm.mcp._security import confirm_or_preview
 
         result = confirm_or_preview("delete_x", {"name": "foo"}, "Warning message.")

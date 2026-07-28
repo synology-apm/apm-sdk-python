@@ -2,9 +2,12 @@
 applies identically to protection (common.py), retirement, and tiering plans."""
 from __future__ import annotations
 
-import json
+from collections.abc import Callable
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from fastmcp import FastMCP
 
 from tests.unit.mcp.conftest import (
     assert_destructive_preview_then_execute,
@@ -14,7 +17,7 @@ from tests.unit.mcp.conftest import (
     make_tiering_plan,
 )
 
-_PLAN_LIST_GET_CASES = [
+_PLAN_LIST_GET_CASES: list[tuple[str, str, Callable[..., Any], str, str]] = [
     # (kind, collection_attr, resource_factory, plan_id, expected_name)
     ("protection", "plans", make_protection_plan, "plan-001", "Daily Backup"),
     ("retirement", "retirement_plans", make_retirement_plan, "ret-001", "Compliance Retention"),
@@ -29,13 +32,20 @@ class TestListPlans:
         _PLAN_LIST_GET_CASES, ids=[c[0] for c in _PLAN_LIST_GET_CASES],
     )
     async def test_returns_items_and_total(
-        self, mock_apm, mock_ctx, admin_server, kind, collection_attr, resource_factory, plan_id, expected_name,
-    ):
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        collection_attr: str,
+        resource_factory: Callable[..., Any],
+        plan_id: str,
+        expected_name: str,
+    ) -> None:
         plan = resource_factory()
         getattr(mock_apm, collection_attr).list.return_value = ([plan], 1)
 
-        raw = await call_tool(admin_server, f"list_{kind}_plans", mock_ctx)
-        result = json.loads(raw)
+        result = await call_tool(admin_server, f"list_{kind}_plans", mock_ctx)
 
         assert result["total"] == 1
         assert result["items"][0]["name"] == expected_name
@@ -48,13 +58,20 @@ class TestGetPlan:
         _PLAN_LIST_GET_CASES, ids=[c[0] for c in _PLAN_LIST_GET_CASES],
     )
     async def test_resolves_by_id_and_returns_dict(
-        self, mock_apm, mock_ctx, admin_server, kind, collection_attr, resource_factory, plan_id, expected_name,
-    ):
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        collection_attr: str,
+        resource_factory: Callable[..., Any],
+        plan_id: str,
+        expected_name: str,
+    ) -> None:
         plan = resource_factory(plan_id=plan_id)
         getattr(mock_apm, collection_attr).get.return_value = plan
 
-        raw = await call_tool(admin_server, f"get_{kind}_plan", mock_ctx, plan_id=plan_id)
-        result = json.loads(raw)
+        result = await call_tool(admin_server, f"get_{kind}_plan", mock_ctx, plan_id=plan_id)
 
         assert result["plan_id"] == plan_id
         assert result["name"] == expected_name
@@ -68,8 +85,16 @@ class TestDeletePlan:
         _PLAN_LIST_GET_CASES, ids=[c[0] for c in _PLAN_LIST_GET_CASES],
     )
     async def test_preview_then_execute(
-        self, mock_apm, mock_ctx, admin_server, kind, collection_attr, resource_factory, plan_id, expected_name,
-    ):
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        collection_attr: str,
+        resource_factory: Callable[..., Any],
+        plan_id: str,
+        expected_name: str,
+    ) -> None:
         collection = getattr(mock_apm, collection_attr)
         plan = resource_factory(plan_id=plan_id)
         collection.get.return_value = plan

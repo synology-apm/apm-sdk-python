@@ -49,10 +49,6 @@ class SystemCollection:
             SiteInfo object containing site_uuid, external_address, port,
             primary_management_server (BackupServer or None), secondary_management_server (BackupServer
             or None), site_storage (SiteStorageStats), and workload_usage (WorkloadUsageSummary).
-
-        Raises:
-            AuthenticationError: Session has expired.
-            PermissionDeniedError: Insufficient system administration permissions.
         """
         license_raw, site_raw, storage_raw, workload_raw, management_servers = await asyncio.gather(
             self._session.get("/api/v1/license/info"),

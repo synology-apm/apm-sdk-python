@@ -16,6 +16,9 @@ RestoreActivityStatusLiteral = Literal[
     "preparing", "restoring", "canceling", "ready_for_migrate", "migrate_vm_manually",
     "migrating", "success", "failed", "partial", "canceled",
 ]
+# Deliberately excludes "retired" (WorkloadStatus.RETIRED): retirement is filtered via
+# the separate is_retired: bool parameter instead (see MachineWorkloadCollection.list()'s
+# docstring) -- not a gap, see test_enums.py's WorkloadStatus-excludes-retired case.
 WorkloadStatusLiteral = Literal[
     "queuing", "backing_up", "success", "failed", "partial", "canceled", "no_backups", "deleting"
 ]

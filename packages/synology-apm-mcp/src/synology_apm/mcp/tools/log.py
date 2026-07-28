@@ -12,18 +12,18 @@ from synology_apm.mcp._helpers import (
     JSON_LIST_VALIDATOR,
     LIST_RESULT_SUFFIX,
     LIST_RESULT_SUFFIX_UNRELIABLE_TOTAL,
-    clamp_limit,
+    ToolResult,
     list_result,
     parse_dt_optional,
     to_enum_list,
 )
 from synology_apm.mcp._registrar import ToolRegistrar
-from synology_apm.sdk import APMActivityLogType, APMClient, BackupServerType, LogLevel
+from synology_apm.sdk import APMActivityLogType, APMClient, BackupServer, BackupServerType, LogLevel
 
 _LOG_TYPE = Literal["protection", "system", "data_access"]
 
 
-async def _resolve_dp_server(apm: APMClient, server_id: str):
+async def _resolve_dp_server(apm: APMClient, server_id: str) -> BackupServer:
     """Resolve a backup server, rejecting NAS servers (logs only available on DP)."""
     server = await apm.backup_servers.get(server_id)
     if server.server_type == BackupServerType.NAS:
@@ -52,10 +52,9 @@ async def _list_dp_server_logs(
     derives this directly from whether the coroutine's total is None, so it does
     not need to be passed in here.
     """
-    eff_limit = clamp_limit(limit)
     dp_server = await _resolve_dp_server(apm, server_id)
-    coro = sdk_list_fn(dp_server, limit=eff_limit, offset=offset, **extra_kwargs)
-    return await list_result(coro, lambda x: x.to_dict(), limit=eff_limit, offset=offset)
+    coro = sdk_list_fn(dp_server, limit=limit, offset=offset, **extra_kwargs)
+    return await list_result(coro, lambda x: x.to_dict(), limit=limit, offset=offset)
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
@@ -76,7 +75,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         keyword: str | None = None,
         limit: int = 25,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_tool(_list_dp_server_logs(
             apm, server_id, apm.logs.list_activity,
@@ -102,7 +101,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         location: str | None = None,
         limit: int = 25,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_tool(_list_dp_server_logs(
             apm, server_id, apm.logs.list_drive,
@@ -127,7 +126,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         keyword: str | None = None,
         limit: int = 25,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_tool(_list_dp_server_logs(
             apm, server_id, apm.logs.list_connection,
@@ -151,7 +150,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         keyword: str | None = None,
         limit: int = 25,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_tool(_list_dp_server_logs(
             apm, server_id, apm.logs.list_system,

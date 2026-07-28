@@ -310,6 +310,10 @@ class RemoteStorageCollection:
         to auto-fetch and pin the endpoint's self-signed TLS certificate. Leave False for all other
         storage types; their endpoints are CA-signed.
 
+        Args:
+            storage: RemoteStorage to update (obtained via get() or get_by_name()).
+            request: RemoteStorageUpdateRequest with the new credentials/endpoint.
+
         Returns:
             Updated RemoteStorage reflecting the current connection state.
 
@@ -324,10 +328,12 @@ class RemoteStorageCollection:
     async def delete(self, storage: RemoteStorage) -> None:
         """Delete a remote storage device.
 
+        Args:
+            storage: RemoteStorage to delete (obtained via get() or get_by_name()).
+
         Raises:
             ResourceNotFoundError:   The storage does not exist.
             RemoteStorageInUseError: The storage is referenced by active plans.
-            APIError: Other errors.
         """
         try:
             await self._session.delete(

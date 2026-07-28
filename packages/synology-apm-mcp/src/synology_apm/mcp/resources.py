@@ -7,11 +7,12 @@ from typing import Any
 from fastmcp import Context, FastMCP
 
 from synology_apm.mcp._errors import run_resource
-from synology_apm.mcp._helpers import MAX_LIST_LIMIT, list_result
+from synology_apm.mcp._helpers import ToolResult, list_result
 from synology_apm.sdk import APMClient
 
 # (uri, description, collection accessor) — these 5 resources are otherwise
-# byte-for-byte identical: fetch up to MAX_LIST_LIMIT items and wrap via list_result.
+# byte-for-byte identical: fetch via the collection's own default page size and wrap
+# via list_result().
 _LIST_RESOURCES: list[tuple[str, str, Callable[[APMClient], Any]]] = [
     ("apm://servers", "All backup servers with storage summary.", lambda apm: apm.backup_servers),
     ("apm://plans/protection", "All protection plans (machine and M365).", lambda apm: apm.plans),
@@ -25,7 +26,7 @@ def register(server: FastMCP) -> None:  # pragma: no cover
     """Register all MCP resources onto server."""
 
     @server.resource("apm://site", description="APM site overview: site UUID, external address, management servers, storage, and workload counts.")
-    async def site_resource(ctx: Context) -> str:  # pragma: no cover
+    async def site_resource(ctx: Context) -> ToolResult:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_resource(apm.get_site_info(), lambda x: x.to_dict())
 
@@ -33,10 +34,10 @@ def register(server: FastMCP) -> None:  # pragma: no cover
         # A factory (rather than a plain loop-body closure) so each resource captures
         # its own collection_fn — a closure over the loop variable directly would have
         # every resource see whatever collection_fn the loop last landed on.
-        async def _list_resource(ctx: Context) -> str:  # pragma: no cover
+        async def _list_resource(ctx: Context) -> ToolResult:  # pragma: no cover
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_resource(
-                list_result(collection_fn(apm).list(limit=MAX_LIST_LIMIT), lambda x: x.to_dict()),
+                list_result(collection_fn(apm).list(), lambda x: x.to_dict()),
                 lambda x: x,
             )
 
@@ -48,6 +49,6 @@ def register(server: FastMCP) -> None:  # pragma: no cover
         server.resource(uri, description=description)(resource_fn)
 
     @server.resource("apm://server/{server_id}", description="A single backup server by ID.")
-    async def server_by_id_resource(server_id: str, ctx: Context) -> str:  # pragma: no cover
+    async def server_by_id_resource(server_id: str, ctx: Context) -> ToolResult:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_resource(apm.backup_servers.get(server_id), lambda x: x.to_dict())

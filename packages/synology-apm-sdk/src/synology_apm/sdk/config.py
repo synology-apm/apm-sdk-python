@@ -246,6 +246,20 @@ def resolve_connection(
     config-file profile's password may itself be stored in plaintext or looked up
     from the OS keyring).
 
+    Args:
+        host:          APM host[:port]. Falls back to APM_HOST, then the resolved
+                       profile's stored host.
+        username:      APM username. Falls back to APM_USERNAME, then the resolved
+                       profile's stored username.
+        password:      APM password. Falls back to APM_PASSWORD, then the resolved
+                       profile's stored password (plaintext or OS keyring).
+        profile:       Config profile name to resolve the other settings against.
+                       Falls back to the APM_PROFILE environment variable, then
+                       DEFAULT_PROFILE. Resolved independently of the other
+                       parameters, before they are.
+        no_verify_ssl: Whether to skip TLS certificate verification. Falls back to
+                       APM_NO_VERIFY_SSL, then the resolved profile's stored setting.
+
     Raises:
         KeyringUnavailableError: When the profile's password is stored in the OS keyring and the
             backend is unavailable or the lookup fails; the caller handles the error message.

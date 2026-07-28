@@ -9,11 +9,18 @@ hand-duplicated per category across test_machine.py/test_m365.py/this file.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
-from synology_apm.sdk import M365WorkloadType
+from synology_apm.mcp.tools._workload_logic import WorkloadCategory
+from synology_apm.sdk import M365Workload, M365WorkloadType, MachineWorkload
 from tests.unit.mcp.conftest import (
     assert_destructive_preview_then_execute,
     call_tool,
@@ -23,6 +30,8 @@ from tests.unit.mcp.conftest import (
     make_retirement_plan,
     make_workload_version,
 )
+
+WorkloadFactory = Callable[..., "MachineWorkload | M365Workload"]
 
 _MACHINE_WL_ID = "123e4567-e89b-12d3-a456-426614174001"
 _M365_WL_ID = "123e4567-e89b-12d3-a456-426614174002"
@@ -34,14 +43,49 @@ _WORKLOAD_KIND_CASES = [
 ]
 
 
-def _workload_collection(mock_apm, kind):
-    return mock_apm.machine.workloads if kind == "machine" else mock_apm.m365.workloads
+def _workload_collection(mock_apm: MagicMock, kind: str) -> MagicMock:
+    return cast("MagicMock", mock_apm.machine.workloads if kind == "machine" else mock_apm.m365.workloads)
+
+
+class TestBackupWorkload:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
+    async def test_backs_up_resolved_workload(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
+        collection = _workload_collection(mock_apm, kind)
+        wl = wl_factory()
+        collection.get.return_value = wl
+        collection.backup_now.return_value = None
+
+        await call_tool(
+            admin_server, f"backup_{kind}_workload", mock_ctx,
+            workload_id=wl_id, namespace="default", **extra_kwargs,
+        )
+
+        collection.backup_now.assert_called_once_with(wl)
 
 
 class TestCancelWorkloadBackup:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_cancels_resolved_workload(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_cancels_resolved_workload(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory()
         collection.get.return_value = wl
@@ -60,7 +104,16 @@ class TestCancelWorkloadBackup:
 class TestLockUnlockWorkloadVersion:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_lock_version_calls_sdk(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_lock_version_calls_sdk(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory()
         version = make_workload_version()
@@ -78,7 +131,16 @@ class TestLockUnlockWorkloadVersion:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_unlock_version_calls_sdk(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_unlock_version_calls_sdk(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory()
         version = make_workload_version()
@@ -101,7 +163,16 @@ class TestChangeWorkloadPlan:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_active_workload_uses_protection_plan_collection(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_active_workload_uses_protection_plan_collection(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory(is_retired=False)
         plan = make_protection_plan()
@@ -120,7 +191,16 @@ class TestChangeWorkloadPlan:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_retired_workload_uses_retirement_plan_collection(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_retired_workload_uses_retirement_plan_collection(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory(is_retired=True)
         plan = make_retirement_plan()
@@ -138,18 +218,19 @@ class TestChangeWorkloadPlan:
         collection.change_plan.assert_called_once_with(wl, plan)
 
     @pytest.mark.asyncio
-    async def test_plan_not_found_returns_structured_error_scoped_to_the_right_type(self, mock_apm, mock_ctx, admin_server):
+    async def test_plan_not_found_returns_structured_error_scoped_to_the_right_type(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         from synology_apm.sdk import ResourceNotFoundError
 
         wl = make_machine_workload(is_retired=False)
         mock_apm.machine.workloads.get.return_value = wl
         mock_apm.plans.get.side_effect = ResourceNotFoundError("not found", "ProtectionPlan", "plan-missing")
 
-        raw = await call_tool(
-            admin_server, "change_machine_workload_plan", mock_ctx,
-            workload_id=_MACHINE_WL_ID, namespace="default", plan_id="plan-missing",
-        )
-        parsed = json.loads(raw)
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(
+                admin_server, "change_machine_workload_plan", mock_ctx,
+                workload_id=_MACHINE_WL_ID, namespace="default", plan_id="plan-missing",
+            )
+        parsed = json.loads(str(exc_info.value))
 
         assert parsed["error"] == "not_found"
         assert parsed["resource_id"] == "plan-missing"
@@ -157,7 +238,7 @@ class TestChangeWorkloadPlan:
         mock_apm.machine.workloads.change_plan.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_audit_log_records_workload_id_and_plan_id(self, mock_apm, mock_ctx, admin_server, tmp_path):
+    async def test_audit_log_records_workload_id_and_plan_id(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP, tmp_path: Path) -> None:
         import os
         from unittest.mock import patch
 
@@ -183,7 +264,16 @@ class TestChangeWorkloadPlan:
 class TestListWorkloadVersions:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_passes_since_until_to_sdk(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_passes_since_until_to_sdk(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory()
         collection.get.return_value = wl
@@ -203,7 +293,16 @@ class TestListWorkloadVersions:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_since_until_default_to_none(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_since_until_default_to_none(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory()
         collection.get.return_value = wl
@@ -219,18 +318,26 @@ class TestListWorkloadVersions:
 class TestGetWorkloadVersion:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_gets_version_by_id(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_gets_version_by_id(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory()
         version = make_workload_version()
         collection.get.return_value = wl
         collection.get_version.return_value = version
 
-        raw = await call_tool(
+        result = await call_tool(
             admin_server, f"get_{kind}_version", mock_ctx,
             workload_id=wl_id, namespace="default", version_id="ver-001", **extra_kwargs,
         )
-        result = json.loads(raw)
 
         assert result["version_id"] == "ver-001"
         collection.get_version.assert_called_once_with(wl, "ver-001")
@@ -238,15 +345,23 @@ class TestGetWorkloadVersion:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_gets_latest_version_when_version_id_omitted(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_gets_latest_version_when_version_id_omitted(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory()
         version = make_workload_version()
         collection.get.return_value = wl
         collection.get_latest_version.return_value = version
 
-        raw = await call_tool(admin_server, f"get_{kind}_version", mock_ctx, workload_id=wl_id, namespace="default", **extra_kwargs)
-        result = json.loads(raw)
+        result = await call_tool(admin_server, f"get_{kind}_version", mock_ctx, workload_id=wl_id, namespace="default", **extra_kwargs)
 
         assert result["version_id"] == version.version_id
         collection.get_latest_version.assert_called_once_with(wl)
@@ -256,7 +371,16 @@ class TestGetWorkloadVersion:
 class TestRetireWorkload:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
-    async def test_preview_then_execute(self, mock_apm, mock_ctx, admin_server, kind, wl_factory, wl_id, extra_kwargs):
+    async def test_preview_then_execute(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
         collection = _workload_collection(mock_apm, kind)
         wl = wl_factory()
         plan = make_retirement_plan(plan_id="ret-001")
@@ -277,9 +401,7 @@ class TestRetireWorkload:
         mock_apm.retirement_plans.get.assert_called_once_with("ret-001")
 
 
-def _make_category(kind: str):
-    from synology_apm.mcp.tools._workload_logic import WorkloadCategory
-
+def _make_category(kind: str) -> WorkloadCategory:
     if kind == "machine":
         return WorkloadCategory(is_m365=False, name_prefix="machine", collection_fn=lambda apm: apm.machine.workloads, serializer=lambda w: w.to_dict())
     return WorkloadCategory(is_m365=True, name_prefix="m365", collection_fn=lambda apm: apm.m365.workloads, serializer=lambda w: w.to_dict())
@@ -291,7 +413,7 @@ class TestResolveWorkload:
     python -O) and were not meaningfully testable."""
 
     @pytest.mark.asyncio
-    async def test_machine_resolves_via_machine_collection(self, mock_apm):
+    async def test_machine_resolves_via_machine_collection(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_workload
 
         wl = make_machine_workload()
@@ -303,7 +425,7 @@ class TestResolveWorkload:
         mock_apm.machine.workloads.get.assert_called_once_with(_MACHINE_WL_ID, "default")
 
     @pytest.mark.asyncio
-    async def test_m365_resolves_via_m365_collection(self, mock_apm):
+    async def test_m365_resolves_via_m365_collection(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_workload
 
         wl = make_m365_workload()
@@ -320,14 +442,14 @@ class TestResolveWorkload:
         )
 
     @pytest.mark.asyncio
-    async def test_m365_missing_tenant_id_raises_value_error(self, mock_apm):
+    async def test_m365_missing_tenant_id_raises_value_error(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_workload
 
         with pytest.raises(ValueError, match="tenant_id is required"):
             await resolve_workload(_make_category("m365"), mock_apm, workload_id=_M365_WL_ID, namespace="default", workload_type="exchange")
 
     @pytest.mark.asyncio
-    async def test_m365_missing_workload_type_raises_value_error(self, mock_apm):
+    async def test_m365_missing_workload_type_raises_value_error(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_workload
 
         with pytest.raises(ValueError, match="workload_type is required"):
@@ -339,7 +461,7 @@ class TestResolveVersion:
     the machine/M365 dispatch and the M365 ValueError paths."""
 
     @pytest.mark.asyncio
-    async def test_machine_dispatches_to_machine_collection(self, mock_apm):
+    async def test_machine_dispatches_to_machine_collection(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_version
 
         wl = make_machine_workload()
@@ -355,7 +477,7 @@ class TestResolveVersion:
         assert result_version is version
 
     @pytest.mark.asyncio
-    async def test_m365_dispatches_to_m365_collection(self, mock_apm):
+    async def test_m365_dispatches_to_m365_collection(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_version
 
         wl = make_m365_workload()
@@ -372,7 +494,7 @@ class TestResolveVersion:
         assert result_version is version
 
     @pytest.mark.asyncio
-    async def test_m365_missing_tenant_id_raises_value_error(self, mock_apm):
+    async def test_m365_missing_tenant_id_raises_value_error(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_version
 
         with pytest.raises(ValueError, match="tenant_id is required"):
@@ -382,7 +504,7 @@ class TestResolveVersion:
             )
 
     @pytest.mark.asyncio
-    async def test_m365_missing_workload_type_raises_value_error(self, mock_apm):
+    async def test_m365_missing_workload_type_raises_value_error(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_version
 
         with pytest.raises(ValueError, match="workload_type is required"):
@@ -393,14 +515,14 @@ class TestResolveVersion:
 
 
 class TestMutationParams:
-    def test_machine_omits_tenant_and_workload_type(self):
+    def test_machine_omits_tenant_and_workload_type(self) -> None:
         from synology_apm.mcp.tools._workload_logic import mutation_params
 
         params = mutation_params(_make_category("machine"), "wl-001", None, None, plan_id="plan-001")
 
         assert params == {"workload_id": "wl-001", "plan_id": "plan-001"}
 
-    def test_m365_includes_tenant_and_workload_type(self):
+    def test_m365_includes_tenant_and_workload_type(self) -> None:
         from synology_apm.mcp.tools._workload_logic import mutation_params
 
         params = mutation_params(_make_category("m365"), "wl-001", "tenant-001", "exchange", plan_id="plan-001")
@@ -418,7 +540,7 @@ class TestDestructiveWorkloadMutation:
     previously separate _retire_via/_delete_via closures."""
 
     @pytest.mark.asyncio
-    async def test_preview_returns_without_executing(self, mock_apm):
+    async def test_preview_returns_without_executing(self, mock_apm: MagicMock) -> None:
         from unittest.mock import AsyncMock
 
         from synology_apm.mcp.tools._workload_logic import destructive_workload_mutation
@@ -427,12 +549,11 @@ class TestDestructiveWorkloadMutation:
         mock_apm.machine.workloads.get.return_value = wl
         execute = AsyncMock()
 
-        raw = await destructive_workload_mutation(
+        result = await destructive_workload_mutation(
             _make_category("machine"), mock_apm,
             action_verb="delete", warning="This is destructive.",
             workload_id=_MACHINE_WL_ID, namespace="default", confirm=False, execute_fn=execute,
         )
-        result = json.loads(raw)
 
         assert result["preview"] is True
         assert result["action"] == "delete_machine_workload"
@@ -440,7 +561,7 @@ class TestDestructiveWorkloadMutation:
         execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_confirm_executes_and_returns_result(self, mock_apm):
+    async def test_confirm_executes_and_returns_result(self, mock_apm: MagicMock) -> None:
         from unittest.mock import AsyncMock
 
         from synology_apm.mcp.tools._workload_logic import destructive_workload_mutation
@@ -449,12 +570,11 @@ class TestDestructiveWorkloadMutation:
         mock_apm.machine.workloads.get.return_value = wl
         execute = AsyncMock(return_value={"ok": True})
 
-        raw = await destructive_workload_mutation(
+        result = await destructive_workload_mutation(
             _make_category("machine"), mock_apm,
             action_verb="delete", warning="This is destructive.",
             workload_id=_MACHINE_WL_ID, namespace="default", confirm=True, execute_fn=execute,
         )
-        result = json.loads(raw)
 
         assert result == {"ok": True}
         execute.assert_called_once_with(wl)
@@ -466,7 +586,7 @@ class TestRetireWorkloadHelper:
     wrapper tools above."""
 
     @pytest.mark.asyncio
-    async def test_resolves_plan_and_calls_retire(self, mock_apm):
+    async def test_resolves_plan_and_calls_retire(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import retire_workload
 
         wl = make_machine_workload()

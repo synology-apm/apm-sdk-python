@@ -1,14 +1,18 @@
 """Tests for tools/plans/tiering.py (create/update; list/get/delete are in test_plans_common.py)."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
-from tests.unit.mcp.conftest import make_remote_storage, make_tiering_plan
+from tests.unit.mcp.conftest import call_tool, make_remote_storage, make_tiering_plan
 
 
 class TestCreateTieringPlan:
     @pytest.mark.asyncio
-    async def test_run_schedule_by_controller_time_reaches_request(self, mock_apm, mock_ctx):
+    async def test_run_schedule_by_controller_time_reaches_request(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock
+    ) -> None:
         from synology_apm.mcp._server import create_server
 
         storage = make_remote_storage(storage_id="stor-004")
@@ -16,9 +20,8 @@ class TestCreateTieringPlan:
         mock_apm.tiering_plans.create.return_value = make_tiering_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_tiering_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "create_tiering_plan", mock_ctx,
             name="Tiering Plan",
             tiering_after_days=30,
             destination_storage_id="stor-004",
@@ -31,7 +34,9 @@ class TestCreateTieringPlan:
 
 class TestUpdateTieringPlan:
     @pytest.mark.asyncio
-    async def test_sends_only_explicitly_supplied_fields_no_merge(self, mock_apm, mock_ctx):
+    async def test_sends_only_explicitly_supplied_fields_no_merge(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock
+    ) -> None:
         """update_tiering_plan must not fetch the existing plan or merge any of its
         field values in — every field on the request comes straight from the caller."""
         from synology_apm.mcp._server import create_server
@@ -41,9 +46,8 @@ class TestUpdateTieringPlan:
         mock_apm.tiering_plans.update.return_value = make_tiering_plan(tiering_after_days=45)
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("update_tiering_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "update_tiering_plan", mock_ctx,
             plan_id="tier-001",
             name="Renamed Plan",
             tiering_after_days=45,
@@ -63,10 +67,9 @@ class TestUpdateTieringPlan:
         assert request.daily_check_time.hour == 21
 
     @pytest.mark.asyncio
-    async def test_missing_required_field_raises(self, mock_ctx):
+    async def test_missing_required_field_raises(self, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("update_tiering_plan")
         with pytest.raises(TypeError):
-            await tool.fn(ctx=mock_ctx, plan_id="tier-001", name="Renamed Plan")
+            await call_tool(server, "update_tiering_plan", mock_ctx, plan_id="tier-001", name="Renamed Plan")

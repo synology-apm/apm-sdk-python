@@ -34,7 +34,7 @@ LLM agent  →  MCP server (synology_apm.mcp)  →  APM SDK (synology_apm.sdk)  
 
 - **SDK-only, machine-facing output**: per CLAUDE.md's "Three-Layer Responsibility Separation", MCP consumes
   the SDK model's `to_dict()` output directly, with none of the CLI's presentation-only transforms. Every
-  tool/resource returns a JSON string.
+  tool/resource returns a structured `dict[str, Any]` result.
 - **Domain-oriented naming**: mirrors the CLI's command structure and the SDK's `apm.machine` / `apm.m365`
   object model.
 - **Progressive permission model**: `APM_MCP_MODE` gates which tools are *registered* at startup, not which
@@ -99,9 +99,11 @@ only states the rule a new tool must follow and where that rule lives.
   and M365 share the same verb/noun with a differing prefix; cross-category plan operations that behave
   identically for both categories (list/get/delete) carry no category prefix — only `create_*`/`update_*`
   are split per category, since their request shapes diverge.
-- Every tool/resource returns a JSON `str`, never a raw object — built via `run_tool()` / `run_resource()`
-  (`_errors.py`), `run_audited_tool()` / `destructive_tool()` (`_security.py`), or `list_tool()` / `get_tool()`
-  (`_helpers.py`). A tool body must not catch exceptions itself — let them propagate to these wrappers.
+- Every tool/resource returns a `ToolResult` (`dict[str, Any]`, defined in `_errors.py`) — built via
+  `run_tool()` / `run_resource()` (`_errors.py`), `run_audited_tool()` / `destructive_tool()` (`_security.py`),
+  or `list_tool()` / `get_tool()` (`_helpers.py`). A tool body must not catch exceptions itself — let them
+  propagate to these wrappers, which raise `fastmcp.exceptions.ToolError` (isError=true) with the
+  JSON-encoded error dict as its message.
 - List tools return `{items, total, truncated?}` via `list_result()` / `list_tool()`; every list tool's
   `description=` must end with `LIST_RESULT_SUFFIX` or `LIST_RESULT_SUFFIX_UNRELIABLE_TOTAL` (`_helpers.py`)
   so the documented shape can't drift from what the tool returns. get tools return a single item via
@@ -128,6 +130,15 @@ only states the rule a new tool must follow and where that rule lives.
   creates/updates/deletes a persistent configuration object, or permanently changes a workload's lifecycle
   (retire, delete, change_plan).
 
+### Tool annotations
+
+- `readOnlyHint`/`destructiveHint`/`idempotentHint` are derived automatically for every tool by
+  `_annotations_for()` (`_registrar.py`) from information already established by the conventions above —
+  never set by hand at a `@registrar.tool(...)` call site. `readOnlyHint` mirrors `required_mode ==
+  "readonly"`; `destructiveHint` mirrors the `delete_*`/`retire_*` naming convention; `idempotentHint` is
+  true for readonly tools and for `update_*` tools (full-replace, per "Update tools are full-replace"
+  below). `openWorldHint` is deliberately left unset — not clearly derivable from existing conventions.
+
 ### Destructive actions
 
 - Any `delete_*`/`retire_*` tool takes `confirm: bool = False` and goes through the shared
@@ -144,8 +155,8 @@ only states the rule a new tool must follow and where that rule lives.
 ### Resources vs tools
 
 - Small, bounded, stable-shape reference data is an MCP *resource* (`apm://...`, `resources.py`), not a
-  tool. Resources are not mode-gated — they carry no mutation risk. Anything needing filtering, pagination
-  beyond `MAX_LIST_LIMIT`, or a mutation must be a tool instead.
+  tool. Resources are not mode-gated — they carry no mutation risk. Anything needing filtering, real
+  pagination, or a mutation must be a tool instead.
 
 ### Description text
 
@@ -177,7 +188,8 @@ only states the rule a new tool must follow and where that rule lives.
 - **Error dict shape**: `sdk_error_to_dict()` (`_errors.py`) is the single place that converts any exception
   to `{"error": <code>, ...}`; codes needing user remediation get an additional `"hint"` field (see
   `_RECONFIGURE_CODES`) — this must not duplicate or diverge from the CLI's own error-message mapping
-  (`cli/errors.py`).
+  (`cli/errors.py`). `raise_tool_error()` (`_errors.py`) JSON-encodes this dict into the `ToolError` every
+  wrapper raises on failure — new error-handling code should call it rather than raising `ToolError` directly.
 
 ---
 
@@ -210,7 +222,7 @@ way it is:
 | `assert_destructive_preview_then_execute(...)` | Asserts the shared preview-then-execute contract |
 | `make_*` | Model factories — keyword defaults plus `.update(kwargs)` |
 
-- Test what a tool does — the right SDK method called with the right arguments, the right JSON result
+- Test what a tool does — the right SDK method called with the right arguments, the right result dict
   fields — not FastMCP's own dispatch/validation machinery (that's the library's own test suite).
 - Shared machine/M365 tool logic is tested once in `test_workload.py`, parametrized over
   `(kind, workload_factory, ...)` — category-specific tools (file server management, M365 exports/auto-backup

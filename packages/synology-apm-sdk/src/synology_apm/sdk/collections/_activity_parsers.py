@@ -292,7 +292,7 @@ def _parse_restore_activity(raw: dict[str, Any]) -> RestoreActivity:
     # Restore API does not return durationTime; compute from start/end if available.
     duration_raw = status_raw.get("durationTime")
     finished_at: datetime | None = common["finished_at"]
-    if duration_raw is not None:
+    if duration_raw not in (None, ""):
         _d = int(duration_raw)
         duration_seconds: int | None = _d if _d > 0 else None
     elif finished_at is not None:

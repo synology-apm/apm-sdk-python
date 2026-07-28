@@ -204,3 +204,44 @@ workflow skills are also available (a manually configured server does not get th
 For implementers (tool/resource conventions, mode gating, the SDK ↔ MCP coverage manifest, testing
 conventions), see the design contract at
 [`src/synology_apm/mcp/README.md`](src/synology_apm/mcp/README.md).
+
+## Local Development
+
+The setups above install and run the *published* `synology-apm-mcp` package via `uvx`. To point a
+client at your own checkout instead — for testing local changes before they're published —
+replace `uvx synology-apm-mcp` with `uv run --directory /path/to/apm-sdk-python synology-apm-mcp`,
+run from the repo root.
+
+**Claude:** same config file as [Claude Desktop (manual config)](#claude-desktop-manual-config)
+above, just point `command`/`args` at your checkout:
+
+```json
+{
+  "mcpServers": {
+    "synology-apm": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/apm-sdk-python", "synology-apm-mcp"],
+      "env": {
+        "APM_PROFILE": "default",
+        "APM_MCP_MODE": "operator"
+      }
+    }
+  }
+}
+```
+
+**Codex CLI:** add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.synology-apm]
+command = "uv"
+args = ["run", "--directory", "/path/to/apm-sdk-python", "synology-apm-mcp"]
+
+[mcp_servers.synology-apm.env]
+APM_PROFILE = "default"
+APM_MCP_MODE = "operator"
+```
+
+Same environment variables as [Environment Variables](#environment-variables) above. Once
+connected, `tests/smoke/mcp/PROMPT.md` is a comprehensive prompt for exercising the full tool
+surface against a test/staging APM instance.

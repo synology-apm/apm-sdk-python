@@ -30,7 +30,6 @@ class SaasCollection:
 
         Raises:
             ResourceNotFoundError: The specified tenant was not found.
-            APIError: Server returned an unexpected error.
         """
         raw = await self._session.get(f"/api/v1/application/m365/tenant/{tenant_id}")
         if not raw.get("isFound"):
@@ -57,10 +56,6 @@ class SaasCollection:
 
         Returns:
             (list of SaasTenant (M365 first, GWS after), total count)
-
-        Raises:
-            AuthenticationError: Session has expired.
-            APIError: Server returned an unexpected error.
         """
         body = {
             "offset": offset,

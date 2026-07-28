@@ -6,7 +6,7 @@ from typing import Any
 
 from fastmcp import Context
 
-from synology_apm.mcp._helpers import LIST_RESULT_SUFFIX, clamp_limit, get_tool, list_tool
+from synology_apm.mcp._helpers import LIST_RESULT_SUFFIX, ToolResult, get_tool, list_tool
 from synology_apm.mcp._registrar import ToolRegistrar
 from synology_apm.mcp._security import DESTRUCTIVE_PREVIEW_SUFFIX, run_audited_tool
 from synology_apm.mcp.tools.plans._builders_common import _parse_required_time, _parse_time
@@ -23,10 +23,10 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         name_contains: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await list_tool(
-            apm.tiering_plans.list(name_contains=name_contains, limit=clamp_limit(limit), offset=offset),
+            apm.tiering_plans.list(name_contains=name_contains, limit=limit, offset=offset),
             lambda x: x.to_dict(),
             offset=offset,
         )
@@ -35,7 +35,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     async def get_tiering_plan(
         ctx: Context,
         plan_id: str,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.tiering_plans.get(plan_id), lambda x: x.to_dict())
 
@@ -48,7 +48,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         daily_check_time: str = "20:00",
         description: str = "",
         run_schedule_by_controller_time: bool = False,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _create() -> dict[str, Any]:
@@ -81,7 +81,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         daily_check_time: str,
         description: str,
         run_schedule_by_controller_time: bool = False,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _update() -> dict[str, Any]:

@@ -19,7 +19,10 @@ representative shapes (a plain string list, and a list-of-dict).
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -29,14 +32,14 @@ from tests.unit.mcp.conftest import make_machine_workload
 
 
 @pytest.fixture
-def tool_server(mock_apm):
+def tool_server(mock_apm: MagicMock) -> FastMCP:
     """A real FastMCP server (mode=admin, every tool registered) with a lifespan
     yielding mock_apm, so tool calls made through an in-memory Client go through
     fastmcp's actual pydantic argument-validation path (see module docstring)."""
     from synology_apm.mcp._server import create_server
 
     @asynccontextmanager
-    async def lifespan(server: FastMCP):
+    async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
         yield {"apm": mock_apm}
 
     return create_server(mode="admin", lifespan=lifespan)
@@ -44,7 +47,9 @@ def tool_server(mock_apm):
 
 class TestUpdateMachineFileServerArgCoercion:
     @pytest.mark.asyncio
-    async def test_json_encoded_selectors_string_is_parsed_and_flows_through(self, mock_apm, tool_server):
+    async def test_json_encoded_selectors_string_is_parsed_and_flows_through(
+        self, mock_apm: MagicMock, tool_server: FastMCP
+    ) -> None:
         """Exact real-world payload from the live bug report: `selectors` arrives
         as a JSON-encoded string instead of a native array."""
         workload = make_machine_workload(workload_id="539a8ae5-5bbd-468c-ab0f-0d0b5101a978")
@@ -83,7 +88,9 @@ class TestUpdateMachineFileServerArgCoercion:
 
 class TestListMachineWorkloadsArgCoercion:
     @pytest.mark.asyncio
-    async def test_json_encoded_workload_types_string_is_parsed(self, mock_apm, tool_server):
+    async def test_json_encoded_workload_types_string_is_parsed(
+        self, mock_apm: MagicMock, tool_server: FastMCP
+    ) -> None:
         """A second affected file/shape: workload_types arrives as a JSON-encoded
         string of plain strings rather than a native array of enum literals."""
         mock_apm.machine.workloads.list.return_value = ([], 0)

@@ -322,9 +322,9 @@ def _parse_ts_or_now(raw: str | int | None) -> datetime:
 def _parse_int_or_none(raw: str | int | None, *, none_value: int = -1) -> int | None:
     """Parse an integer-valued API field where a sentinel marks the absence of data.
 
-    Returns None when raw is None or equals the sentinel (default -1); otherwise int(raw).
+    Returns None when raw is None, empty, or equals the sentinel (default -1); otherwise int(raw).
     """
-    if raw is None:
+    if raw is None or raw == "":
         return None
     value = int(raw)
     return None if value == none_value else value

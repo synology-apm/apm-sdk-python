@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from fastmcp import Context
 
 from synology_apm.mcp._enums import WeekDayLiteral
-from synology_apm.mcp._helpers import JSON_LIST_VALIDATOR
+from synology_apm.mcp._helpers import JSON_LIST_VALIDATOR, ToolResult
 from synology_apm.mcp._registrar import ToolRegistrar
 from synology_apm.mcp._security import run_audited_tool
 from synology_apm.mcp.tools.plans._builders_common import (
@@ -84,7 +84,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         backup_copy_schedule_frequency: _BACKUP_COPY_FREQUENCY | None = None,
         backup_copy_schedule_time: str | None = None,
         backup_copy_weekdays: Annotated[list[WeekDayLiteral], JSON_LIST_VALIDATOR] | None = None,
-    ) -> str:
+    ) -> ToolResult:
         # Snapshot as the first statement so locals() holds only this function's own
         # parameters (see _build_machine_plan_request for the matching signature).
         build_kwargs = {k: v for k, v in locals().items() if k != "ctx"}
@@ -159,7 +159,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         backup_copy_schedule_frequency: _BACKUP_COPY_FREQUENCY | None = None,
         backup_copy_schedule_time: str | None = None,
         backup_copy_weekdays: Annotated[list[WeekDayLiteral], JSON_LIST_VALIDATOR] | None = None,
-    ) -> str:
+    ) -> ToolResult:
         # Snapshot as the first statement so locals() holds only this function's own
         # parameters (see _build_machine_plan_request for the matching signature).
         build_kwargs = {k: v for k, v in locals().items() if k not in ("ctx", "plan_id")}

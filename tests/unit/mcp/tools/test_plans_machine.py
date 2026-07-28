@@ -2,27 +2,30 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 from tests.unit.mcp.conftest import call_tool, make_backup_server, make_protection_plan, make_remote_storage
 
 
 class TestCreateMachineProtectionPlan:
     @pytest.mark.asyncio
-    async def test_calls_sdk_and_returns_dict(self, mock_apm, mock_ctx, admin_server):
+    async def test_calls_sdk_and_returns_dict(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
         plan = make_protection_plan(plan_id="plan-new", name="New Plan")
         mock_apm.machine.plans.create.return_value = plan
 
-        raw = await call_tool(admin_server, "create_machine_protection_plan", mock_ctx, name="New Plan")
-        parsed = json.loads(raw)
+        result = await call_tool(admin_server, "create_machine_protection_plan", mock_ctx, name="New Plan")
 
-        assert parsed["plan_id"] == "plan-new"
-        assert parsed["name"] == "New Plan"
+        assert result["plan_id"] == "plan-new"
+        assert result["name"] == "New Plan"
         mock_apm.machine.plans.create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_audit_log_records_name(self, mock_apm, mock_ctx, admin_server, tmp_path):
+    async def test_audit_log_records_name(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP, tmp_path: Path) -> None:
         import os
         from unittest.mock import patch
 
@@ -38,14 +41,13 @@ class TestCreateMachineProtectionPlan:
         assert entry["outcome"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_advanced_fields_default_to_none(self, mock_apm, mock_ctx):
+    async def test_advanced_fields_default_to_none(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         mock_apm.machine.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
-        await tool.fn(ctx=mock_ctx, name="New Plan")
+        await call_tool(server, "create_machine_protection_plan", mock_ctx, name="New Plan")
 
         (request,), _ = mock_apm.machine.plans.create.call_args
         assert request.run_schedule_by_controller_time is False
@@ -59,28 +61,26 @@ class TestCreateMachineProtectionPlan:
         assert request.retention.gfs is None
 
     @pytest.mark.asyncio
-    async def test_run_schedule_by_controller_time_reaches_request(self, mock_apm, mock_ctx):
+    async def test_run_schedule_by_controller_time_reaches_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         mock_apm.machine.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
-        await tool.fn(ctx=mock_ctx, name="New Plan", run_schedule_by_controller_time=True)
+        await call_tool(server, "create_machine_protection_plan", mock_ctx, name="New Plan", run_schedule_by_controller_time=True)
 
         (request,), _ = mock_apm.machine.plans.create.call_args
         assert request.run_schedule_by_controller_time is True
 
     @pytest.mark.asyncio
-    async def test_gfs_retention_reaches_request(self, mock_apm, mock_ctx):
+    async def test_gfs_retention_reaches_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         mock_apm.machine.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "create_machine_protection_plan", mock_ctx,
             name="New Plan",
             retention_type="keep_advanced",
             gfs_daily_versions=7,
@@ -96,28 +96,27 @@ class TestCreateMachineProtectionPlan:
         assert request.retention.gfs.yearly_versions == 5
 
     @pytest.mark.asyncio
-    async def test_gfs_retention_missing_field_returns_invalid_argument_error(self, mock_apm, mock_ctx):
+    async def test_gfs_retention_missing_field_returns_invalid_argument_error(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
-        raw = await tool.fn(ctx=mock_ctx, name="New Plan", retention_type="keep_advanced", gfs_daily_versions=7)
-        result = json.loads(raw)
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(server, "create_machine_protection_plan", mock_ctx, name="New Plan", retention_type="keep_advanced", gfs_daily_versions=7)
+        result = json.loads(str(exc_info.value))
 
         assert result["error"] == "invalid_argument"
         assert "keep_advanced requires" in result["message"]
         mock_apm.machine.plans.create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_device_configs_reach_request(self, mock_apm, mock_ctx):
+    async def test_device_configs_reach_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         mock_apm.machine.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "create_machine_protection_plan", mock_ctx,
             name="New Plan",
             vm_enable_verification=True,
             pc_shutdown_after_backup=True,
@@ -137,15 +136,14 @@ class TestCreateMachineProtectionPlan:
         assert request.db_config.mssql_log_setting == MssqlLogSetting.TRUNCATE
 
     @pytest.mark.asyncio
-    async def test_backup_window_reaches_request(self, mock_apm, mock_ctx):
+    async def test_backup_window_reaches_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         mock_apm.machine.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "create_machine_protection_plan", mock_ctx,
             name="New Plan",
             backup_window_enabled=True,
             backup_window_allowed_hours="mon:0-8,13-18;tue:0-23",
@@ -159,13 +157,12 @@ class TestCreateMachineProtectionPlan:
         assert request.backup_window.allowed_hours[WeekDay.TUESDAY] == frozenset(range(0, 24))
 
     @pytest.mark.asyncio
-    async def test_tasks_json_reaches_request(self, mock_apm, mock_ctx):
+    async def test_tasks_json_reaches_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         mock_apm.machine.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
         tasks_json = json.dumps([
             {"workload_type": "pc", "os_type": "windows"},
             {"workload_type": "pc", "os_type": "mac"},
@@ -174,7 +171,7 @@ class TestCreateMachineProtectionPlan:
             {"workload_type": "vm", "os_type": "none"},
             {"workload_type": "fs", "os_type": "none"},
         ])
-        await tool.fn(ctx=mock_ctx, name="New Plan", tasks_json=tasks_json)
+        await call_tool(server, "create_machine_protection_plan", mock_ctx, name="New Plan", tasks_json=tasks_json)
 
         (request,), _ = mock_apm.machine.plans.create.call_args
         assert len(request.tasks) == 6
@@ -184,7 +181,7 @@ class TestCreateMachineProtectionPlan:
         assert request.tasks[0].os_type == MachineOsType.WINDOWS
 
     @pytest.mark.asyncio
-    async def test_backup_copy_with_backup_server_destination_reaches_request(self, mock_apm, mock_ctx):
+    async def test_backup_copy_with_backup_server_destination_reaches_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         server_dest = make_backup_server(backup_server_id="srv-002", name="apm-server-02")
@@ -192,9 +189,8 @@ class TestCreateMachineProtectionPlan:
         mock_apm.machine.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "create_machine_protection_plan", mock_ctx,
             name="New Plan",
             backup_copy_destination_type="backup_server",
             backup_copy_destination_id="srv-002",
@@ -213,7 +209,7 @@ class TestCreateMachineProtectionPlan:
         assert request.backup_copy.schedule.frequency == ScheduleFrequency.AFTER_BACKUP
 
     @pytest.mark.asyncio
-    async def test_backup_copy_with_remote_storage_destination_reaches_request(self, mock_apm, mock_ctx):
+    async def test_backup_copy_with_remote_storage_destination_reaches_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 
         storage = make_remote_storage(storage_id="stor-002")
@@ -221,9 +217,8 @@ class TestCreateMachineProtectionPlan:
         mock_apm.machine.plans.create.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("create_machine_protection_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "create_machine_protection_plan", mock_ctx,
             name="New Plan",
             backup_copy_destination_type="remote_storage",
             backup_copy_destination_id="stor-002",
@@ -242,16 +237,15 @@ class TestCreateMachineProtectionPlan:
 
 class TestUpdateMachineProtectionPlan:
     @pytest.mark.asyncio
-    async def test_advanced_fields_default_to_none_full_replace(self, mock_apm, mock_ctx):
+    async def test_advanced_fields_default_to_none_full_replace(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         """update is a full replace: omitting an advanced field resets that feature."""
         from synology_apm.mcp._server import create_server
 
         mock_apm.machine.plans.update.return_value = make_protection_plan()
 
         server = create_server(mode="admin")
-        tool = await server.get_tool("update_machine_protection_plan")
-        await tool.fn(
-            ctx=mock_ctx,
+        await call_tool(
+            server, "update_machine_protection_plan", mock_ctx,
             plan_id="plan-001",
             name="Renamed",
             retention_type="keep_days",
@@ -272,7 +266,7 @@ class TestUpdateMachineProtectionPlan:
         assert request.backup_window is None
 
     @pytest.mark.asyncio
-    async def test_audit_log_records_plan_id(self, mock_apm, mock_ctx, admin_server, tmp_path):
+    async def test_audit_log_records_plan_id(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP, tmp_path: Path) -> None:
         import os
         from unittest.mock import patch
 

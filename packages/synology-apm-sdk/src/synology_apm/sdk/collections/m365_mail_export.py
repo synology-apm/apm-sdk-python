@@ -161,9 +161,6 @@ class _BaseM365ExportCollection:
 
         Args:
             activity: M365ExportActivity obtained from list().
-
-        Raises:
-            APIError: APM rejected the cancel request.
         """
         await self._session.post(
             "/portal/api/v1/portal/microsoft365/cancel/export",
@@ -194,7 +191,6 @@ class _BaseM365ExportCollection:
 
         Raises:
             ResourceNotReadyError: Activity status is PREPARING; export is not yet available.
-            APIError: URL generation failed.
         """
         if activity.status == M365ExportStatus.PREPARING:
             raise ResourceNotReadyError(
@@ -237,7 +233,6 @@ class _BaseM365ExportCollection:
 
         Raises:
             ResourceNotReadyError: result.ready_to_download is False.
-            APIError: URL generation failed.
         """
         if not result.ready_to_download:
             raise ResourceNotReadyError(
@@ -359,10 +354,8 @@ class ExchangeExportCollection(_BaseM365ExportCollection):
                              M365ExportStartResult.
 
         Returns:
-            M365ExportStartResult with execution_id, ready_to_download, and export_name.
-            If ready_to_download is True, call get_download_url_by_ready_result() immediately.
-            If False, poll get_activity_by_result() until status is READY_TO_DOWNLOAD,
-            then call get_download_url_by_activity().
+            M365ExportStartResult; see its ready_to_download attribute for how to retrieve
+            the download URL.
 
         Raises:
             ResourceNotFoundError: No mailbox folders found for this version, or location_id not found.
@@ -450,10 +443,8 @@ class GroupExportCollection(_BaseM365ExportCollection):
                          returned M365ExportStartResult.
 
         Returns:
-            M365ExportStartResult with execution_id, ready_to_download, and export_name.
-            If ready_to_download is True, call get_download_url_by_ready_result() immediately.
-            If False, poll get_activity_by_result() until status is READY_TO_DOWNLOAD,
-            then call get_download_url_by_activity().
+            M365ExportStartResult; see its ready_to_download attribute for how to retrieve
+            the download URL.
 
         Raises:
             ResourceNotFoundError: No mailbox folders found for this version, or location_id not found.

@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from synology_apm.mcp._errors import sdk_error_to_dict
+from synology_apm.mcp._errors import ToolResult, raise_tool_error
 
 _LEVELS: dict[str, int] = {"readonly": 0, "operator": 1, "admin": 2}
 
@@ -52,15 +52,19 @@ def confirm_or_preview(action: str, target: dict[str, Any], warning: str) -> dic
     }
 
 
-async def run_audited_tool(coro: Awaitable[Any], action: str, params: dict[str, Any]) -> str:
-    """Await a mutation coroutine, record the outcome in the audit log, return JSON."""
+async def run_audited_tool(coro: Awaitable[Any], action: str, params: dict[str, Any]) -> ToolResult:
+    """Await a mutation coroutine, record the outcome in the audit log, return the result.
+
+    Raises a ToolError (via raise_tool_error()) on exception, after audit-logging
+    the failure.
+    """
     try:
         result = await coro
         await asyncio.to_thread(audit_log, action, params, "ok")
-        return json.dumps(result if result is not None else {}, ensure_ascii=False)
+        return result if result is not None else {}
     except Exception as exc:
         await asyncio.to_thread(audit_log, action, params, f"error: {type(exc).__name__}")
-        return json.dumps(sdk_error_to_dict(exc), ensure_ascii=False)
+        raise_tool_error(exc)
 
 
 async def destructive_tool(
@@ -71,12 +75,12 @@ async def destructive_tool(
     preview_target_fn: Callable[[Any], dict[str, Any]],
     execute_fn: Callable[[Any], Awaitable[Any]],
     params: dict[str, Any],
-) -> str:
+) -> ToolResult:
     """Generic handler for admin+confirm tools: resolve → preview-or-execute.
 
     The resolve step and preview-building step are both wrapped in try/except
     so a ResourceNotFoundError during lookup, or any failure while building the
-    preview, returns our standardized error JSON rather than propagating
+    preview, raises our standardized ToolError rather than propagating
     unhandled. When confirm=False, returns a dry-run preview. When confirm=True,
     calls execute_fn(target) via run_audited_tool().
 
@@ -88,10 +92,9 @@ async def destructive_tool(
     try:
         target = await resolve_coro
         if not confirm:
-            preview = confirm_or_preview(action, preview_target_fn(target), warning)
-            return json.dumps(preview, ensure_ascii=False)
+            return confirm_or_preview(action, preview_target_fn(target), warning)
     except Exception as exc:
         if confirm:
             await asyncio.to_thread(audit_log, action, params, f"error: {type(exc).__name__}")
-        return json.dumps(sdk_error_to_dict(exc), ensure_ascii=False)
+        raise_tool_error(exc)
     return await run_audited_tool(execute_fn(target), action, params)

@@ -374,6 +374,32 @@ async def test_restore_list_transferred_size_field_name() -> None:
     assert acts[0].data_transferred_bytes == 2048
 
 
+@pytest.mark.parametrize("transferred,duration_raw,exp_transferred,exp_duration", [
+    ("1601", "300", 1601, 300),   # normal positive values
+    ("-1",   None,  None, None),  # not applicable → None; duration key realistically absent
+    ("",     "",    None, None),  # empty string → None, both fields
+    (None,   None,  1601, None),  # transferred missing → base default 1601; duration absent → None
+])
+async def test_restore_list_transferred_size_and_duration_fields(
+    transferred: str | None, duration_raw: str | None,
+    exp_transferred: int | None, exp_duration: int | None,
+) -> None:
+    """restore list() maps transferredSize/durationTime to their SDK fields, including
+    magic-value handling ("-1"/""/missing -> None). endTime is forced to "0" so finished_at
+    is None, isolating durationTime's own branch from the start/end fallback."""
+    status: dict[str, Any] = {"endTime": "0"}
+    if transferred is not None:
+        status["transferredSize"] = transferred
+    if duration_raw is not None:
+        status["durationTime"] = duration_raw
+    async with connected_session() as (session, m):
+        m.get(RESTORE_RECENT_URL, payload={"activities": [make_restore_activity_raw(status=status)]})
+        acts, _ = await RestoreActivityCollection(session).list()
+        await session.disconnect()
+    assert acts[0].data_transferred_bytes == exp_transferred
+    assert acts[0].duration_seconds == exp_duration
+
+
 # ── get() ──────────────────────────────────────────────────────────────────
 
 

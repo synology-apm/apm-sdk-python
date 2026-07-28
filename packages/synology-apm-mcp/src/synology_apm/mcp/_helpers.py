@@ -6,10 +6,11 @@ import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, NamedTuple, TypeVar
+from typing import Any, Generic, NamedTuple, Protocol, TypeVar
 
 from pydantic import BeforeValidator
 
+from synology_apm.mcp._errors import ToolResult as ToolResult
 from synology_apm.mcp._errors import run_tool
 from synology_apm.sdk import (
     APMClient,
@@ -30,8 +31,6 @@ _WorkloadT = TypeVar("_WorkloadT", MachineWorkload, M365Workload)
 _U = TypeVar("_U")
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
-MAX_LIST_LIMIT = 500
-
 # Append to a list tool's description= so the documented result shape always matches
 # whether the wrapped SDK method reports a reliable total (see each SDK method's
 # docstring for which case applies), instead of each call site retyping (and
@@ -43,11 +42,6 @@ LIST_RESULT_SUFFIX_UNRELIABLE_TOTAL = (
     "Returns {items, total, truncated?} (total is always null since this endpoint does not report an "
     "accurate count; truncated indicates more results may exist beyond this page)."
 )
-
-
-def clamp_limit(limit: int) -> int:
-    """Cap a caller-supplied page size at the maximum the API accepts per call."""
-    return min(limit, MAX_LIST_LIMIT)
 
 
 def to_enum_list(cls: type[_EnumT], values: Sequence[str] | None) -> list[_EnumT] | None:
@@ -114,12 +108,12 @@ async def list_tool(
     *,
     limit: int | None = None,
     offset: int = 0,
-) -> str:
+) -> ToolResult:
     """Combine list_result() + run_tool() for the common paginated-list tool body."""
     return await run_tool(list_result(coro, serializer, limit=limit, offset=offset))
 
 
-async def get_tool(coro: Awaitable[_T], serializer: Callable[[_T], Any]) -> str:
+async def get_tool(coro: Awaitable[_T], serializer: Callable[[_T], Any]) -> ToolResult:
     """Combine get_result() + run_tool() for the common single-item tool body."""
     return await run_tool(get_result(coro, serializer))
 
@@ -139,7 +133,7 @@ async def resolve_export_activity(
     """Resolve an M365 export activity by ID from the workload's export activity list."""
     offset = 0
     while True:
-        activities, total = await collection.list(workload, limit=MAX_LIST_LIMIT, offset=offset)
+        activities, total = await collection.list(workload, offset=offset)
         activity = next((a for a in activities if a.activity_id == activity_id), None)
         if activity is not None:
             return activity
@@ -176,7 +170,16 @@ async def resolve_plan_filter(
     return list(await asyncio.gather(*(_resolve_one_plan(apm, plan_id) for plan_id in ids)))
 
 
-async def _resolve_version_for_workload(collection: Any, workload: Any, version_id: str | None) -> WorkloadVersion:
+class _VersionCollection(Protocol):
+    """The subset of MachineWorkloadCollection/M365WorkloadCollection this helper needs."""
+
+    async def get_version(self, workload: Any, version_id: str) -> WorkloadVersion: ...
+    async def get_latest_version(self, workload: Any) -> WorkloadVersion: ...
+
+
+async def _resolve_version_for_workload(
+    collection: _VersionCollection, workload: Any, version_id: str | None
+) -> WorkloadVersion:
     """Resolve one version of an already-resolved workload, or its latest if version_id is None."""
     if version_id:
         return await collection.get_version(workload, version_id)

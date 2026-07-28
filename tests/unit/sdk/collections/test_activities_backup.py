@@ -257,26 +257,6 @@ async def test_list_parses_data_change_and_deduped_bytes() -> None:
     assert acts[0].data_deduped_bytes == 262144000
 
 
-async def test_list_data_change_bytes_is_none_when_minus_one() -> None:
-    """list() should convert changeDataSize='-1' (not applicable) to None."""
-    raw = {"activity": {
-        "uid": "act-y", "namespace": "ns",
-        "spec": {"workloadType": "FS", "workloadName": "FS-01", "workload": {"uid": "uid"}, "planName": "P"},
-        "status": {
-            "executionId": "E2", "backupStatus": "SUCCESS", "startTime": "1000000", "endTime": "1000600",
-            "durationTime": "600", "transferredDataSize": "-1", "progress": 100,
-            "changeDataSize": "-1", "dedupedDataSize": "-1",
-        },
-    }}
-    async with connected_session() as (session, m):
-        m.get(RECENT_URL, payload={"activities": [raw]})
-        acts, _ = await BackupActivityCollection(session).list()
-        await session.disconnect()
-    assert acts[0].data_change_bytes is None
-    assert acts[0].data_deduped_bytes is None
-    assert acts[0].data_transferred_bytes is None
-
-
 @pytest.mark.parametrize("api_status,expected", [
     ("ERROR",            BackupActivityStatus.FAILED),
     ("UNKNOWN",          BackupActivityStatus.FAILED),
@@ -582,16 +562,21 @@ def test_items_processed_returns_none_for_machine() -> None:
 # ── _parse_data_sizes (dedup negative value fix) ──────────────────────────
 
 
-@pytest.mark.parametrize("changed,deduped,exp_changed,exp_deduped", [
-    ("1005588480", "449496803", 1005588480, 449496803),  # normal positive values
-    ("-1",         "-1",        None,        None),       # not applicable → None
-    ("0",          "0",         0,           0),          # zero is a valid value
-    (None,         None,        None,        None),       # missing fields → None
-    ("1024",       "0",         1024,        0),          # mixed
+@pytest.mark.parametrize("changed,deduped,transferred,exp_changed,exp_deduped,exp_transferred", [
+    ("1005588480", "449496803", "1073741824", 1005588480, 449496803, 1073741824),  # normal positive values
+    ("-1",         "-1",        "-1",         None,        None,      None),       # not applicable → None
+    ("",           "",          "",           None,        None,      None),       # empty string → None
+    ("0",          "0",         "0",          0,           0,         0),          # zero is a valid value
+    (None,         None,        "1073741824", None,        None,      1073741824), # missing changed/deduped
+    ("1024",       "0",         "2048",       1024,        0,         2048),       # mixed
 ])
-async def test_list_data_size_fields(changed: str | None, deduped: str | None, exp_changed: int | None, exp_deduped: int | None) -> None:
-    """list() maps changeDataSize/dedupedDataSize to data_change_bytes/data_deduped_bytes."""
-    status: dict[str, Any] = {}
+async def test_list_data_size_fields(
+    changed: str | None, deduped: str | None, transferred: str,
+    exp_changed: int | None, exp_deduped: int | None, exp_transferred: int | None,
+) -> None:
+    """list() maps changeDataSize/dedupedDataSize/transferredDataSize to their SDK fields,
+    including magic-value handling ("-1"/""/missing -> None)."""
+    status: dict[str, Any] = {"transferredDataSize": transferred}
     if changed is not None:
         status["changeDataSize"] = changed
     if deduped is not None:
@@ -602,6 +587,7 @@ async def test_list_data_size_fields(changed: str | None, deduped: str | None, e
         await session.disconnect()
     assert acts[0].data_change_bytes == exp_changed
     assert acts[0].data_deduped_bytes == exp_deduped
+    assert acts[0].data_transferred_bytes == exp_transferred
 
 
 async def test_m365_activity_uses_application_m365_workload_type() -> None:

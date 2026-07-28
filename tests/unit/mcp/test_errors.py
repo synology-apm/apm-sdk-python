@@ -7,10 +7,15 @@ exc.to_dict() into the result unchanged.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 
+from synology_apm.sdk import APMError
 
-def _convert(exc: Exception) -> dict:
+
+def _convert(exc: Exception) -> dict[str, Any]:
     from synology_apm.mcp._errors import sdk_error_to_dict
     return sdk_error_to_dict(exc)
 
@@ -43,25 +48,25 @@ class TestSdkErrorToDictCodes:
             (lambda: _sdk("APMError")("something went wrong"), "apm_error"),
         ],
     )
-    def test_error_code(self, make_exc, expected_code):
+    def test_error_code(self, make_exc: Callable[[], APMError], expected_code: str) -> None:
         exc = make_exc()
         result = _convert(exc)
         assert result["error"] == expected_code
         assert result["message"] == exc.message
 
-    def test_remote_storage_unmanaged_catalog_error_flattens_to_dict(self):
+    def test_remote_storage_unmanaged_catalog_error_flattens_to_dict(self) -> None:
         from synology_apm.sdk import RemoteStorageUnmanagedCatalogError
         exc = RemoteStorageUnmanagedCatalogError("unmanaged", vault_name="MyVault", catalog_count=3)
         result = _convert(exc)
         assert result == {"error": "remote_storage_unmanaged_catalog", **exc.to_dict()}
 
-    def test_resource_error_flattens_to_dict(self):
+    def test_resource_error_flattens_to_dict(self) -> None:
         from synology_apm.sdk import ResourceNotFoundError
         exc = ResourceNotFoundError("not found", "workload", "wl-001")
         result = _convert(exc)
         assert result == {"error": "not_found", **exc.to_dict()}
 
-    def test_plan_in_use_error_flattens_extra_fields(self):
+    def test_plan_in_use_error_flattens_extra_fields(self) -> None:
         from synology_apm.sdk import PlanInUseError
         exc = PlanInUseError(
             "plan in use", "plan", "plan-002",
@@ -71,13 +76,13 @@ class TestSdkErrorToDictCodes:
         assert result == {"error": "plan_in_use", **exc.to_dict()}
         assert result["has_workloads"] is True
 
-    def test_value_error_maps_to_invalid_argument(self):
+    def test_value_error_maps_to_invalid_argument(self) -> None:
         exc = ValueError("parameter 'host_ip' is required")
         result = _convert(exc)
         assert result["error"] == "invalid_argument"
         assert "host_ip" in result["message"]
 
-    def test_unexpected_exception(self):
+    def test_unexpected_exception(self) -> None:
         exc = RuntimeError("something completely unexpected")
         result = _convert(exc)
         assert result["error"] == "unexpected_error"
@@ -91,13 +96,15 @@ class TestSdkErrorToDictCodes:
             (lambda: _sdk("ConnectionTimeoutError")("timed out"), "connection_timeout"),
         ],
     )
-    def test_hint_present_for_reconfigure_codes(self, make_exc, expected_code):
+    def test_hint_present_for_reconfigure_codes(
+        self, make_exc: Callable[[], APMError], expected_code: str
+    ) -> None:
         exc = make_exc()
         result = _convert(exc)
         assert result["error"] == expected_code
         assert "synology-apm-cli config set" in result["hint"]
 
-    def test_hint_absent_for_non_reconfigure_codes(self):
+    def test_hint_absent_for_non_reconfigure_codes(self) -> None:
         from synology_apm.sdk import ResourceNotFoundError
         exc = ResourceNotFoundError("not found", "workload", "wl-001")
         result = _convert(exc)
@@ -111,21 +118,23 @@ class TestSdkErrorToDictCodes:
         ],
         ids=["ssl_certificate_failure", "cannot_connect"],
     )
-    def test_message_pattern_gets_specific_error_code_and_hint(self, message, expected_code):
+    def test_message_pattern_gets_specific_error_code_and_hint(
+        self, message: str, expected_code: str
+    ) -> None:
         from synology_apm.sdk import APIError
         exc = APIError(message)
         result = _convert(exc)
         assert result["error"] == expected_code
         assert "synology-apm-cli config set" in result["hint"]
 
-    def test_unrelated_api_error_falls_back_to_apm_error_without_hint(self):
+    def test_unrelated_api_error_falls_back_to_apm_error_without_hint(self) -> None:
         from synology_apm.sdk import APIError
         exc = APIError("Backup rejected by target")
         result = _convert(exc)
         assert result["error"] == "apm_error"
         assert "hint" not in result
 
-    def test_message_excludes_raw_response_body(self):
+    def test_message_excludes_raw_response_body(self) -> None:
         """APMError.__str__ appends the raw response body when set; the "message" field
         must use exc.message (the sanitized description) instead of str(exc), or raw API
         response data would leak into the MCP tool's JSON output.
@@ -142,6 +151,6 @@ class TestSdkErrorToDictCodes:
         assert "internalField" not in result["message"]
 
 
-def _sdk(name: str):
+def _sdk(name: str) -> Any:
     import synology_apm.sdk as sdk_module
     return getattr(sdk_module, name)

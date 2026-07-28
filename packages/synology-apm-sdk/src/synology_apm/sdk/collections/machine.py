@@ -123,10 +123,6 @@ class MachineWorkloadCollection(_VersionMixin):
     """Collection interface for managing device backup Workloads (PC/PS/VM/FS).
 
     Accessed via APMClient.machine.workloads; should not be instantiated directly.
-
-    get() fetches a single Workload by workload_id + namespace; get_by_name() looks up a
-    Workload by display name via keyword search and exact match. Neither performs a
-    full list-all scan.
     """
 
     def __init__(self, session: WebAPISession) -> None:
@@ -306,8 +302,6 @@ class MachineWorkloadCollection(_VersionMixin):
 
         Raises:
             DuplicateWorkloadError: The file server is already enrolled in the same plan on the same backup server.
-            AuthenticationError:    Session expired.
-            APIError:               Unexpected error from APM.
         """
         body = {
             "requests": [
@@ -366,8 +360,8 @@ class MachineWorkloadCollection(_VersionMixin):
         Raises:
             InvalidOperationError:  workload is not an FS workload.
             DuplicateWorkloadError: The updated IP conflicts with another file server in the same plan.
-            AuthenticationError:    Session expired.
-            APIError:               Unexpected error from APM.
+            ResourceNotFoundError:  The workload no longer exists (e.g. deleted or retired
+                                    since it was fetched).
         """
         if workload.workload_type != MachineWorkloadType.FS:
             raise InvalidOperationError(
@@ -463,8 +457,6 @@ class MachineWorkloadCollection(_VersionMixin):
         Raises:
             InvalidOperationError: APM rejected the delete because the workload is in a state
                 that does not allow deletion (e.g., still initializing).
-            AuthenticationError:   Session expired.
-            APIError:              Unexpected error from APM.
         """
         resp = await self._session.delete(
             "/api/v1/workload/device_workload/batch",
@@ -582,11 +574,15 @@ def _parse_workload(raw: dict[str, Any]) -> MachineWorkload:
         workload_status = WorkloadStatus.BACKING_UP
         if api_type == "FS":
             backup_progress = None
+            # processedSuccessCount is declared int32, not string, in the API schema — unlike
+            # the "0"/""-as-sentinel string/int64 fields elsewhere in this module, a compliant
+            # numeric field can't legally serialize as "", so only None (absent) is guarded here.
             raw_items = cache.get("processedSuccessCount")
-            items_backed_up = int(raw_items) if raw_items not in (None, "") else None
+            items_backed_up = int(raw_items) if raw_items is not None else None
         else:
+            # progress is declared a number (double), not string — same reasoning as above.
             raw_prog = cache.get("progress")
-            backup_progress = int(float(raw_prog)) if raw_prog not in (None, "") else 0
+            backup_progress = int(float(raw_prog)) if raw_prog is not None else 0
             items_backed_up = None
     elif job_status == "WAITING_TASK":
         backup_progress = None

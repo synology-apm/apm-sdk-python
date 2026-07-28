@@ -10,7 +10,7 @@ from synology_apm.mcp._enums import BackupServerTypeLiteral, ServerStatusLiteral
 from synology_apm.mcp._helpers import (
     JSON_LIST_VALIDATOR,
     LIST_RESULT_SUFFIX,
-    clamp_limit,
+    ToolResult,
     get_tool,
     list_tool,
     to_enum_list,
@@ -144,7 +144,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     """Register all infra tools onto server, gated by mode."""
 
     @registrar.tool(description="Get APM site overview: site UUID, external address, management servers, storage usage, and workload counts by type.")
-    async def get_site_info(ctx: Context) -> str:
+    async def get_site_info(ctx: Context) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.get_site_info(), lambda x: x.to_dict())
 
@@ -159,14 +159,14 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         server_type: Annotated[list[BackupServerTypeLiteral], JSON_LIST_VALIDATOR] | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await list_tool(
             apm.backup_servers.list(
                 name_contains=name_contains,
                 status_filter=to_enum_list(ServerStatus, status),
                 type_filter=to_enum_list(BackupServerType, server_type),
-                limit=clamp_limit(limit),
+                limit=limit,
                 offset=offset,
             ),
             lambda x: x.to_dict(),
@@ -177,12 +177,12 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     async def get_backup_server(
         ctx: Context,
         server_id: str,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.backup_servers.get(server_id), lambda x: x.to_dict())
 
     @registrar.tool(description=f"List all remote storage destinations. {LIST_RESULT_SUFFIX}")
-    async def list_remote_storages(ctx: Context) -> str:
+    async def list_remote_storages(ctx: Context) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await list_tool(apm.remote_storages.list(), lambda x: x.to_dict())
 
@@ -190,12 +190,12 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     async def get_remote_storage(
         ctx: Context,
         storage_id: str,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.remote_storages.get(storage_id), lambda x: x.to_dict())
 
     @registrar.tool(description=f"List all registered hypervisors (vSphere, Hyper-V). {LIST_RESULT_SUFFIX}")
-    async def list_hypervisors(ctx: Context) -> str:
+    async def list_hypervisors(ctx: Context) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await list_tool(apm.hypervisors.list(), lambda x: x.to_dict())
 
@@ -203,7 +203,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     async def get_hypervisor(
         ctx: Context,
         hypervisor_id: str,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.hypervisors.get(hypervisor_id), lambda x: x.to_dict())
 
@@ -212,7 +212,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         ctx: Context,
         server_id: str,
         tiering_plan_id: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_audited_tool(
             _change_backup_server_tiering_plan(apm, server_id, tiering_plan_id),
@@ -240,7 +240,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         relink_encryption_key: str = "",
         trust_self_signed: bool = False,
         retirement_plan_id: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_audited_tool(
             _add_remote_storage(
@@ -260,7 +260,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         secret_key: str,
         endpoint: str,
         trust_self_signed: bool,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_audited_tool(
             _update_remote_storage(apm, storage_id, access_key, secret_key, endpoint, trust_self_signed),
@@ -276,7 +276,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         ctx: Context,
         storage_id: str,
         confirm: bool = False,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await destructive_tool(
             confirm=confirm,

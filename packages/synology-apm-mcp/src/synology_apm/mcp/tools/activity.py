@@ -14,7 +14,7 @@ from synology_apm.mcp._enums import (
 from synology_apm.mcp._helpers import (
     JSON_LIST_VALIDATOR,
     LIST_RESULT_SUFFIX,
-    clamp_limit,
+    ToolResult,
     get_tool,
     list_tool,
     parse_dt_optional,
@@ -34,7 +34,7 @@ from synology_apm.sdk import (
 )
 
 
-async def _cancel_activity(collection: Any, activity_id: str, action: str) -> str:
+async def _cancel_activity(collection: Any, activity_id: str, action: str) -> ToolResult:
     """Resolve an activity by id, cancel it, and return the standard audited result.
 
     Shared by cancel_backup_activity/cancel_restore_activity, which are identical
@@ -100,7 +100,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         history: bool = False,
         limit: int = 100,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         if machine_types and m365_types:
@@ -125,7 +125,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
                 until=parse_dt_optional(until),
                 keyword=keyword,
                 history=history,
-                limit=clamp_limit(limit),
+                limit=limit,
                 offset=offset,
             ),
             lambda x: x.to_dict(),
@@ -133,7 +133,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         )
 
     @registrar.tool(description="Get a single backup activity by activity_id, including log entries. Use list_backup_activities to find the ID.")
-    async def get_backup_activity(ctx: Context, activity_id: str) -> str:
+    async def get_backup_activity(ctx: Context, activity_id: str) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.activities.backup.get(activity_id), lambda x: x.to_dict())
 
@@ -157,7 +157,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         history: bool = False,
         limit: int = 100,
         offset: int = 0,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         status_filter = to_enum_list(RestoreActivityStatus, status)
@@ -173,7 +173,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
                 until=parse_dt_optional(until),
                 keyword=keyword,
                 history=history,
-                limit=clamp_limit(limit),
+                limit=limit,
                 offset=offset,
             ),
             lambda x: x.to_dict(),
@@ -181,16 +181,16 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         )
 
     @registrar.tool(description="Get a single restore activity by activity_id, including log entries. Use list_restore_activities to find the ID.")
-    async def get_restore_activity(ctx: Context, activity_id: str) -> str:
+    async def get_restore_activity(ctx: Context, activity_id: str) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.activities.restore.get(activity_id), lambda x: x.to_dict())
 
     @registrar.tool("operator", description="Cancel a running backup activity by activity_id.")
-    async def cancel_backup_activity(ctx: Context, activity_id: str) -> str:
+    async def cancel_backup_activity(ctx: Context, activity_id: str) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await _cancel_activity(apm.activities.backup, activity_id, "cancel_backup_activity")
 
     @registrar.tool("operator", description="Cancel a running restore activity by activity_id.")
-    async def cancel_restore_activity(ctx: Context, activity_id: str) -> str:
+    async def cancel_restore_activity(ctx: Context, activity_id: str) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await _cancel_activity(apm.activities.restore, activity_id, "cancel_restore_activity")

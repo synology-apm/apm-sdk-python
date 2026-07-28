@@ -7,7 +7,7 @@ from fastmcp import Context
 
 from synology_apm.mcp._enums import FileServerTypeLiteral
 from synology_apm.mcp._errors import run_tool
-from synology_apm.mcp._helpers import JSON_LIST_VALIDATOR, resolve_machine_version
+from synology_apm.mcp._helpers import JSON_LIST_VALIDATOR, ToolResult, resolve_machine_version
 from synology_apm.mcp._registrar import ToolRegistrar
 from synology_apm.mcp._security import run_audited_tool
 from synology_apm.mcp.tools._workload import register_workload_tools
@@ -107,7 +107,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         version_id: str,
         workload_id: str,
         namespace: str,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _get() -> dict[str, Any]:
@@ -136,7 +136,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         enable_vss: bool = False,
         connection_timeout_seconds: int = 180,
         trigger_backup: bool = False,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _add() -> dict[str, Any]:
@@ -175,7 +175,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         connection_timeout_seconds: int,
         path: str | None = None,
         selectors: Annotated[list[dict[str, Any]], JSON_LIST_VALIDATOR] | None = None,
-    ) -> str:
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
         async def _update() -> dict[str, Any]:

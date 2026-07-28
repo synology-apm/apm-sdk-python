@@ -7,7 +7,8 @@ values -- those exclusions are declared explicitly below, not silently special-c
 """
 from __future__ import annotations
 
-from typing import get_args
+from enum import Enum
+from typing import Any, get_args
 
 import pytest
 
@@ -21,6 +22,8 @@ from synology_apm.sdk import (
     MachineWorkloadType,
     RestoreActivityStatus,
     ServerStatus,
+    VerifyStatus,
+    WorkloadStatus,
 )
 
 # (Literal, corresponding SDK Enum, values intentionally excluded from the Literal)
@@ -42,17 +45,27 @@ _PARITY_CASES = [
         # updating a file server), so it is correctly never offered as a choice.
         id="FileServerType-excludes-unknown",
     ),
+    pytest.param(_enums.VerifyStatusLiteral, VerifyStatus, set(), id="VerifyStatus"),
+    pytest.param(
+        _enums.WorkloadStatusLiteral,
+        WorkloadStatus,
+        {"retired"},
+        # WorkloadStatus.RETIRED is deliberately not offered here -- retirement is
+        # filtered via the separate is_retired: bool parameter instead (see
+        # MachineWorkloadCollection.list()'s docstring).
+        id="WorkloadStatus-excludes-retired",
+    ),
 ]
 
 
 @pytest.mark.parametrize("literal,enum_cls,excluded", _PARITY_CASES)
-def test_literal_matches_sdk_enum_values(literal, enum_cls, excluded):
+def test_literal_matches_sdk_enum_values(literal: Any, enum_cls: type[Enum], excluded: set[str]) -> None:
     literal_values = set(get_args(literal))
     enum_values = {member.value for member in enum_cls}
     assert literal_values == enum_values - excluded
 
 
-def test_weekday_literal_has_seven_distinct_days():
+def test_weekday_literal_has_seven_distinct_days() -> None:
     """WeekDay is int-valued in the SDK (0=Sunday..6=Saturday), so it can't be compared
     directly to WeekDayLiteral's 3-letter strings -- see test_parse_weekdays_covers_all_sdk_weekdays
     in test_plan_builders.py for the behavioral parity check against the SDK enum."""

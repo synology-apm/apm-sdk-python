@@ -1,6 +1,7 @@
 """Tests for _config.py credential loading."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -8,37 +9,39 @@ import pytest
 from synology_apm.sdk import AuthenticationError, KeyringUnavailableError, ResolvedConnection
 
 
-def _load(profile=None):
+def _load(profile: str | None = None) -> ResolvedConnection:
     from synology_apm.mcp._config import load_credentials
     return load_credentials(profile=profile)
 
 
-def _resolve_mode():
+def _resolve_mode() -> str:
     from synology_apm.mcp._config import resolve_mode
     return resolve_mode()
 
 
-def _resolve_startup_state(profile=None):
+def _resolve_startup_state(
+    profile: str | None = None,
+) -> tuple[ResolvedConnection, str, AuthenticationError | None]:
     from synology_apm.mcp._config import resolve_startup_state
     return resolve_startup_state(profile)
 
 
 @pytest.fixture(autouse=True)
-def _clear_apm_env(monkeypatch):
+def _clear_apm_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in ("APM_HOST", "APM_USERNAME", "APM_PASSWORD", "APM_PROFILE", "APM_MCP_MODE", "APM_NO_VERIFY_SSL"):
         monkeypatch.delenv(var, raising=False)
 
 
 class TestModeResolution:
-    def test_defaults_to_operator(self, monkeypatch):
+    def test_defaults_to_operator(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assert _resolve_mode() == "operator"
 
-    def test_all_valid_modes(self, monkeypatch):
+    def test_all_valid_modes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for mode_val in ("readonly", "operator", "admin"):
             monkeypatch.setenv("APM_MCP_MODE", mode_val)
             assert _resolve_mode() == mode_val
 
-    def test_invalid_mode_exits(self, monkeypatch):
+    def test_invalid_mode_exits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("APM_MCP_MODE", "superuser")
         with pytest.raises(SystemExit) as exc_info:
             _resolve_mode()
@@ -46,7 +49,7 @@ class TestModeResolution:
 
 
 class TestConnectionResolution:
-    def test_delegates_to_resolve_connection_with_profile_only(self, monkeypatch):
+    def test_delegates_to_resolve_connection_with_profile_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """load_credentials() no longer pre-reads APM_HOST/APM_USERNAME/APM_PASSWORD
         itself -- it defers entirely to resolve_connection()'s own env-var handling,
         forwarding only the profile parameter it received."""
@@ -62,7 +65,7 @@ class TestConnectionResolution:
         assert resolved.password == "secret"
         assert resolved.verify_ssl is True
 
-    def test_delegates_to_resolve_connection_with_no_profile(self, monkeypatch):
+    def test_delegates_to_resolve_connection_with_no_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             return_value=ResolvedConnection("apm.corp.com", "admin", "secret", True),
@@ -70,7 +73,7 @@ class TestConnectionResolution:
             _load()
         mock_resolve.assert_called_once_with(profile=None)
 
-    def test_no_verify_ssl_env_flag_with_trailing_whitespace(self, monkeypatch, tmp_path):
+    def test_no_verify_ssl_env_flag_with_trailing_whitespace(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A trailing space (common from copy-pasted .env values) must not silently
         disable the flag and fall back to verifying SSL. Exercises the real (unmocked)
         resolve_connection() end-to-end, since MCP no longer pre-parses this env var
@@ -87,7 +90,7 @@ class TestConnectionResolution:
             resolved = _load()
         assert resolved.verify_ssl is False
 
-    def test_missing_host_raises_authentication_error(self, monkeypatch):
+    def test_missing_host_raises_authentication_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Missing credentials must not crash the process -- the caller (__main__.py)
         catches this and starts the server in degraded mode (see _server.py's
         build_lifespan())."""
@@ -97,28 +100,28 @@ class TestConnectionResolution:
         ), pytest.raises(AuthenticationError):
             _load()
 
-    def test_missing_username_raises_authentication_error(self, monkeypatch):
+    def test_missing_username_raises_authentication_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             return_value=ResolvedConnection("apm.corp.com", "", "secret", True),
         ), pytest.raises(AuthenticationError):
             _load()
 
-    def test_missing_password_raises_authentication_error(self, monkeypatch):
+    def test_missing_password_raises_authentication_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             return_value=ResolvedConnection("apm.corp.com", "admin", "", True),
         ), pytest.raises(AuthenticationError):
             _load()
 
-    def test_keyring_unavailable_raises_authentication_error(self, monkeypatch):
+    def test_keyring_unavailable_raises_authentication_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             side_effect=KeyringUnavailableError("no keyring backend"),
         ), pytest.raises(AuthenticationError):
             _load()
 
-    def test_successful_resolution_returns_resolved_connection(self, monkeypatch):
+    def test_successful_resolution_returns_resolved_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             return_value=ResolvedConnection("apm.corp.com", "admin", "secret", True),
@@ -145,7 +148,7 @@ class TestErrorMessagesPointToCli:
         ],
         ids=["missing_host", "missing_username", "missing_password"],
     )
-    def test_missing_credential_message_points_to_cli(self, monkeypatch, capsys, host, username, password):
+    def test_missing_credential_message_points_to_cli(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], host: str, username: str, password: str) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             return_value=ResolvedConnection(host, username, password, True),
@@ -154,7 +157,7 @@ class TestErrorMessagesPointToCli:
         assert "synology-apm-cli config set" in str(exc_info.value)
         assert "synology-apm-cli config set" in capsys.readouterr().err
 
-    def test_keyring_unavailable_message_points_to_cli(self, monkeypatch, capsys):
+    def test_keyring_unavailable_message_points_to_cli(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             side_effect=KeyringUnavailableError("no keyring backend"),
@@ -169,7 +172,7 @@ class TestResolveStartupState:
     the degraded-mode fallback -- pulled out of __main__.main() so this logic is
     unit-testable without invoking FastMCP's stdio transport loop."""
 
-    def test_success_returns_resolved_mode_and_no_error(self, monkeypatch):
+    def test_success_returns_resolved_mode_and_no_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("APM_MCP_MODE", "admin")
         with patch(
             "synology_apm.mcp._config.resolve_connection",
@@ -183,7 +186,7 @@ class TestResolveStartupState:
         assert mode == "admin"
         assert config_error is None
 
-    def test_forwards_profile_to_load_credentials(self, monkeypatch):
+    def test_forwards_profile_to_load_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             return_value=ResolvedConnection("apm.corp.com", "admin", "secret", True),
@@ -191,9 +194,7 @@ class TestResolveStartupState:
             _resolve_startup_state(profile="lab")
         mock_resolve.assert_called_once_with(profile="lab")
 
-    def test_authentication_error_returns_placeholder_and_prints_degraded_notice(
-        self, monkeypatch, capsys
-    ):
+    def test_authentication_error_returns_placeholder_and_prints_degraded_notice(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         with patch(
             "synology_apm.mcp._config.resolve_connection",
             return_value=ResolvedConnection("", "", "", True),

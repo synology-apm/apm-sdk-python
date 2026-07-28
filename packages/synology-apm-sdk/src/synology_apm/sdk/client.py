@@ -99,8 +99,6 @@ class APMClient:
         After login, verifies the host is the primary management server.
 
         Raises:
-            AuthenticationError: Authentication failed.
-            APIError: Cannot connect to the APM server.
             NotManagementServerError: Host is not an APM server, or is not the primary
                 management server.
         """
@@ -154,8 +152,11 @@ class APMClient:
     def m365(self) -> M365Collection:
         """Access M365Collection, which manages M365 SaaS backup resources (workload + plan).
 
-        apm.m365.workloads → M365WorkloadCollection
-        apm.m365.plans     → M365PlanCollection
+        apm.m365.workloads         → M365WorkloadCollection
+        apm.m365.plans             → M365PlanCollection
+        apm.m365.exchange_export   → ExchangeExportCollection
+        apm.m365.group_export      → GroupExportCollection
+        apm.m365.auto_backup_rules → M365AutoBackupRuleCollection
         """
         return self._m365
 
@@ -179,30 +180,17 @@ class APMClient:
 
     @property
     def retirement_plans(self) -> RetirementPlanCollection:
-        """Access RetirementPlanCollection, which manages retirement plans.
-
-        apm.retirement_plans.list()           → list[RetirementPlan]
-        apm.retirement_plans.get(id)          → RetirementPlan
-        apm.retirement_plans.get_by_name(name) → RetirementPlan
-        """
+        """Access RetirementPlanCollection, which manages retirement plans."""
         return self._retirement_plans
 
     @property
     def remote_storages(self) -> RemoteStorageCollection:
-        """Access RemoteStorageCollection, which manages remote storage devices (External Vaults).
-
-        apm.remote_storages.list() → list[RemoteStorage]
-        apm.remote_storages.get(id) → RemoteStorage
-        """
+        """Access RemoteStorageCollection, which manages remote storage devices (External Vaults)."""
         return self._remote_storages
 
     @property
     def hypervisors(self) -> HypervisorCollection:
-        """Access HypervisorCollection, which manages hypervisor inventory servers.
-
-        apm.hypervisors.list() → list[Hypervisor]
-        apm.hypervisors.get(id) → Hypervisor
-        """
+        """Access HypervisorCollection, which manages hypervisor inventory servers."""
         return self._hypervisors
 
     @property
@@ -221,12 +209,7 @@ class APMClient:
 
     @property
     def tiering_plans(self) -> TieringPlanCollection:
-        """Access TieringPlanCollection, which manages tiering plans.
-
-        apm.tiering_plans.list()           → list[TieringPlan]
-        apm.tiering_plans.get(id)          → TieringPlan
-        apm.tiering_plans.get_by_name(name) → TieringPlan
-        """
+        """Access TieringPlanCollection, which manages tiering plans."""
         return self._tiering_plans
 
     @property
@@ -258,14 +241,11 @@ class APMClient:
         A failed download never modifies an existing file at dest_path.
 
         Args:
-            url:         Full HTTPS URL as returned by exchange_export.get_download_url_by_*().
+            url:         Full HTTPS URL as returned by exchange_export/group_export's
+                         get_download_url_by_*() or machine.workloads.get_verification_video_url().
             dest_path:   Local filesystem path to write the file to.
             on_progress: Optional callback invoked after each chunk.
                          Signature: on_progress(bytes_downloaded, total_bytes_or_none).
-
-        Raises:
-            AuthenticationError: Session is not connected.
-            APIError: Server returned an error status or the connection failed.
         """
         await self._session.download_file(url, dest_path, on_progress=on_progress)
 
@@ -282,9 +262,5 @@ class APMClient:
             SiteInfo object containing site_uuid, external_address, port,
             primary_management_server (BackupServer or None), secondary_management_server (BackupServer
             or None), site_storage (SiteStorageStats), and workload_usage (WorkloadUsageSummary).
-
-        Raises:
-            AuthenticationError: Session has expired.
-            PermissionDeniedError: Insufficient system administration permissions.
         """
         return await self._system.get_site_info()
