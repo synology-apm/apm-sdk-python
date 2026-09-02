@@ -9,6 +9,7 @@ Usage:
     python restore_activity_report.py -o csv
     python restore_activity_report.py --date 2026-05-07
     python restore_activity_report.py --category m365 -o json
+    python restore_activity_report.py --category gws
 
 Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
@@ -124,6 +125,8 @@ async def run(
         activities = [a for a in activities if a.category == WorkloadCategory.MACHINE]
     elif category == "m365":
         activities = [a for a in activities if a.category == WorkloadCategory.M365]
+    elif category == "gws":
+        activities = [a for a in activities if a.category == WorkloadCategory.GWS]
 
     rows: list[dict[str, Any]] = [_build_row(act) for act in activities]
 
@@ -210,8 +213,8 @@ async def run(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--category", choices=["machine", "m365", "all"], default="all",
-        help="Workload category filter: machine, m365, or all (default: all)",
+        "--category", choices=["machine", "m365", "gws", "all"], default="all",
+        help="Workload category filter: machine, m365, gws, or all (default: all)",
     )
     parser.add_argument(
         "--date", metavar="YYYY-MM-DD",

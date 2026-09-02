@@ -114,28 +114,28 @@ async def test_list_offline_server_is_disconnected() -> None:
     assert servers[0].status == ServerStatus.DISCONNECTED
 
 
-async def test_list_filter_by_name_contains_sends_keyword_param() -> None:
-    """name_contains should be passed to the API as a keyword query parameter (server-side filtering)."""
+async def test_list_filter_by_keyword_sends_keyword_param() -> None:
+    """keyword should be passed to the API as a keyword query parameter (server-side filtering)."""
     async with connected_session() as (session, m):
 
         keyword_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=500&keyword=apm-server-01"
         m.get(keyword_url, payload={"backupServers": [SAMPLE_SERVER_RAW]})
         collection = BackupServerCollection(session)
-        result, total = await collection.list(name_contains="apm-server-01")
+        result, total = await collection.list(keyword="apm-server-01")
         await session.disconnect()
 
     assert len(result) == 1
     assert result[0].name == "apm-server-01"
 
 
-async def test_list_name_contains_passes_keyword_to_api() -> None:
-    """When name_contains is provided, the API receives the keyword param; case handling is done server-side."""
+async def test_list_keyword_passes_keyword_to_api() -> None:
+    """When keyword is provided, the API receives the keyword param; case handling is done server-side."""
     async with connected_session() as (session, m):
 
         keyword_url = f"{BASE_URL}/api/v1/infra/backup_server?offset=0&limit=500&keyword=APM-SERVER-01"
         m.get(keyword_url, payload={"backupServers": [SAMPLE_SERVER_RAW]})
         collection = BackupServerCollection(session)
-        result, total = await collection.list(name_contains="APM-SERVER-01")
+        result, total = await collection.list(keyword="APM-SERVER-01")
         await session.disconnect()
 
     assert len(result) == 1
@@ -448,7 +448,7 @@ async def test_get_by_name_paginates_to_next_page() -> None:
     call_count = 0
 
     async def fake_list(
-        name_contains: str | None = None, limit: int = 500, offset: int = 0, **kwargs: object
+        keyword: str | None = None, limit: int = 500, offset: int = 0, **kwargs: object
     ) -> tuple[list[BackupServer], int]:
         nonlocal call_count
         result = [(page1_servers, 200), (page2_servers, 200)][call_count]

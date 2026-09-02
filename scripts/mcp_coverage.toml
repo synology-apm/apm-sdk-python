@@ -27,7 +27,7 @@ mode      = "readonly"
 
 [[not_exposed]]
 sdk_path = "backup_servers.get_by_name"
-reason   = "internal resolution alias; covered by get_backup_server (name parameter)"
+reason   = "internal resolution alias; use list_backup_servers (keyword) to find the ID, then get_backup_server by ID"
 
 [[mapping]]
 sdk_path = "backup_servers.change_tiering_plan"
@@ -48,7 +48,7 @@ mode      = "readonly"
 
 [[not_exposed]]
 sdk_path = "remote_storages.get_by_name"
-reason   = "internal resolution alias; covered by get_remote_storage (name parameter)"
+reason   = "internal resolution alias; use list_remote_storages to find the ID, then get_remote_storage by ID"
 
 [[mapping]]
 sdk_path = "remote_storages.add"
@@ -79,7 +79,7 @@ mode      = "readonly"
 
 [[not_exposed]]
 sdk_path = "hypervisors.get_by_name"
-reason   = "internal resolution alias; covered by get_hypervisor (name parameter)"
+reason   = "internal resolution alias; use list_hypervisors to find the ID, then get_hypervisor by ID"
 
 # ── Machine Workloads ─────────────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ mode      = "readonly"
 
 [[not_exposed]]
 sdk_path = "machine.workloads.get_by_name"
-reason   = "internal resolution alias; covered by get_machine_workload (name parameter)"
+reason   = "internal resolution alias; use list_machine_workloads (keyword) to find the ID, then get_machine_workload by ID"
 
 [[mapping]]
 sdk_path = "machine.workloads.backup_now"
@@ -185,7 +185,7 @@ reason   = "covered by get_protection_plan (cross-category)"
 
 [[not_exposed]]
 sdk_path = "machine.plans.get_by_name"
-reason   = "internal resolution alias; covered by get_protection_plan (name parameter)"
+reason   = "internal resolution alias; use list_protection_plans (keyword) to find the ID, then get_protection_plan by ID"
 
 [[not_exposed]]
 sdk_path = "machine.plans.delete"
@@ -205,7 +205,7 @@ mode      = "readonly"
 
 [[not_exposed]]
 sdk_path = "m365.workloads.get_by_name"
-reason   = "internal resolution alias; covered by get_m365_workload (name parameter)"
+reason   = "internal resolution alias; use list_m365_workloads (keyword) to find the ID, then get_m365_workload by ID"
 
 [[mapping]]
 sdk_path = "m365.workloads.backup_now"
@@ -280,7 +280,7 @@ reason   = "covered by get_protection_plan (cross-category)"
 
 [[not_exposed]]
 sdk_path = "m365.plans.get_by_name"
-reason   = "internal resolution alias; covered by get_protection_plan (name parameter)"
+reason   = "internal resolution alias; use list_protection_plans (keyword) to find the ID, then get_protection_plan by ID"
 
 [[not_exposed]]
 sdk_path = "m365.plans.delete"
@@ -373,16 +373,148 @@ reason   = "lower-level internal method; covered by get_group_export_download_ur
 sdk_path = "m365.group_export.get_activity_by_result"
 reason   = "lower-level internal method used to retrieve activity status from a result object"
 
-# ── SaaS Tenants ──────────────────────────────────────────────────────────────
+# ── GWS Workloads ─────────────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "gws.workloads.list"
+mcp_tool  = "list_gws_workloads"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "gws.workloads.get"
+mcp_tool  = "get_gws_workload"
+mode      = "readonly"
+
+[[not_exposed]]
+sdk_path = "gws.workloads.get_by_name"
+reason   = "internal resolution alias; use list_gws_workloads (keyword) to find the ID, then get_gws_workload by ID"
+
+[[mapping]]
+sdk_path = "gws.workloads.backup_now"
+mcp_tool  = "backup_gws_workload"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "gws.workloads.cancel_backup"
+mcp_tool  = "cancel_gws_backup"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "gws.workloads.lock_version"
+mcp_tool  = "lock_gws_version"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.workloads.unlock_version"
+mcp_tool  = "unlock_gws_version"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.workloads.change_plan"
+mcp_tool  = "change_gws_workload_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.workloads.retire"
+mcp_tool  = "retire_gws_workload"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.workloads.delete"
+mcp_tool  = "delete_gws_workload"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.workloads.list_versions"
+mcp_tool  = "list_gws_versions"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "gws.workloads.get_version"
+mcp_tool  = "get_gws_version"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "gws.workloads.get_latest_version"
+mcp_tool  = "get_gws_version"
+mode      = "readonly"
+note      = "get_latest_version is used when version_id is omitted"
+
+# ── GWS Protection Plans (create/update only; list/get/delete via cross-category) ──
+
+[[mapping]]
+sdk_path = "gws.plans.create"
+mcp_tool  = "create_gws_protection_plan"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.plans.update"
+mcp_tool  = "update_gws_protection_plan"
+mode      = "admin"
+
+[[not_exposed]]
+sdk_path = "gws.plans.list"
+reason   = "covered by list_protection_plans with category=gws filter"
+
+[[not_exposed]]
+sdk_path = "gws.plans.get"
+reason   = "covered by get_protection_plan (cross-category)"
+
+[[not_exposed]]
+sdk_path = "gws.plans.get_by_name"
+reason   = "internal resolution alias; use list_protection_plans (keyword) to find the ID, then get_protection_plan by ID"
+
+[[not_exposed]]
+sdk_path = "gws.plans.delete"
+reason   = "covered by delete_protection_plan (cross-category)"
+
+# ── GWS Auto Backup Rules ─────────────────────────────────────────────────────
+
+[[mapping]]
+sdk_path = "gws.auto_backup_rules.list"
+mcp_tool  = "list_gws_auto_backup_rules"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "gws.auto_backup_rules.create"
+mcp_tool  = "create_gws_auto_backup_rule"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.auto_backup_rules.update"
+mcp_tool  = "update_gws_auto_backup_rule"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.auto_backup_rules.delete"
+mcp_tool  = "delete_gws_auto_backup_rule"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.auto_backup_rules.update_collab_settings"
+mcp_tool  = "update_gws_collab_settings"
+mode      = "admin"
+
+[[mapping]]
+sdk_path = "gws.auto_backup_rules.update_protected_account_types"
+mcp_tool  = "update_gws_protected_account_types"
+mode      = "admin"
+
+# ── SaaS Applications ─────────────────────────────────────────────────────────
 
 [[mapping]]
 sdk_path = "saas.list"
-mcp_tool  = "list_saas_tenants"
+mcp_tool  = "list_saas_applications"
 mode      = "readonly"
 
 [[mapping]]
 sdk_path = "saas.get_m365_tenant"
-mcp_tool  = "get_saas_tenant"
+mcp_tool  = "get_m365_tenant"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "saas.get_gws_domain"
+mcp_tool  = "get_gws_domain"
 mode      = "readonly"
 
 # ── Protection Plans (cross-category) ────────────────────────────────────────
@@ -399,11 +531,11 @@ mode      = "readonly"
 
 [[not_exposed]]
 sdk_path = "plans.get_by_name"
-reason   = "internal resolution alias; covered by get_protection_plan (name parameter)"
+reason   = "internal resolution alias; use list_protection_plans (keyword) to find the ID, then get_protection_plan by ID"
 
 [[not_exposed]]
 sdk_path = "plans.create"
-reason   = "category-specific create is exposed (create_machine_protection_plan, create_m365_protection_plan)"
+reason   = "category-specific create is exposed (create_machine_protection_plan, create_m365_protection_plan, create_gws_protection_plan)"
 
 [[mapping]]
 sdk_path = "plans.delete"
@@ -424,7 +556,7 @@ mode      = "readonly"
 
 [[not_exposed]]
 sdk_path = "retirement_plans.get_by_name"
-reason   = "internal resolution alias; covered by get_retirement_plan (name parameter)"
+reason   = "internal resolution alias; use list_retirement_plans (keyword) to find the ID, then get_retirement_plan by ID"
 
 [[mapping]]
 sdk_path = "retirement_plans.create"
@@ -455,7 +587,7 @@ mode      = "readonly"
 
 [[not_exposed]]
 sdk_path = "tiering_plans.get_by_name"
-reason   = "internal resolution alias; covered by get_tiering_plan (name parameter)"
+reason   = "internal resolution alias; use list_tiering_plans (keyword) to find the ID, then get_tiering_plan by ID"
 
 [[mapping]]
 sdk_path = "tiering_plans.create"

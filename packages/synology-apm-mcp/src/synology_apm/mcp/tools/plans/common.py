@@ -1,4 +1,4 @@
-"""Cross-category protection plan tools (list/get/delete span machine + M365)."""
+"""Cross-category protection plan tools (list/get/delete span machine + M365 + GWS)."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -11,7 +11,7 @@ from synology_apm.mcp._registrar import ToolRegistrar
 from synology_apm.mcp._security import DESTRUCTIVE_PREVIEW_SUFFIX, destructive_tool
 from synology_apm.sdk import APMClient, WorkloadCategory
 
-_CATEGORY = Literal["machine", "m365"]
+_CATEGORY = Literal["machine", "m365", "gws"]
 
 
 def register_delete_plan_tool(
@@ -46,23 +46,23 @@ def register_delete_plan_tool(
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     """Register cross-category protection plan tools onto server."""
 
-    @registrar.tool(description=f"List protection plans. Filter by category (machine/m365) or name. {LIST_RESULT_SUFFIX}")
+    @registrar.tool(description=f"List protection plans. Filter by category (machine/m365/gws) or name. {LIST_RESULT_SUFFIX}")
     async def list_protection_plans(
         ctx: Context,
         category: _CATEGORY | None = None,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         cat = WorkloadCategory(category) if category else None
         return await list_tool(
-            apm.plans.list(category=cat, name_contains=name_contains, limit=limit, offset=offset),
+            apm.plans.list(category=cat, keyword=keyword, limit=limit, offset=offset),
             lambda x: x.to_dict(),
             offset=offset,
         )
 
-    @registrar.tool(description="Get a single protection plan by ID. Use list_protection_plans (optionally with name_contains) to find the ID.")
+    @registrar.tool(description="Get a single protection plan by ID. Use list_protection_plans (optionally with keyword) to find the ID.")
     async def get_protection_plan(
         ctx: Context,
         plan_id: str,

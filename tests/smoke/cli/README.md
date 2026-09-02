@@ -1,39 +1,23 @@
 # CLI Live Smoke-Test Tool — Maintainer Guide
 
-This is the design contract for the CLI live smoke-test tool: how it is structured, the
-conventions every phase follows, and how to extend it when `synology-apm-cli` gains new commands
-or options. Read this before adding to or modifying anything under this directory.
+This is the design contract for the CLI live smoke-test tool: how it is structured, and how to
+extend it when `synology-apm-cli` gains new commands or options. See `tests/smoke/README.md`
+first for conventions shared with the sibling SDK smoke tool (the layer-comparison table,
+`reports/` trust model, `ctx.data`/`ctx.skip`/`--group` semantics, and the generic extend/
+after-any-change recipe) — this file covers only what's specific to driving the CLI binary.
 
 ---
 
 ## Purpose and relationship to other test layers
 
-| Layer | Drives | Data source | Offline? |
-|---|---|---|---|
-| `tests/unit/` | In-process Typer `CliRunner` (mocked SDK) | fixtures | yes |
-| `tests/integration/` | SDK methods directly (`apm.machine.workloads.list()`) | `tests/cassettes/` | yes (replay) |
-| **This tool** | The real `synology-apm-cli` binary, via subprocess | live, `.env`-configured APM | no |
+Neither `tests/unit/` nor `tests/integration/` exercises the actual CLI binary's argv parsing,
+`table`/`json` rendering, or exit codes against a live server (see the layer table in
+`tests/smoke/README.md`). This tool fills that gap: it runs every reversible command in
+dependency order, for both `-o table` and `-o json`, and side-records the raw API traffic (via
+`--debug`) for AI/human review.
 
-Neither `tests/unit/` nor `tests/integration/` exercises the actual CLI binary's argv
-parsing, `table`/`json` rendering, or exit codes against a live server. This tool fills that
-gap: it runs every reversible command in dependency order, for both `-o table` and `-o json`,
-and side-records the raw API traffic (via `--debug`) for AI/human review.
-
-See root `CLAUDE.md` → "Common Commands" for how to invoke it
-(`uv run python -m tests.smoke.cli [--group ...]`). It must be run from the repo
-root (it is a package under `tests/`, invoked via `python -m`).
-
-> **Note:** Before running against a new APM test instance, see `TEST_DATA.md` for the
-> resources (backup servers, workloads, plans, ...) that should already exist so that as much
-> of the CLI as possible is exercised rather than skipped.
-
-> **Note:** `reports/` is gitignored, with the same trust model as
-> `tests/cassettes/` — real hostnames, workload names, and IDs from your `.env`-configured
-> APM are fine to appear there, but nothing under `reports/` is ever committed. This
-> `README.md`, `MANUAL_TESTS.md`, and all source files in this directory **are** committed
-> and must follow CLAUDE.md's Language Policy, Documentation Style, and Example Data
-> Conventions (English, no decorative emoji, no real hostnames/IDs in code comments or
-> docstrings).
+Invoke it with `uv run python -m tests.smoke.cli [--group ...]` (see the `Makefile`'s
+`smoke-test` target); see `TEST_DATA.md` for the prerequisite APM resources.
 
 ---
 
@@ -58,15 +42,15 @@ smoke/cli/
 │   ├── _plan.py             ← plan protection/retirement/tiering
 │   ├── _machine.py           ← machine list/get/version list/version get
 │   ├── _saas_m365.py           ← saas list + m365 <scope> list/get/version for all 6 scopes
-│   ├── _activity.py             ← activity backup/restore list/get
-│   └── _log.py                   ← log activity/drive/connection/system (DP servers only)
+│   ├── _gws.py                   ← saas list + gws <scope> list/get/version for all 5 scopes
+│   ├── _activity.py                ← activity backup/restore list/get
+│   └── _log.py                      ← log activity/drive/connection/system (DP servers only)
 └── reports/               ← gitignored: <UTC timestamp>/{index,<domain>}.md + api_trace.jsonl
 ```
 
 Each `phases/_<domain>.py` corresponds to one entry in `DOMAINS` (`_context.py`) and one
-entry in `_PHASES`/`_ORDER` (`__main__.py`). Files are named with a leading underscore so
-pytest's default `test_*.py` collection ignores them — same precedent as
-`tests/cassette_lib.py`.
+entry in `_PHASES`/`_ORDER` (`__main__.py`). See `tests/smoke/README.md`'s "Shared
+conventions" for the leading-underscore file naming rule.
 
 ---
 
@@ -101,9 +85,8 @@ through these methods:
 
 - **`ctx.skip(domain, step, reason)`** — records a conditional skip (e.g. "no DP-type server
   found") as a `SKIPPED: <reason>` entry in `index.md`'s checklist and increments
-  `ctx.stats[domain].skipped`. Use this, not a hard failure, whenever a step's prerequisite
-  data may legitimately be absent on a given APM (empty workload lists, no retired workloads,
-  no in-progress restore, etc.).
+  `ctx.stats[domain].skipped` — see `tests/smoke/README.md`'s "Shared conventions" for when to
+  use this instead of a hard failure.
 
 - **`pick_backed_up_workload(workloads) -> dict`** (module-level) — picks the `get`/`version`
   target from a parsed `list` result: prefers a backed-up workload with an unambiguous name
@@ -141,18 +124,24 @@ you add a new `ctx.data[...] = ...` assignment, add a row to this table.
 | `m365_workloads[scope]` | `dict[str, list[dict]]` | m365: `m365.<scope>.list` | — (available) |
 | `retired_m365_workloads[scope]` | `dict[str, list[dict]]` | m365: `m365.<scope>.list[retired]` | — (available) |
 | `m365_versions[scope]` | `dict[str, list[dict]]` | m365: `m365.<scope>.version.list[direct]` | — (available) |
+| `gws_workloads[scope]` | `dict[str, list[dict]]` | gws: `gws.<scope>.list` | — (available) |
+| `retired_gws_workloads[scope]` | `dict[str, list[dict]]` | gws: `gws.<scope>.list[retired]` | — (available) |
+| `gws_versions[scope]` | `dict[str, list[dict]]` | gws: `gws.<scope>.version.list[direct]` | — (available) |
 | `backup_activities` | `list[dict]` | activity: `activity.backup.list[history]` | — (available) |
 | `restore_activities` | `list[dict]` | activity: `activity.restore.list[history]` | — (available) |
 | `protection_plans` | `list[dict]` | plan: `plan.protection.list[all]` | — (available) |
 | `retirement_plans` | `list[dict]` | plan: `plan.retirement.list` | — (available) |
 | `tiering_plans` | `list[dict]` | plan: `plan.tiering.list` | — (available) |
 
-The per-scope dicts (`m365_workloads`, `retired_m365_workloads`, `m365_versions`) are built
-with `ctx.data.setdefault("<key>", {})[scope] = ...` since the m365 phase loops over
-`ctx.m365_scopes`.
+The per-scope dicts (`m365_workloads`, `retired_m365_workloads`, `m365_versions`; likewise
+`gws_workloads`, `retired_gws_workloads`, `gws_versions`) are built with
+`ctx.data.setdefault("<key>", {})[scope] = ...` since the m365/gws phases each loop over their
+own scopes (`ctx.m365_scopes` for m365; a fixed `GWS_SCOPES` tuple for gws — GWS has no
+`--gws-scopes`-style flag since it has only 5 fixed sub-types with no export branching to
+subset).
 
 Dict values are the parsed `-o json` array elements — the same fields documented as CLI JSON
-output in `packages/synology-apm-cli/src/synology_apm/cli/README.md` (e.g. `name`,
+output in `packages/synology-apm-cli/src/synology_apm/cli/COMMAND_REFERENCE.md` (e.g. `name`,
 `workload_id`, `namespace`, `tenant_id`, `plan_id`, `plan_name`, `backup_server_id`,
 `version_id`, `locked`, `activity_id`, `is_retired`).
 
@@ -183,8 +172,7 @@ Every `phases/_<domain>.py` follows this shape:
    reviewer should expect to see* (e.g. `"Exercises NDJSON streaming for --page-all."`) or *why* a non-default
    `expect_codes` is acceptable.
 8. Conditional prerequisites (empty `list`, no DP server, no retired workload, no
-   in-progress restore) are `ctx.skip(...)`, never a hard failure — a fresh/empty APM should
-   still produce a clean `index.md` with `unexpected: 0` everywhere.
+   in-progress restore) are `ctx.skip(...)` per `tests/smoke/README.md`'s shared convention.
 
 ---
 
@@ -195,39 +183,31 @@ All commands this tool can run fall into two categories:
 | Category | Behavior | Examples |
 |---|---|---|
 | **Read-only** | Always run | all `list`/`get`/`show`/`info` across every domain |
-| **Excluded — manual only** | Irreversible, never automated, see `MANUAL_TESTS.md` | `machine retire`, `m365 <scope> retire` |
+| **Excluded — manual only** | Irreversible, never automated, see `MANUAL_TESTS.md` | `machine retire`, `m365 <scope> retire`, `gws <scope> retire` |
 
 State-mutating commands (`version lock`/`unlock`, `backup`/`cancel`, `change-plan`,
 `activity restore cancel`, `infra server change-plan`) are not run by this tool — the SDK
 smoke test (`tests/smoke/sdk`) covers those code paths against the live server, and the
 CLI's own wiring for those commands is covered by the unit tests
-(`tests/unit/cli/commands/`). Steps whose prerequisite data is not present on
-the APM are recorded as `ctx.skip(...)` in the relevant `<domain>.md`, with a reason
-describing what data was not found — this is expected on a sparsely-populated APM, not a
-failure. See `TEST_DATA.md` for the data that makes each step exercised rather than
-skipped.
+(`tests/unit/cli/commands/`). See `TEST_DATA.md` for the data that makes each step exercised
+rather than `ctx.skip(...)`-ed.
 
 ---
 
 ## `--group` dispatch (`__main__.py`)
 
 ```python
-_ORDER = ("config", "infra", "plan", "machine", "m365", "activity", "log")
+_ORDER = ("config", "infra", "plan", "machine", "m365", "gws", "activity", "log")
 _PHASES = {"config": _config, "infra": _infra, "machine": _machine,
            "m365": _saas_m365, "saas": _saas_m365,  # "saas" is an alias for "m365"
+           "gws": _gws,
            "activity": _activity, "plan": _plan, "log": _log}
 ```
 
-`--group all` (default) runs all phases in `_ORDER`; `--group <domain>` runs exactly one.
-The order reflects `ctx.data` dependencies: `infra` populates `dp_servers` before `log`.
-
-> **Note:** Running a single `--group <domain>` is useful for fast iteration, but any step
-> that depends on a `ctx.data` key from an earlier phase will find it empty and
-> `ctx.skip(...)` gracefully. To exercise the full cross-phase data flow (e.g. the `log`
-> phase reading `dp_servers` from the infra phase), use `--group all`.
-
-`--m365-scopes` (default: all of `M365_SCOPES`) limits which scopes `phases/_saas_m365.py`
-loops over — useful for iterating on one scope.
+See `tests/smoke/README.md`'s "Shared conventions" for the general `--group`/`--m365-scopes`
+semantics. The order above reflects this tool's own `ctx.data` dependencies: `infra`
+populates `dp_servers` before `log`. `phases/_gws.py` always iterates its fixed 5-scope
+`GWS_SCOPES` tuple unconditionally (no `--gws-scopes` flag).
 
 The credential file (`tests/smoke/smoke_creds.toml`) is consumed only by the **SDK** smoke
 tool's CRUD round trips (see `tests/smoke/sdk/README.md`) — the CLI phases are all
@@ -268,44 +248,22 @@ Each run creates `reports/<UTC timestamp>/`:
 
 ## How to extend
 
-**Add a command/option to an existing phase** — add a `ctx.run(...)`/`ctx.run_both(...)`
-call in the relevant `_run_<subcommand>` helper (or a new helper called from `run`),
-following the `step` naming convention above. If the command's output feeds a later phase,
-add it to the `ctx.data` registry table above.
+Follow `tests/smoke/README.md`'s generic "How to extend" recipe. The one CLI-specific detail:
+adding a step means adding a `ctx.run(...)`/`ctx.run_both(...)` call in the relevant
+`_run_<subcommand>` helper, following the `step` naming convention above; an irreversible
+command goes in `MANUAL_TESTS.md` instead (search-mode + direct-mode syntax, prerequisites,
+what to verify).
 
-**Add a new phase** —
-1. Create `phases/_<domain>.py` following the pattern above.
-2. Add `"<domain>"` to `DOMAINS` in `_context.py`.
-3. Import it and add it to `_PHASES`/`_ORDER` in `__main__.py`, positioned according to its
-   `ctx.data` dependencies.
-4. Add the new key(s) it produces/consumes to the `ctx.data` registry table above.
-
-**New prerequisite data** — if a new or changed step's `ctx.skip(...)` depends on a kind of
-APM resource (a new plan type, workload category, scope, version state, ...) not yet covered
-by `TEST_DATA.md`, add it to the relevant section there so testers know to set it up on the
-APM before running.
-
-**Irreversible commands** (anything with no undo, like `retire`) — never automate. Add it to
-`MANUAL_TESTS.md` instead, following its existing format (search-mode + direct-mode syntax,
-prerequisites, what to verify).
-
-**After any change** —
-1. `uv run python -m tests.smoke.cli --group <domain>` against your `.env` test
-   machine; review the regenerated `reports/<ts>/<domain>.md` and `index.md` for `unexpected`
-   exit codes.
-2. For changes that touch `ctx.data` threading across phases, also run `--group all`.
-3. `uv run ruff check packages/synology-apm-sdk/src packages/synology-apm-cli/src tests
-   examples scripts` and `uv run mypy examples/ scripts/ tests/` must both pass — see root
-   `CLAUDE.md` Post-change Checklist.
+**After any change** — `uv run python -m tests.smoke.cli --group <domain>` against your
+`.env` test machine; review the regenerated `reports/<ts>/<domain>.md` and `index.md` for
+`unexpected` exit codes (also run `--group all` if the change touches `ctx.data` threading
+across phases). Then follow `tests/smoke/README.md`'s lint/type-check gate.
 
 ---
 
 ## Relationship to `TEST_DATA.md` and `MANUAL_TESTS.md`
 
-`TEST_DATA.md` documents what to set up **before** a run: the backup servers, workloads,
-versions, tenants, and plans that should already exist on the APM so the phases above find
-data to exercise instead of `ctx.skip(...)`-ing.
-
-`MANUAL_TESTS.md` documents the 7 irreversible `retire` invocations (1 machine + 6 m365
-scopes) that this tool deliberately never runs, to be checked **after** a run by hand against
-a disposable workload. `index.md` links to it on every run as a reminder.
+`TEST_DATA.md` documents the prerequisite APM resources (see `tests/smoke/README.md`'s note
+above); `MANUAL_TESTS.md` documents the 12 irreversible `retire` invocations (1 machine + 6
+m365 scopes + 5 gws scopes) that this tool deliberately never runs, to be checked **after** a
+run by hand against a disposable workload. `index.md` links to it on every run as a reminder.

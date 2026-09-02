@@ -43,7 +43,7 @@ class TieringPlanCollection:
 
     async def list(
         self,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         limit: int = 500,
         offset: int = 0,
     ) -> ListResult[TieringPlan]:
@@ -52,16 +52,16 @@ class TieringPlanCollection:
         Destination details are resolved concurrently for all plans in the page.
 
         Args:
-            name_contains: Name keyword search. None = no filter.
-            limit:         Maximum records to return (default 500).
-            offset:        Pagination start offset (default 0).
+            keyword: Name keyword search. None = no filter.
+            limit:   Maximum records to return (default 500).
+            offset:  Pagination start offset (default 0).
 
         Returns:
             (list of TieringPlan, total count matching the filter)
         """
         params: dict[str, Any] = {"offset": offset, "limit": limit}
-        if name_contains:
-            params["keyword"] = name_contains
+        if keyword:
+            params["keyword"] = keyword
 
         raw = await self._session.get("/api/v1/plan/tiering_plan", params=params)
         plans_raw = raw.get("plans") or []

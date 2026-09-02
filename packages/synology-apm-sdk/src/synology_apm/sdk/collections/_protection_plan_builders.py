@@ -23,6 +23,7 @@ from ..enums import (
 from ..models.backup_server import BackupServer
 from ..models.protection_plan import (
     BackupCopyConfig,
+    GWSPlanCreateRequest,
     M365PlanCreateRequest,
     MachineBackupWindow,
     MachineDbConfig,
@@ -86,6 +87,24 @@ def _build_m365_body(request: M365PlanCreateRequest) -> dict[str, Any]:
                     "CONTACTS", "CALENDAR", "ARCHIVE_MAIL",
                 ],
                 "schedule": _build_main_schedule_dict(request.schedule),
+            },
+            "backupCopy": _build_backup_copy_dict(request.backup_copy),
+        },
+        "runScheduleByControllerTime": request.run_schedule_by_controller_time,
+    }
+
+
+def _build_gws_body(request: GWSPlanCreateRequest) -> dict[str, Any]:
+    return {
+        "plan": {
+            "name": request.name,
+            "description": request.description,
+            "isImmutable": request.is_immutable,
+            "serviceType": "GW",
+            "retention": _build_retention_dict(request.retention),
+            "configGw": {
+                "schedule": _build_main_schedule_dict(request.schedule),
+                "enableLabelBackup": True,
             },
             "backupCopy": _build_backup_copy_dict(request.backup_copy),
         },

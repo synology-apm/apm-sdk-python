@@ -16,11 +16,16 @@ from synology_apm.sdk import (
     BackupServer,
     BackupServerRole,
     BackupServerType,
+    GWSDomainInfo,
+    GWSUserInfo,
+    GWSWorkload,
+    GWSWorkloadType,
     Hypervisor,
     HypervisorType,
     LocationInfo,
     M365ExportActivity,
     M365ExportStatus,
+    M365TenantInfo,
     M365UserInfo,
     M365Workload,
     M365WorkloadType,
@@ -36,7 +41,6 @@ from synology_apm.sdk import (
     RestoreActivityStatus,
     RetentionType,
     RetirementPlan,
-    SaasTenant,
     ScheduleFrequency,
     ServerStatus,
     TieringPlan,
@@ -123,6 +127,34 @@ def mock_apm() -> MagicMock:
     apm.m365.auto_backup_rules.delete = AsyncMock()
     apm.m365.auto_backup_rules.update_collab_settings = AsyncMock()
 
+    apm.gws.workloads.list = AsyncMock()
+    apm.gws.workloads.get = AsyncMock()
+    apm.gws.workloads.get_by_name = AsyncMock()
+    apm.gws.workloads.backup_now = AsyncMock()
+    apm.gws.workloads.cancel_backup = AsyncMock()
+    apm.gws.workloads.retire = AsyncMock()
+    apm.gws.workloads.delete = AsyncMock()
+    apm.gws.workloads.change_plan = AsyncMock()
+    apm.gws.workloads.list_versions = AsyncMock()
+    apm.gws.workloads.get_version = AsyncMock()
+    apm.gws.workloads.get_latest_version = AsyncMock()
+    apm.gws.workloads.lock_version = AsyncMock()
+    apm.gws.workloads.unlock_version = AsyncMock()
+
+    apm.gws.plans.list = AsyncMock()
+    apm.gws.plans.get = AsyncMock()
+    apm.gws.plans.get_by_name = AsyncMock()
+    apm.gws.plans.create = AsyncMock()
+    apm.gws.plans.update = AsyncMock()
+    apm.gws.plans.delete = AsyncMock()
+
+    apm.gws.auto_backup_rules.list = AsyncMock()
+    apm.gws.auto_backup_rules.create = AsyncMock()
+    apm.gws.auto_backup_rules.update = AsyncMock()
+    apm.gws.auto_backup_rules.delete = AsyncMock()
+    apm.gws.auto_backup_rules.update_collab_settings = AsyncMock()
+    apm.gws.auto_backup_rules.update_protected_account_types = AsyncMock()
+
     apm.m365.exchange_export.list = AsyncMock()
     apm.m365.exchange_export.start = AsyncMock()
     apm.m365.exchange_export.cancel = AsyncMock()
@@ -163,6 +195,7 @@ def mock_apm() -> MagicMock:
 
     apm.saas.list = AsyncMock()
     apm.saas.get_m365_tenant = AsyncMock()
+    apm.saas.get_gws_domain = AsyncMock()
 
     apm.logs.list_activity = AsyncMock()
     apm.logs.list_drive = AsyncMock()
@@ -354,16 +387,28 @@ def make_retirement_plan(**kwargs: Any) -> RetirementPlan:
     return RetirementPlan(**defaults)
 
 
-def make_saas_tenant(**kwargs: Any) -> SaasTenant:
+def make_m365_tenant_info(**kwargs: Any) -> M365TenantInfo:
     defaults: dict[str, Any] = dict(
         tenant_id="tenant-001",
-        tenant_name="Contoso",
-        tenant_email="admin@contoso.com",
+        name="Contoso",
+        domain="contoso.onmicrosoft.com",
         category=WorkloadCategory.M365,
         protected_data_bytes=5_000_000_000,
     )
     defaults.update(kwargs)
-    return SaasTenant(**defaults)
+    return M365TenantInfo(**defaults)
+
+
+def make_gws_domain_info(**kwargs: Any) -> GWSDomainInfo:
+    defaults: dict[str, Any] = dict(
+        domain="gwsdemo.example.com",
+        name="gwsdemo.example.com",
+        domain_admin="evelyn.test@gwsdemo.example.com",
+        category=WorkloadCategory.GWS,
+        protected_data_bytes=5_000_000_000,
+    )
+    defaults.update(kwargs)
+    return GWSDomainInfo(**defaults)
 
 
 def make_machine_workload(**kwargs: Any) -> MachineWorkload:
@@ -492,6 +537,36 @@ def make_export_activity(**kwargs: Any) -> M365ExportActivity:
     )
     defaults.update(kwargs)
     return M365ExportActivity(**defaults)
+
+
+def make_gws_workload(**kwargs: Any) -> GWSWorkload:
+    from datetime import UTC, datetime
+    defaults: dict[str, Any] = dict(
+        workload_id="123e4567-e89b-12d3-a456-426614174003",
+        name="alice@gwsdemo.example.com",
+        category=WorkloadCategory.GWS,
+        workload_type=GWSWorkloadType.MAIL,
+        namespace="default",
+        domain="gwsdemo.example.com",
+        last_backup_at=datetime(2026, 7, 14, 3, 0, tzinfo=UTC),
+        is_retired=False,
+        protected_data_bytes=500_000_000,
+        status=WorkloadStatus.SUCCESS,
+        plan=make_protection_plan(category=WorkloadCategory.GWS),
+        backup_progress=None,
+        items_backed_up=None,
+        backup_server=LocationInfo(
+            is_remote_storage=False, identifier="srv-001",
+            name="apm-server-01", endpoint="192.0.2.1", vault=None,
+        ),
+        backup_copy_destination=None,
+        backup_copy_data_bytes=0,
+        info=GWSUserInfo(email="alice@gwsdemo.example.com"),
+        backup_user=None,
+        is_anomaly=False,
+    )
+    defaults.update(kwargs)
+    return GWSWorkload(**defaults)
 
 
 def make_m365_workload(**kwargs: Any) -> M365Workload:

@@ -12,13 +12,13 @@ from pydantic import BeforeValidator
 
 from synology_apm.mcp._errors import ToolResult as ToolResult
 from synology_apm.mcp._errors import run_tool
+from synology_apm.mcp._security import DESTRUCTIVE_PREVIEW_SUFFIX
 from synology_apm.sdk import (
     APMClient,
     ExchangeExportCollection,
     GroupExportCollection,
     M365ExportActivity,
     M365Workload,
-    M365WorkloadType,
     MachineWorkload,
     ProtectionPlan,
     ResourceNotFoundError,
@@ -42,6 +42,31 @@ LIST_RESULT_SUFFIX_UNRELIABLE_TOTAL = (
     "Returns {items, total, truncated?} (total is always null since this endpoint does not report an "
     "accurate count; truncated indicates more results may exist beyond this page)."
 )
+
+
+def auto_backup_rule_update_desc(category: str) -> str:
+    """Tool description for update_m365_auto_backup_rule / update_gws_auto_backup_rule.
+
+    Args:
+        category: lowercase category token used in the tool/list-tool names, e.g. "m365" or "gws"."""
+    return (
+        f"Update an existing {category.upper()} auto-backup rule; find its uid via "
+        f"list_{category}_auto_backup_rules. Omit a field (leave it unset) to keep its current "
+        "value; pass an empty list `[]` for a group-id list you want cleared."
+    )
+
+
+def auto_backup_rule_delete_desc(article: str, category: str) -> str:
+    """Tool description for delete_m365_auto_backup_rule / delete_gws_auto_backup_rule.
+
+    Args:
+        article:  grammatical article for the category label, e.g. "an" (M365) or "a" (GWS) —
+                  depends on pronunciation, not spelling, so it isn't derived automatically.
+        category: lowercase category token used in the tool/list-tool names, e.g. "m365" or "gws"."""
+    return (
+        f"Delete {article} {category.upper()} auto-backup rule; find its uid via "
+        f"list_{category}_auto_backup_rules. {DESTRUCTIVE_PREVIEW_SUFFIX}"
+    )
 
 
 def to_enum_list(cls: type[_EnumT], values: Sequence[str] | None) -> list[_EnumT] | None:
@@ -73,7 +98,7 @@ JSON_LIST_VALIDATOR = BeforeValidator(coerce_json_encoded_list)
 
 async def list_result(
     coro: Awaitable[tuple[list[_T], int | None]],
-    serializer: Callable[[_T], Any],
+    serializer: Callable[[_T], dict[str, Any]],
     *,
     limit: int | None = None,
     offset: int = 0,
@@ -97,14 +122,14 @@ async def list_result(
     return result
 
 
-async def get_result(coro: Awaitable[_T], serializer: Callable[[_T], Any]) -> Any:
+async def get_result(coro: Awaitable[_T], serializer: Callable[[_T], dict[str, Any]]) -> dict[str, Any]:
     """Await a single-item coroutine and return the serialized result."""
     return serializer(await coro)
 
 
 async def list_tool(
     coro: Awaitable[tuple[list[_T], int | None]],
-    serializer: Callable[[_T], Any],
+    serializer: Callable[[_T], dict[str, Any]],
     *,
     limit: int | None = None,
     offset: int = 0,
@@ -113,7 +138,7 @@ async def list_tool(
     return await run_tool(list_result(coro, serializer, limit=limit, offset=offset))
 
 
-async def get_tool(coro: Awaitable[_T], serializer: Callable[[_T], Any]) -> ToolResult:
+async def get_tool(coro: Awaitable[_T], serializer: Callable[[_T], dict[str, Any]]) -> ToolResult:
     """Combine get_result() + run_tool() for the common single-item tool body."""
     return await run_tool(get_result(coro, serializer))
 
@@ -206,18 +231,3 @@ async def resolve_machine_version(
     return VersionResolution(workload, version)
 
 
-async def resolve_m365_version(
-    apm: APMClient,
-    *,
-    workload_id: str,
-    namespace: str,
-    tenant_id: str,
-    workload_type: str,
-    version_id: str | None,
-) -> VersionResolution[M365Workload]:
-    """Resolve an M365 workload and then one of its versions, or the latest if version_id is None."""
-    workload = await apm.m365.workloads.get(
-        workload_id, namespace, tenant_id=tenant_id, workload_type=M365WorkloadType(workload_type)
-    )
-    version = await _resolve_version_for_workload(apm.m365.workloads, workload, version_id)
-    return VersionResolution(workload, version)

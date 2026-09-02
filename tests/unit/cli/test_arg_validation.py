@@ -31,25 +31,25 @@ def test_plan_protection_list_invalid_category_exits_1(mock_apm: AsyncMock) -> N
     """plan protection list --category <invalid> should exit with code 1."""
     result = invoke_cli(mock_apm, ["plan", "protection", "list", "--category", "bad_category"])
     assert result.exit_code == 1
-    assert "Invalid category" in result.output
+    assert "Unsupported category value" in result.output
 
 
 # ── machine version ───────────────────────────────────────────────────────────
 
 def test_machine_version_list_id_without_namespace_exits_1() -> None:
-    """machine version list --id X (no --namespace) should exit 1."""
+    """machine version list --workload-id X (no --namespace) should exit 1."""
     result = invoke_cli(AsyncMock(), [
-        "machine", "version", "list", "--id", "wl-001",
+        "machine", "version", "list", "--workload-id", "wl-001",
     ])
     assert result.exit_code == 1
     assert "--namespace" in result.output
 
 
 def test_machine_version_list_name_and_id_conflict_exits_1() -> None:
-    """machine version list NAME --id X --namespace Y should exit 1."""
+    """machine version list NAME --workload-id X --namespace Y should exit 1."""
     result = invoke_cli(AsyncMock(), [
         "machine", "version", "list", "vm-web-01",
-        "--id", "wl-001", "--namespace", "ns-001",
+        "--workload-id", "wl-001", "--namespace", "ns-001",
     ])
     assert result.exit_code == 1
-    assert "--id" in result.output or "--namespace" in result.output
+    assert "--workload-id" in result.output or "--namespace" in result.output

@@ -104,11 +104,11 @@ class TestListBackupServersFilters:
 
         await call_tool(
             admin_server, "list_backup_servers", mock_ctx,
-            name_contains="apm-server", status=["healthy", "warning"], server_type=["dp"],
+            keyword="apm-server", status=["healthy", "warning"], server_type=["dp"],
         )
 
         _, kwargs = mock_apm.backup_servers.list.call_args
-        assert kwargs["name_contains"] == "apm-server"
+        assert kwargs["keyword"] == "apm-server"
         assert kwargs["status_filter"] == [ServerStatus.HEALTHY, ServerStatus.WARNING]
         assert kwargs["type_filter"] == [BackupServerType.DP]
 
@@ -119,7 +119,7 @@ class TestListBackupServersFilters:
         await call_tool(admin_server, "list_backup_servers", mock_ctx)
 
         _, kwargs = mock_apm.backup_servers.list.call_args
-        assert kwargs["name_contains"] is None
+        assert kwargs["keyword"] is None
         assert kwargs["status_filter"] is None
         assert kwargs["type_filter"] is None
 

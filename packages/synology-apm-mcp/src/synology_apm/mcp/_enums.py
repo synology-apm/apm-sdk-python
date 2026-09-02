@@ -9,6 +9,7 @@ from typing import Literal
 
 MachineWorkloadTypeLiteral = Literal["pc", "ps", "vm", "fs"]
 M365WorkloadTypeLiteral = Literal["exchange", "onedrive", "chat", "sharepoint", "teams", "group"]
+GWSWorkloadTypeLiteral = Literal["drive", "mail", "contact", "calendar", "shared_drive"]
 BackupActivityStatusLiteral = Literal[
     "queuing", "backing_up", "canceling", "success", "failed", "partial", "canceled"
 ]

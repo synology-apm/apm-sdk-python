@@ -230,11 +230,11 @@ async def test_list_drive_sends_tunnel_header() -> None:
 async def test_list_connection_parses_fields() -> None:
     session = make_session()
     with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"connectionLogs": [SAMPLE_CONNECTION_RAW]}
+        mock_get.return_value = {"connectionLogs": [SAMPLE_CONNECTION_RAW], "total": 1}
         collection = LogCollection(session)
         logs, total = await collection.list_connection(SAMPLE_SERVER)
 
-    assert total is None
+    assert total == 1
     e = logs[0]
     assert e.level == LogLevel.INFO
     assert e.username == "admin"
@@ -258,11 +258,11 @@ async def test_list_connection_sends_tunnel_header() -> None:
 async def test_list_system_parses_fields() -> None:
     session = make_session()
     with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = {"generalLogs": [SAMPLE_SYSTEM_RAW]}
+        mock_get.return_value = {"generalLogs": [SAMPLE_SYSTEM_RAW], "total": 1}
         collection = LogCollection(session)
         logs, total = await collection.list_system(SAMPLE_SERVER)
 
-    assert total is None
+    assert total == 1
     e = logs[0]
     assert e.level == LogLevel.INFO
     assert e.username == "SYSTEM"

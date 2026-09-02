@@ -1,13 +1,13 @@
 ---
 name: manage-apm-resource
-description: "View, update, or remove a single existing APM resource — a remote storage, protection/retirement/tiering plan, file server, backup server's tiering-plan assignment, or M365 auto-backup rule/collab settings. Use when the user asks to change, update, rotate, remove, or reassign a single already-existing resource (not a bulk import)."
+description: "View, update, or remove a single existing APM resource — a remote storage, protection/retirement/tiering plan, file server, backup server's tiering-plan assignment, or M365/GWS auto-backup rule/collab settings. Use when the user asks to change, update, rotate, remove, or reassign a single already-existing resource (not a bulk import)."
 ---
 
 # Manage an APM Resource
 
 When the user asks to change, update, rotate, remove, or reassign settings on a specific
 existing remote storage, protection/retirement/tiering plan, file server, backup server, or
-M365 auto-backup rule:
+M365/GWS auto-backup rule:
 
 See [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) for shared conventions this skill
 relies on — especially its **Update semantics** and **Destructive action preview pattern**
@@ -19,16 +19,16 @@ lookup anywhere except the business `name` field you're setting on a plan (and `
 
 ## Resolving the target resource
 
-1. Call the matching `list_*` tool with a keyword/name filter (`name_contains` for plans, backup
-   servers, and workloads; `keyword` for M365 workloads; `list_remote_storages`/`list_hypervisors`/
-   `list_saas_tenants` return everything unfiltered — scan the result yourself). If more than one result matches,
-   pick the right one from the returned fields (or ask the user to disambiguate) — the tool will
-   never guess for you.
+1. Call the matching `list_*` tool with a `keyword` filter (plans, backup servers, all workload
+   types, and SaaS applications accept it; `list_remote_storages`/`list_hypervisors` return
+   everything unfiltered — scan the result yourself). If more than one result matches, pick the
+   right one from the returned fields (or ask the user to disambiguate) — the tool will never
+   guess for you.
 2. Call the corresponding `get_*` tool with that id to fetch the resource's full current state:
    `get_remote_storage`, `get_protection_plan`, `get_retirement_plan`, `get_tiering_plan`,
-   `get_backup_server`, or `get_machine_workload` (for a file server). M365 auto-backup rules
+   `get_backup_server`, or `get_machine_workload` (for a file server). M365/GWS auto-backup rules
    have no `get_*`/name field — match by `namespace` + `plan_id` from
-   `list_m365_auto_backup_rules` to find the `uid`.
+   `list_m365_auto_backup_rules`/`list_gws_auto_backup_rules` to find the `uid`.
 
 ## Updating a resource
 
@@ -61,13 +61,24 @@ resource, not a plan-level operation. Resolve the server's id with `list_backup_
 (step 1 above) and the tiering plan's id with `list_tiering_plans`, confirm the change with the
 user, then call it. Requires `admin` mode.
 
+## Updating collaboration settings
+
+`update_m365_collab_settings`/`update_gws_collab_settings` replace a tenant's/domain's entire
+collaboration-service configuration in one call (M365: four service types; GWS: one, Shared
+Drives only) — see [provision-apm-config](../provision-apm-config/SKILL.md) (stage g for M365,
+stage i for GWS) for the exact parameter shape. Always call `list_m365_auto_backup_rules`/
+`list_gws_auto_backup_rules` first to read the current settings, and re-supply every service
+type that's already enabled and that you don't intend to change — omitted types are reset to
+disabled, not left unchanged.
+
 ## Removing a resource
 
 `delete_remote_storage`, `delete_protection_plan`, `delete_retirement_plan`,
-`delete_tiering_plan`, and `delete_m365_auto_backup_rule` all use the
+`delete_tiering_plan`, `delete_m365_auto_backup_rule`, and `delete_gws_auto_backup_rule` all use
+the
 [destructive-action preview/confirm pattern](../apm-mcp-conventions/SKILL.md#destructive-action-preview-pattern).
-Resolve the target's id first (per "Resolving the target resource" above;
-`delete_m365_auto_backup_rule` takes the `uid` found via `list_m365_auto_backup_rules`).
+Resolve the target's id first (per "Resolving the target resource" above; the auto-backup-rule
+tools take the `uid` found via `list_m365_auto_backup_rules`/`list_gws_auto_backup_rules`).
 
 `delete_remote_storage` fails if the storage is still referenced by an active tiering plan or
 retirement plan — resolve or reassign those references first (see

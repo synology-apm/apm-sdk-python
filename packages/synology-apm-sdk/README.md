@@ -43,18 +43,8 @@ async with APMClient("apm.corp.com", "admin", "password", verify_ssl=False) as a
 
 ```python
 async with APMClient(host, username, password, verify_ssl=True, timeout=300.0) as apm:
-    apm.machine          # MachineCollection  → .workloads / .plans
-    apm.m365             # M365Collection     → .workloads / .plans / .auto_backup_rules / .exchange_export / .group_export
-    apm.saas             # SaasCollection           — SaaS (M365) tenants
-    apm.activities       # ActivityCollection → .backup / .restore
-    apm.backup_servers   # BackupServerCollection   — cluster servers, tiering-plan assignment
-    apm.remote_storages  # RemoteStorageCollection  — external vaults (S3-compatible / APV / DSM)
-    apm.hypervisors      # HypervisorCollection     — hypervisor inventory servers
-    apm.logs             # LogCollection            — activity / drive / connection / system logs
-    apm.plans            # ProtectionPlanCollection — cross-category read + create / delete
-    apm.retirement_plans # RetirementPlanCollection — retention plans for retired workloads
-    apm.tiering_plans    # TieringPlanCollection    — tier old versions to remote storage
-    await apm.get_site_info()  # site UUID, management server, storage stats, workload usage
+    workloads, _ = await apm.machine.workloads.list()  # apm.<domain>.<collection>, e.g. apm.m365.plans
+    site = await apm.get_site_info()  # site UUID, management server, storage stats, workload usage
 ```
 
 Each collection's methods are shown in its section below; full signatures and every model
@@ -88,11 +78,14 @@ workloads, total = await apm.machine.workloads.list()
 vms,     _ = await apm.machine.workloads.list(workload_types=[MachineWorkloadType.VM])
 fs,      _ = await apm.machine.workloads.list(workload_types=[MachineWorkloadType.FS])
 retired, _ = await apm.machine.workloads.list(is_retired=True)
-results, _ = await apm.machine.workloads.list(name_contains="prod")
+results, _ = await apm.machine.workloads.list(keyword="prod")
 
 # Filter by backup status or verification status (both repeatable; verify_status is PS/VM only)
 failed,       _ = await apm.machine.workloads.list(status=[WorkloadStatus.FAILED, WorkloadStatus.PARTIAL])
 not_verified, _ = await apm.machine.workloads.list(verify_status=[VerifyStatus.NOT_ENABLED])
+
+# Filter by backup server namespace (repeatable; OR logic)
+on_one_server, _ = await apm.machine.workloads.list(namespace=["ns-uid-001", "ns-uid-002"])
 
 # Get a single workload by ID (namespace comes from list() results)
 wl = await apm.machine.workloads.get("123e4567-e89b-12d3-a456-426614174000", namespace="123e4567-e89b-12d3-a456-426614174001")
@@ -105,7 +98,7 @@ if isinstance(wl, MachineWorkload):
 
 ### Trigger a backup
 
-Pass the `Workload` object directly. Returns `None` — use `activities.backup.list()` to track progress.
+Pass the `Workload` object directly. Returns `None` — track it via `activities.backup.list()`.
 
 ```python
 wl = await apm.machine.workloads.get("123e4567-e89b-12d3-a456-426614174000", namespace="123e4567-e89b-12d3-a456-426614174001")
@@ -216,7 +209,7 @@ from synology_apm.sdk import WorkloadCategory
 # Cross-category — single API call (machine + M365 combined)
 plans, total = await apm.plans.list()
 plans, total = await apm.plans.list(category=WorkloadCategory.MACHINE)
-plans, total = await apm.plans.list(category=WorkloadCategory.M365, name_contains="Daily")
+plans, total = await apm.plans.list(category=WorkloadCategory.M365, keyword="Daily")
 
 # Category-agnostic lookup
 plan = await apm.plans.get_by_name("Daily Backup")                       # exact name match, case-insensitive
@@ -368,27 +361,23 @@ await apm.tiering_plans.delete(plan)
 ## M365 Workloads
 
 Manages Microsoft 365 SaaS backup workloads (Mailbox, OneDrive, SharePoint, Teams, etc.).
-`tenant_id` is required for all M365 workload operations.
+`list()` / `get()` / `get_by_name()` / `backup_now()` / `cancel_backup()` / `list_versions()` /
+`retire()` / `delete()` follow the same pattern as [Machine Workloads](#machine-workloads)
+above. Differences: `list()` / `get()` / `get_by_name()` require `tenant_id`, and there is no
+combined "all subtypes" list — `workload_type` must always be passed to those three lookups.
+The remaining calls (`backup_now()` / `cancel_backup()` / `list_versions()` / `retire()` /
+`delete()`) take the `M365Workload` object itself, as in Machine Workloads.
 
 ```python
-from synology_apm.sdk import M365WorkloadType, WorkloadStatus
+from synology_apm.sdk import M365WorkloadType
 
-# tenant_id comes from apm.saas.list()
-tenants, _ = await apm.saas.list()
-TENANT = tenants[0].tenant_id
-tenant = await apm.saas.get_m365_tenant(TENANT)   # single-tenant detail lookup
+TENANT = (await apm.saas.list())[0][0].tenant_id  # tenant_id required on every call below
 
-# List M365 workloads of a given service sub-type for a tenant
-mailboxes, total = await apm.m365.workloads.list(TENANT, workload_type=M365WorkloadType.EXCHANGE)
+wl = await apm.m365.workloads.get_by_name(
+    "alice@contoso.com", TENANT, workload_type=M365WorkloadType.EXCHANGE
+)
+print(wl.workload_type, wl.tenant_id, wl.info)  # info: a per-subtype union type
 
-# Filter by backup status (repeatable; M365 has no verification concept)
-failed, _ = await apm.m365.workloads.list(TENANT, workload_type=M365WorkloadType.EXCHANGE, status=[WorkloadStatus.FAILED])
-
-# Get a single workload by name — tenant_id required
-wl = await apm.m365.workloads.get_by_name("alice@contoso.com", TENANT, workload_type=M365WorkloadType.EXCHANGE)
-print(wl.workload_type, wl.tenant_id, wl.info)
-
-# Retire an M365 workload (irreversible)
 plan = await apm.retirement_plans.get_by_name("Compliance Retention")
 await apm.m365.workloads.retire(wl, plan)
 ```
@@ -501,6 +490,90 @@ await apm.m365.exchange_export.cancel(activity)
 
 # List active or recent exports
 exports, _ = await apm.m365.exchange_export.list(wl)
+```
+
+---
+
+## GWS Workloads
+
+Manages Google Workspace SaaS backup workloads (Mail, Drive, Contact, Calendar, Shared Drive).
+`list()` / `get()` / `get_by_name()` / `backup_now()` / `cancel_backup()` / `list_versions()` /
+`retire()` / `delete()` follow the same pattern as [Machine Workloads](#machine-workloads)
+above — same relationship as [M365 Workloads](#m365-workloads): `list()` / `get()` /
+`get_by_name()` require `domain` in place of `tenant_id`, and `workload_type` must always be
+passed to those three lookups (no "all subtypes" list). The remaining calls take the
+`GWSWorkload` object itself, as in Machine Workloads.
+
+```python
+from synology_apm.sdk import GWSWorkloadType
+
+DOMAIN = "gwsdemo.example.com"   # from apm.saas.list(); required on every call below
+
+wl = await apm.gws.workloads.get_by_name("alice@gwsdemo.example.com", DOMAIN, workload_type=GWSWorkloadType.MAIL)
+print(wl.workload_type, wl.domain, wl.info)
+
+# Shared Drive workloads additionally expose backup_user / is_anomaly (no M365 equivalent)
+drive = await apm.gws.workloads.get_by_name("Marketing Drive", DOMAIN, workload_type=GWSWorkloadType.SHARED_DRIVE)
+print(drive.backup_user, drive.is_anomaly)
+
+plan = await apm.retirement_plans.get_by_name("Compliance Retention")
+await apm.gws.workloads.retire(wl, plan)
+```
+
+---
+
+## GWS Plans
+
+```python
+# List all GWS protection plans
+plans, _ = await apm.gws.plans.list()
+
+# Get by name or UUID
+plan = await apm.gws.plans.get_by_name("GWS Daily Backup")   # name search
+plan = await apm.gws.plans.get("gws-plan-uuid")                # direct UUID
+
+# Apply a plan to a GWS workload
+await apm.gws.workloads.change_plan(wl, plan)
+```
+
+`create()` / `update()` / `delete()` follow the same pattern as [Machine Plans](#protection-plans) above — use `apm.gws.plans` and `GWSPlanCreateRequest` in place of `apm.machine.plans` and `MachinePlanCreateRequest`.
+
+---
+
+## GWS Auto-Backup Rules
+
+Automatically protect new GWS items. Accessed via `apm.gws.auto_backup_rules`.
+Two independently-managed sections: **User Services** rules (per-plan CRUD; Mail /
+Calendar / Contact / Drive members of selected Google Groups) and **Collaboration
+Services** settings (one per-domain object; Shared Drives — all Shared Drives are
+included when enabled).
+
+```python
+# Full auto-backup configuration for a domain
+result = await apm.gws.auto_backup_rules.list(DOMAIN)
+for rule in result.rules:
+    print(rule.plan_id, rule.mail_group_ids)
+print(f"Shared Drive auto-backup enabled: {result.shared_drive_setting.enabled if result.shared_drive_setting else False}")
+
+# Create a User Services rule: auto-protect Mail members of a Google Group
+server = await apm.backup_servers.get_by_name("apm-server-01")
+plan = await apm.gws.plans.get_by_name("GWS Daily Backup")
+await apm.gws.auto_backup_rules.create(
+    DOMAIN, server.namespace, plan.plan_id,
+    mail_group_ids=["123e4567-e89b-12d3-a456-426614174012"],
+)
+
+# Update / delete an existing rule (obtained via list(); omitted fields keep current values)
+await apm.gws.auto_backup_rules.update(rule, drive_group_ids=["123e4567-e89b-12d3-a456-426614174013"])
+await apm.gws.auto_backup_rules.delete(rule)
+
+# Replace Collaboration Services settings (Shared Drives only)
+await apm.gws.auto_backup_rules.update_collab_settings(DOMAIN, shared_drive=result.shared_drive_setting)
+
+# Update which additional account types are auto-protected (domain-wide setting)
+await apm.gws.auto_backup_rules.update_protected_account_types(
+    DOMAIN, include_unlicensed_accounts=True, include_archived_accounts=False,
+)
 ```
 
 ---
@@ -678,14 +751,14 @@ activity_logs, _ = await apm.logs.list_activity(
 for entry in activity_logs:
     print(f"[{entry.level.value}] {entry.timestamp}  {entry.description}")
 
-# Drive information log (total is the real count)
+# Drive information log
 drive_logs, total = await apm.logs.list_drive(server, limit=100)
 
-# Connection log (total always 0)
-conn_logs, _ = await apm.logs.list_connection(server)
+# Connection log
+conn_logs, total = await apm.logs.list_connection(server)
 
-# Advanced system log (total always 0)
-sys_logs, _ = await apm.logs.list_system(server)
+# Advanced system log
+sys_logs, total = await apm.logs.list_system(server)
 ```
 
 ---
@@ -728,7 +801,8 @@ All SDK exceptions inherit from `APMError` and carry three common attributes:
 
 Resource-oriented exceptions (`ResourceNotFoundError`, `InvalidOperationError`, `PlanNameConflictError`, `PlanInUseError`, `DuplicateWorkloadError`, and the `RemoteStorage*` conflict/in-use errors) additionally carry `.resource_type` and `.resource_id` identifying the resource involved. Operation-specific exceptions raised by each method — and their extra attributes, such as `PlanInUseError.has_workloads` or `RemoteStorageUnmanagedCatalogError.catalog_count` — are documented in the method's docstring and the [Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).
 
-`str(exc)` automatically appends the full `response_body` as formatted JSON when present, making it easy to forward to the API provider.
+`str(exc)` automatically appends the response body as formatted JSON when present, making it
+easy to forward for debugging.
 
 ```python
 from synology_apm.sdk import APMError, AuthenticationError, ResourceNotFoundError
@@ -748,30 +822,13 @@ except APMError as e:
         import json; print(json.dumps(e.response_body, indent=2))
 ```
 
-Session expiry is handled automatically: the SDK re-authenticates once before raising `AuthenticationError`.
+Session expiry is handled automatically: the SDK re-authenticates once before raising
+`AuthenticationError`.
 
 ---
 
 ## Data model
 
-The main model classes returned by the collections above:
-
-| Class | Purpose |
-|-------|---------|
-| `MachineWorkload` / `M365Workload` | A protected device / Microsoft 365 workload, including its backup status and assigned plan |
-| `WorkloadVersion` | One backup version of a workload, with lock state and backup-copy status |
-| `ProtectionPlan` | A backup plan: schedule, retention, and backup-copy policy |
-| `RetirementPlan` | A retention-only plan applied to retired (no longer backed up) workloads |
-| `TieringPlan` | A plan that tiers old versions to remote storage |
-| `BackupActivity` / `RestoreActivity` | One backup / restore task record, in progress or historical |
-| `BackupServer` | A backup server in the cluster, with storage and data-reduction statistics |
-| `RemoteStorage` | A registered remote storage (external vault) target |
-| `Hypervisor` | A registered hypervisor inventory server |
-| `APMActivityLog` / `DriveLog` / `ConnectionLog` / `SystemLog` | Server-scoped log entries |
-| `M365ExportActivity` | An Exchange/Group mailbox PST export task |
-| `M365AutoBackupRule` / `M365AutoBackupRuleListResult` | Auto-backup rules and per-tenant collaboration-service settings |
-| `SiteInfo` | Site-wide overview: management servers, storage stats, workload usage |
-
-Every field of every model — names, types, and when each is `None` — is documented in the class docstrings and the [Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).
-
-All model objects are **frozen dataclasses** (immutable after creation).
+All model objects are **frozen dataclasses** (immutable after creation). Every model class,
+field, and type — names, types, and when each is `None` — is documented in the class docstrings
+and the [Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).

@@ -57,7 +57,7 @@ async def test_add_c2_posts_correct_body() -> None:
             captured_bodies.append({"path": path, "body": json})
         if "region_cert" in path:
             region_cert_called = True
-            return {"region": "tw-001", "cert": ""}
+            return {"region": "tw-001", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             vhost_called = True
             return {"supportVirtualHost": True}

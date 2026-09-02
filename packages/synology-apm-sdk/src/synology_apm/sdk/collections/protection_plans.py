@@ -1,4 +1,5 @@
-"""Protection Plan collections: ProtectionPlanCollection / MachinePlanCollection / M365PlanCollection.
+"""Protection Plan collections: ProtectionPlanCollection / MachinePlanCollection /
+M365PlanCollection / GWSPlanCollection.
 
 Request-body construction lives in _protection_plan_builders.py; response parsing
 and the API↔enum string maps live in _protection_plan_parsers.py.
@@ -13,11 +14,12 @@ from ..enums import WorkloadCategory
 from ..exceptions import ResourceNotFoundError
 from ..models.location import LocationInfo
 from ..models.protection_plan import (
+    GWSPlanCreateRequest,
     M365PlanCreateRequest,
     MachinePlanCreateRequest,
     ProtectionPlan,
 )
-from ._protection_plan_builders import _build_device_body, _build_m365_body
+from ._protection_plan_builders import _build_device_body, _build_gws_body, _build_m365_body
 from ._protection_plan_parsers import _parse_plan
 from ._shared import (
     ListResult,
@@ -34,6 +36,7 @@ _RESOURCE_TYPE = "ProtectionPlan"
 _CATEGORY_SERVICE_TYPE: dict[WorkloadCategory, str] = {
     WorkloadCategory.MACHINE: "DEVICE",
     WorkloadCategory.M365:    "M365",
+    WorkloadCategory.GWS:     "GW",
 }
 
 _DEST_TYPE_APPLIANCE = "APPLIANCE"
@@ -101,14 +104,14 @@ async def _build_location_cache(
 async def _list_plans(
     session: WebAPISession,
     service_types: str | list[str],
-    name_contains: str | None,
+    keyword: str | None,
     limit: int,
     offset: int,
 ) -> ListResult[ProtectionPlan]:
     """Fetch a page of plans for the given serviceType(s) and parse them."""
     params: dict[str, Any] = {"offset": offset, "limit": limit, "serviceType": service_types}
-    if name_contains:
-        params["keyword"] = name_contains
+    if keyword:
+        params["keyword"] = keyword
     raw = await session.get("/api/v1/plan/backup_plan", params=params)
     plans_raw = raw.get("plans") or []
     cache = await _build_location_cache(session, plans_raw)
@@ -160,8 +163,9 @@ class ProtectionPlanCollection:
     """Cross-domain collection for querying Protection Plans across all categories.
 
     Accessed via APMClient.plans; should not be instantiated directly.
-    To change the plan assigned to a specific workload, use
-    APMClient.machine.workloads.change_plan() or APMClient.m365.workloads.change_plan() instead.
+    To change the plan assigned to a specific workload, use that workload category's own
+    change_plan() instead: APMClient.machine.workloads.change_plan(),
+    APMClient.m365.workloads.change_plan(), or APMClient.gws.workloads.change_plan().
     """
 
     def __init__(self, session: WebAPISession) -> None:
@@ -170,28 +174,26 @@ class ProtectionPlanCollection:
     async def list(
         self,
         category: WorkloadCategory | None = None,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         limit: int = 500,
         offset: int = 0,
     ) -> ListResult[ProtectionPlan]:
         """List Protection Plans; supports cross-category queries.
 
         Args:
-            category:      WorkloadCategory filter; None (default) lists all categories.
-            name_contains: Name keyword search.
-            limit:         Maximum number of records to return (default 500).
-            offset:        Pagination start offset (default 0).
+            category: WorkloadCategory filter; None (default) lists all categories.
+            keyword:  Name keyword search.
+            limit:    Maximum number of records to return (default 500).
+            offset:   Pagination start offset (default 0).
 
         Returns:
             (list of ProtectionPlan, total count matching the filter)
         """
-        if category == WorkloadCategory.MACHINE:
-            service_types: list[str] | str = _CATEGORY_SERVICE_TYPE[WorkloadCategory.MACHINE]
-        elif category == WorkloadCategory.M365:
-            service_types = _CATEGORY_SERVICE_TYPE[WorkloadCategory.M365]
+        if category is not None:
+            service_types: list[str] | str = _CATEGORY_SERVICE_TYPE[category]
         else:
             service_types = list(_CATEGORY_SERVICE_TYPE.values())
-        return await _list_plans(self._session, service_types, name_contains, limit, offset)
+        return await _list_plans(self._session, service_types, keyword, limit, offset)
 
     async def get(self, plan_id: str) -> ProtectionPlan:
         """Fetch a Protection Plan by UUID (category-agnostic).
@@ -219,12 +221,12 @@ class ProtectionPlanCollection:
 
     async def create(
         self,
-        request: MachinePlanCreateRequest | M365PlanCreateRequest,
+        request: MachinePlanCreateRequest | M365PlanCreateRequest | GWSPlanCreateRequest,
     ) -> ProtectionPlan:
-        """Create a Protection Plan (Machine or M365), dispatching by request type.
+        """Create a Protection Plan (Machine, M365, or GWS), dispatching by request type.
 
         Args:
-            request: MachinePlanCreateRequest or M365PlanCreateRequest.
+            request: MachinePlanCreateRequest, M365PlanCreateRequest, or GWSPlanCreateRequest.
 
         Returns:
             The created plan with all fields populated.
@@ -234,6 +236,8 @@ class ProtectionPlanCollection:
         """
         if isinstance(request, MachinePlanCreateRequest):
             return await _create_plan(self._session, request, _build_device_body)
+        if isinstance(request, GWSPlanCreateRequest):
+            return await _create_plan(self._session, request, _build_gws_body)
         return await _create_plan(self._session, request, _build_m365_body)
 
     async def delete(self, plan: ProtectionPlan | str) -> None:
@@ -263,21 +267,21 @@ class _BasePlanCollection:
 
     async def list(
         self,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         limit: int = 500,
         offset: int = 0,
     ) -> ListResult[ProtectionPlan]:
         """List Protection Plans.
 
         Args:
-            name_contains: Name fuzzy search. None = no filter.
-            limit:         Maximum records to return (default 500).
-            offset:        Pagination start offset (default 0).
+            keyword: Name fuzzy search. None = no filter.
+            limit:   Maximum records to return (default 500).
+            offset:  Pagination start offset (default 0).
 
         Returns:
             (list of ProtectionPlan, total count matching the filter)
         """
-        return await _list_plans(self._session, self._service_type, name_contains, limit, offset)
+        return await _list_plans(self._session, self._service_type, keyword, limit, offset)
 
     async def get(self, plan_id: str) -> ProtectionPlan:
         """Fetch a Protection Plan by UUID.
@@ -398,10 +402,51 @@ class M365PlanCollection(_BasePlanCollection):
         return await _update_plan(self._session, plan_id, request, _build_m365_body)
 
 
+# ── GWSPlanCollection ─────────────────────────────────────────────────────
+
+
+class GWSPlanCollection(_BasePlanCollection):
+    """Collection interface for managing GWS backup plans.
+
+    Accessed via APMClient.gws.plans; should not be instantiated directly.
+    """
+
+    _service_type = _CATEGORY_SERVICE_TYPE[WorkloadCategory.GWS]
+
+    async def create(self, request: GWSPlanCreateRequest) -> ProtectionPlan:
+        """Create a GWS Protection Plan.
+
+        Args:
+            request: Plan creation parameters.
+
+        Returns:
+            The created plan with all fields populated.
+
+        Raises:
+            PlanNameConflictError: A plan with this name already exists.
+        """
+        return await _create_plan(self._session, request, _build_gws_body)
+
+    async def update(self, plan_id: str, request: GWSPlanCreateRequest) -> ProtectionPlan:
+        """Update an existing GWS Protection Plan.
+
+        Args:
+            plan_id: UUID of the plan to update.
+            request: New plan configuration.
+
+        Returns:
+            The updated plan with all fields populated.
+
+        Raises:
+            PlanNameConflictError: The new name is already taken by another plan.
+        """
+        return await _update_plan(self._session, plan_id, request, _build_gws_body)
+
+
 # ── Shared create / update / delete helpers ───────────────────────────────
 
 
-_PlanRequestT = TypeVar("_PlanRequestT", MachinePlanCreateRequest, M365PlanCreateRequest)
+_PlanRequestT = TypeVar("_PlanRequestT", MachinePlanCreateRequest, M365PlanCreateRequest, GWSPlanCreateRequest)
 
 
 async def _create_plan(

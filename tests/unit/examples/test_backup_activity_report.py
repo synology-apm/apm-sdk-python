@@ -20,10 +20,12 @@ from backup_activity_report import (
     run,
 )
 
-from synology_apm.sdk import BackupActivityStatus, M365WorkloadType, MachineWorkloadType
+from synology_apm.sdk import BackupActivityStatus, GWSWorkloadType, M365WorkloadType, MachineWorkloadType
 from tests.unit.examples._fixtures import (
     make_backup_activity,
     make_fake_apm,
+    make_gws_domain_info,
+    make_gws_workload,
     make_machine_workload,
     patch_make_client,
 )
@@ -213,7 +215,7 @@ async def test_run_csv_machine_category_emits_exact_header_and_row(
     _wire_activities(apm, [act], [])
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "machine", None, "csv")
+    await run(_REPORT_DATE, False, "machine", None, None, "csv")
 
     rows = list(csv.reader(io.StringIO(capsys.readouterr().out)))
     assert rows[0] == [
@@ -231,7 +233,7 @@ async def test_run_csv_all_category_adds_category_column(
     apm.machine.workloads.list.return_value = ([wl], 1)
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "all", None, "csv")
+    await run(_REPORT_DATE, False, "all", None, None, "csv")
 
     rows = list(csv.reader(io.StringIO(capsys.readouterr().out)))
     assert rows[0][:3] == ["workload_id", "name", "category"]
@@ -247,7 +249,7 @@ async def test_run_csv_serializes_last_backup_at_as_local_isoformat(
     apm.machine.workloads.list.return_value = ([wl], 1)
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "machine", None, "csv")
+    await run(_REPORT_DATE, False, "machine", None, None, "csv")
 
     rows = list(csv.reader(io.StringIO(capsys.readouterr().out)))
     assert rows[1][-1] == last_backup.astimezone().isoformat()
@@ -276,7 +278,7 @@ async def test_run_json_buckets_and_metadata(
     _wire_activities(apm, completed, ongoing)
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "machine", None, "json")
+    await run(_REPORT_DATE, False, "machine", None, None, "json")
 
     data = json.loads(capsys.readouterr().out)
     assert data["date"] == "2026-05-07"
@@ -300,7 +302,7 @@ async def test_run_table_pairs_name_with_status_and_counts_sections(
     _wire_activities(apm, completed, [])
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "machine", None, "table")
+    await run(_REPORT_DATE, False, "machine", None, None, "table")
 
     out_lines = capsys.readouterr().out.splitlines()
     title_line = next(ln for ln in out_lines if "Backup Report:" in ln)
@@ -336,7 +338,7 @@ async def test_run_table_renders_success_in_progress_and_no_activity_sections(
     _wire_activities(apm, completed, ongoing)
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "machine", None, "table")
+    await run(_REPORT_DATE, False, "machine", None, None, "table")
 
     out_lines = capsys.readouterr().out.splitlines()
     progress_line = next(ln for ln in out_lines if "vm-db-01" in ln)
@@ -358,7 +360,7 @@ async def test_run_fetches_completed_then_ongoing_with_day_bounds(
     apm = make_fake_apm()
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "machine", None, "csv")
+    await run(_REPORT_DATE, False, "machine", None, None, "csv")
 
     calls = apm.activities.backup.list.call_args_list
     assert [c.kwargs["history"] for c in calls] == [True, False]
@@ -374,7 +376,7 @@ async def test_run_machine_category_queries_machine_types_only(
     apm = make_fake_apm()
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "machine", None, "csv")
+    await run(_REPORT_DATE, False, "machine", None, None, "csv")
 
     kwargs = apm.activities.backup.list.call_args_list[0].kwargs
     assert kwargs["machine_types"] == [
@@ -382,6 +384,7 @@ async def test_run_machine_category_queries_machine_types_only(
         MachineWorkloadType.VM, MachineWorkloadType.FS,
     ]
     assert kwargs["m365_types"] is None
+    assert kwargs["gws_types"] is None
 
 
 async def test_run_m365_category_queries_selected_m365_types_only(
@@ -390,11 +393,12 @@ async def test_run_m365_category_queries_selected_m365_types_only(
     apm = make_fake_apm()
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "m365", [M365WorkloadType.EXCHANGE], "csv")
+    await run(_REPORT_DATE, False, "m365", [M365WorkloadType.EXCHANGE], None, "csv")
 
     kwargs = apm.activities.backup.list.call_args_list[0].kwargs
     assert kwargs["machine_types"] is None
     assert kwargs["m365_types"] == [M365WorkloadType.EXCHANGE]
+    assert kwargs["gws_types"] is None
 
 
 async def test_run_m365_none_services_queries_all_m365_types(
@@ -403,17 +407,71 @@ async def test_run_m365_none_services_queries_all_m365_types(
     apm = make_fake_apm()
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, False, "m365", None, "csv")
+    await run(_REPORT_DATE, False, "m365", None, None, "csv")
 
     kwargs = apm.activities.backup.list.call_args_list[0].kwargs
     assert kwargs["m365_types"] == list(M365WorkloadType)
+
+
+async def test_run_gws_category_queries_selected_gws_types_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    apm = make_fake_apm()
+    patch_make_client(monkeypatch, backup_activity_report, apm)
+
+    await run(_REPORT_DATE, False, "gws", None, [GWSWorkloadType.MAIL], "csv")
+
+    kwargs = apm.activities.backup.list.call_args_list[0].kwargs
+    assert kwargs["machine_types"] is None
+    assert kwargs["m365_types"] is None
+    assert kwargs["gws_types"] == [GWSWorkloadType.MAIL]
+
+
+async def test_run_gws_none_services_queries_all_gws_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    apm = make_fake_apm()
+    patch_make_client(monkeypatch, backup_activity_report, apm)
+
+    await run(_REPORT_DATE, False, "gws", None, None, "csv")
+
+    kwargs = apm.activities.backup.list.call_args_list[0].kwargs
+    assert kwargs["gws_types"] == list(GWSWorkloadType)
+
+
+async def test_run_gws_category_collects_gws_workloads(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    apm = make_fake_apm()
+    apm.saas.list.return_value = ([make_gws_domain_info()], 1)
+    wl = make_gws_workload(workload_id=_WL_A, name="alice@gwsdemo.example.com")
+
+    def _gws_list(
+        *, domain: str, workload_type: GWSWorkloadType, is_retired: bool, limit: int, offset: int,
+    ) -> tuple[list[Any], int]:
+        if workload_type is GWSWorkloadType.MAIL and offset == 0:
+            return ([wl], 1)
+        return ([], 0)
+
+    apm.gws.workloads.list.side_effect = _gws_list
+    act = make_backup_activity(
+        workload_id=_WL_A, status=BackupActivityStatus.SUCCESS, duration_seconds=60,
+    )
+    _wire_activities(apm, [act], [])
+    patch_make_client(monkeypatch, backup_activity_report, apm)
+
+    await run(_REPORT_DATE, False, "gws", None, None, "json")
+
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_workloads"] == 1
+    assert [r["workload_id"] for r in data["successes"]] == [_WL_A]
 
 
 async def test_run_retired_only_forwards_is_retired(monkeypatch: pytest.MonkeyPatch) -> None:
     apm = make_fake_apm()
     patch_make_client(monkeypatch, backup_activity_report, apm)
 
-    await run(_REPORT_DATE, True, "machine", None, "csv")
+    await run(_REPORT_DATE, True, "machine", None, None, "csv")
 
     assert apm.machine.workloads.list.call_args.kwargs["is_retired"] is True
 
@@ -439,7 +497,7 @@ def test_main_parses_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> Non
 
     backup_activity_report.main()
 
-    run_mock.assert_called_once_with(date(2026, 5, 7), True, "machine", None, "csv", profile="lab")
+    run_mock.assert_called_once_with(date(2026, 5, 7), True, "machine", None, None, "csv", profile="lab")
     run_main_mock.assert_called_once_with(run_mock.return_value)
 
 
@@ -452,7 +510,7 @@ def test_main_defaults_to_yesterday_all_category_table(
     backup_activity_report.main()
 
     assert run_mock.call_args.args == (
-        date.today() - timedelta(days=1), False, "all", None, "table",
+        date.today() - timedelta(days=1), False, "all", None, None, "table",
     )
     assert run_mock.call_args.kwargs == {"profile": None}
 
@@ -467,3 +525,15 @@ def test_main_m365_services_convert_to_enum_list(monkeypatch: pytest.MonkeyPatch
     backup_activity_report.main()
 
     assert run_mock.call_args.args[3] == [M365WorkloadType.EXCHANGE, M365WorkloadType.ONEDRIVE]
+
+
+def test_main_gws_workload_type_converts_to_enum_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_mock, _ = _patch_entry_points(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "backup_activity_report.py",
+        "--category", "gws", "--gws-workload-type", "mail", "--gws-workload-type", "calendar",
+    ])
+
+    backup_activity_report.main()
+
+    assert run_mock.call_args.args[4] == [GWSWorkloadType.MAIL, GWSWorkloadType.CALENDAR]

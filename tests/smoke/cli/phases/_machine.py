@@ -67,7 +67,7 @@ def run(ctx: SmokeContext) -> None:
     _, search_ver_json = ctx.run_both(DOMAIN, "machine.version.list[search]", ["machine", "version", "list", name])
     _, direct_ver_json = ctx.run_both(
         DOMAIN, "machine.version.list[direct]",
-        ["machine", "version", "list", "--id", workload_id, "--namespace", namespace],
+        ["machine", "version", "list", "--workload-id", workload_id, "--namespace", namespace],
     )
 
     search_versions = parse_json(search_ver_json) or []

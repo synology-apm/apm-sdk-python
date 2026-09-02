@@ -15,6 +15,7 @@ from synology_apm.sdk import (
     BackupScope,
     CopyReason,
     FileServerType,
+    GWSWorkloadType,
     HypervisorType,
     LocationInfo,
     LogLevel,
@@ -340,6 +341,32 @@ _M365_WORKLOAD_TYPE_DISPLAY: dict[M365WorkloadType, str] = {
     M365WorkloadType.TEAMS:      "Teams",
 }
 
+_GWS_WORKLOAD_TYPE_DISPLAY: dict[GWSWorkloadType, str] = {
+    GWSWorkloadType.DRIVE:        "Drive",
+    GWSWorkloadType.MAIL:         "Mail",
+    GWSWorkloadType.CONTACT:      "Contact",
+    GWSWorkloadType.CALENDAR:     "Calendar",
+    GWSWorkloadType.SHARED_DRIVE: "Shared Drive",
+}
+
+# Detail/table column header for each service sub-type's identifier field.
+_M365_INFO_COL_LABELS: dict[M365WorkloadType, str] = {
+    M365WorkloadType.EXCHANGE:   "UPN",
+    M365WorkloadType.ONEDRIVE:   "UPN",
+    M365WorkloadType.CHAT:       "UPN",
+    M365WorkloadType.GROUP:      "Email",
+    M365WorkloadType.SHAREPOINT: "URL",
+    M365WorkloadType.TEAMS:      "URL",
+}
+
+_GWS_INFO_COL_LABELS: dict[GWSWorkloadType, str] = {
+    GWSWorkloadType.MAIL:         "Email",
+    GWSWorkloadType.CALENDAR:     "Email",
+    GWSWorkloadType.CONTACT:      "Email",
+    GWSWorkloadType.DRIVE:        "Email",
+    GWSWorkloadType.SHARED_DRIVE: "Backup User",
+}
+
 _PLAN_CATEGORY_DISPLAY: dict[WorkloadCategory, str] = {
     WorkloadCategory.MACHINE: "Machine",
     WorkloadCategory.M365:    "M365",
@@ -549,7 +576,7 @@ def render_version_table(
     *,
     show_verify: bool = False,
 ) -> None:
-    """Render the version list header + table (without footer) for both Machine and M365 commands."""
+    """Render the version list header + table (without footer) for machine, M365, and GWS commands."""
     console.print(f"Versions: [bold]{wl.name}[/bold]")
     if verbose:
         console.print(f"Workload ID: {wl.workload_id}")
@@ -590,9 +617,10 @@ def print_activity_detail(console: Console, act: BackupActivity, *, show_workloa
     """Render a backup activity's Status/Plan/timing/data/log body.
 
     Shared by print_version_detail() (as the "Activity Detail" section of `machine
-    version get` / `m365 version get`) and `activity backup get`, which prints its own
-    header before calling this and passes show_workload=True for its extra Workload: line
-    (print_version_detail's own header already names the workload, so it omits that line).
+    version get` / `m365 version get` / `gws version get`) and `activity backup get`, which
+    prints its own header before calling this and passes show_workload=True for its extra
+    Workload: line (print_version_detail's own header already names the workload, so it
+    omits that line).
     """
     status_label = fmt_backup_activity_status(act)
     console.print(f"Status:          {status_label}")
@@ -832,7 +860,7 @@ def print_workload_detail(
     info_rows: Sequence[tuple[str, str]] = (),
     status_rows: Sequence[tuple[str, str]] = (),
 ) -> None:
-    """Render the workload detail view shared by the machine and m365 get commands.
+    """Render the workload detail view shared by the machine, m365, and gws get commands.
 
     Args:
         type_label:  Value of the ``Type:`` row (e.g. "Machine / PC/Mac").

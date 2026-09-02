@@ -20,7 +20,7 @@ from ._serialize import to_jsonable
 
 T = TypeVar("T")
 
-DOMAINS = ("infra", "machine", "m365", "m365_rule", "activity", "plan", "log")
+DOMAINS = ("infra", "machine", "m365", "m365_rule", "gws", "gws_rule", "activity", "plan", "log")
 M365_SCOPES = ("exchange", "onedrive", "chat", "sharepoint", "teams", "group")
 
 _MAX_LIST_ITEMS = 5

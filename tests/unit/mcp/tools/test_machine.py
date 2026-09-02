@@ -81,6 +81,18 @@ class TestListMachineWorkloads:
         assert kwargs["hypervisor_id"] == "hyp-001"
 
     @pytest.mark.asyncio
+    async def test_namespaces_forwarded_to_sdk_as_list(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
+        from synology_apm.mcp._server import create_server
+
+        mock_apm.machine.workloads.list.return_value = ([], 0)
+
+        server = create_server(mode="admin")
+        await call_tool(server, "list_machine_workloads", mock_ctx, namespaces=["ns-001", "ns-002"])
+
+        _, kwargs = mock_apm.machine.workloads.list.call_args
+        assert kwargs["namespace"] == ["ns-001", "ns-002"]
+
+    @pytest.mark.asyncio
     async def test_plan_ids_and_hypervisor_id_default_to_none(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 

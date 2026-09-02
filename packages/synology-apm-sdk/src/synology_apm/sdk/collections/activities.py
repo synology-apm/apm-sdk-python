@@ -14,6 +14,7 @@ from .._http import WebAPISession, _has_detail_code
 from ..enums import (
     BackupActivityStatus,
     BackupScope,
+    GWSWorkloadType,
     M365WorkloadType,
     MachineWorkloadType,
     RestoreActivityStatus,
@@ -26,6 +27,7 @@ from ..models.workload import Workload
 from ._activity_parsers import (
     _BACKUP_SCOPE_MAP,
     _BACKUP_STATUS_TO_API,
+    _GWS_TYPE_TO_SAAS_SERVICE,
     _M365_TYPE_TO_SAAS_SERVICE,
     _MACHINE_TYPE_TO_CATEGORY_SERVICE,
     _RESTORE_STATUS_TO_API,
@@ -201,6 +203,7 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
         status: list[BackupActivityStatus] | None = None,
         machine_types: list[MachineWorkloadType] | None = None,
         m365_types: list[M365WorkloadType] | None = None,
+        gws_types: list[GWSWorkloadType] | None = None,
         namespace: list[str] | None = None,
         workload: Workload | None = None,
         since: datetime | None = None,
@@ -216,6 +219,7 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
             status: Backup activity status filter (OR logic).
             machine_types: Machine workload sub-type filter (OR logic).
             m365_types: M365 service type filter (OR logic).
+            gws_types: GWS service type filter (OR logic).
             namespace: Backup server namespace filter (OR logic). Restricts results
                 to activities on the given backup server(s). Namespace values can be
                 obtained from ``apm.backup_servers.list()``.
@@ -241,6 +245,7 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
             ("categoryService", _MACHINE_TYPE_TO_CATEGORY_SERVICE[mt]) for mt in machine_types or []
         )
         extra_params.extend(("saasServiceType", _M365_TYPE_TO_SAAS_SERVICE[st]) for st in m365_types or [])
+        extra_params.extend(("saasServiceType", _GWS_TYPE_TO_SAAS_SERVICE[st]) for st in gws_types or [])
         if workload is not None:
             extra_params.append(("workload.uid", workload.workload_id))
             extra_params.append(("workload.namespace", workload.namespace))

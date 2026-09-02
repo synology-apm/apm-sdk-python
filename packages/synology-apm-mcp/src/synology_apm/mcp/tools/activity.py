@@ -7,6 +7,7 @@ from fastmcp import Context
 
 from synology_apm.mcp._enums import (
     BackupActivityStatusLiteral,
+    GWSWorkloadTypeLiteral,
     M365WorkloadTypeLiteral,
     MachineWorkloadTypeLiteral,
     RestoreActivityStatusLiteral,
@@ -25,6 +26,7 @@ from synology_apm.mcp._security import run_audited_tool
 from synology_apm.sdk import (
     APMClient,
     BackupActivityStatus,
+    GWSWorkloadType,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
@@ -78,17 +80,20 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
 
     @registrar.tool(description=(
         "List backup activities. Filter by status (queuing/backing_up/canceling/success/failed/partial/canceled), "
-        "machine types (pc,ps,vm,fs), M365 types (exchange,onedrive,chat,sharepoint,teams,group), backup-server "
-        "namespaces (see list_backup_servers), a single workload (workload_id + workload_namespace, plus "
-        "tenant_id + workload_type — same M365 type options — for M365), a time window (since/until as ISO 8601), "
-        "or keyword. machine_types and m365_types are mutually exclusive — use one or the other. history=true "
-        f"includes completed activities. {LIST_RESULT_SUFFIX}"
+        "machine types (pc,ps,vm,fs), M365 types (exchange,onedrive,chat,sharepoint,teams,group), GWS types "
+        "(mail,calendar,contact,drive,shared_drive), backup-server namespaces (see list_backup_servers), a single "
+        "Machine or M365 workload (workload_id + workload_namespace, plus tenant_id + workload_type — same M365 "
+        "type options — for M365; single-workload scoping is not available for GWS, use gws_types instead), a "
+        "time window (since/until as ISO 8601), or keyword. machine_types, m365_types, and gws_types "
+        "are mutually exclusive — pass only one. history=true "
+        f"shows completed activities instead of ongoing ones. {LIST_RESULT_SUFFIX}"
     ))
     async def list_backup_activities(
         ctx: Context,
         status: Annotated[list[BackupActivityStatusLiteral], JSON_LIST_VALIDATOR] | None = None,
         machine_types: Annotated[list[MachineWorkloadTypeLiteral], JSON_LIST_VALIDATOR] | None = None,
         m365_types: Annotated[list[M365WorkloadTypeLiteral], JSON_LIST_VALIDATOR] | None = None,
+        gws_types: Annotated[list[GWSWorkloadTypeLiteral], JSON_LIST_VALIDATOR] | None = None,
         namespaces: Annotated[list[str], JSON_LIST_VALIDATOR] | None = None,
         workload_id: str | None = None,
         workload_namespace: str | None = None,
@@ -103,12 +108,13 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
 
-        if machine_types and m365_types:
-            raise ValueError("machine_types and m365_types are mutually exclusive — pass one or the other, not both.")
+        if sum(bool(x) for x in (machine_types, m365_types, gws_types)) > 1:
+            raise ValueError("machine_types, m365_types, and gws_types are mutually exclusive — pass only one.")
 
         status_filter = to_enum_list(BackupActivityStatus, status)
         machine_filter = to_enum_list(MachineWorkloadType, machine_types)
         m365_filter = to_enum_list(M365WorkloadType, m365_types)
+        gws_filter = to_enum_list(GWSWorkloadType, gws_types)
         namespace_filter = namespaces if namespaces else None
         workload = await _resolve_activity_workload(
             apm, workload_id=workload_id, workload_namespace=workload_namespace, tenant_id=tenant_id, workload_type=workload_type
@@ -119,6 +125,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
                 status=status_filter,
                 machine_types=machine_filter,
                 m365_types=m365_filter,
+                gws_types=gws_filter,
                 namespace=namespace_filter,
                 workload=workload,
                 since=parse_dt_optional(since),
@@ -139,10 +146,11 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
 
     @registrar.tool(description=(
         "List restore activities. Filter by status (preparing/restoring/canceling/ready_for_migrate/"
-        "migrate_vm_manually/migrating/success/failed/partial/canceled), a single workload (workload_id + "
-        "workload_namespace, plus tenant_id + workload_type — exchange/onedrive/chat/sharepoint/teams/group — "
-        "for M365), a time window (since/until as ISO 8601), or keyword. history=true includes completed "
-        f"restores. {LIST_RESULT_SUFFIX}"
+        "migrate_vm_manually/migrating/success/failed/partial/canceled), a single Machine or M365 workload "
+        "(workload_id + workload_namespace, plus tenant_id + workload_type — exchange/onedrive/chat/sharepoint/"
+        "teams/group — for M365; no single-workload scoping for GWS), a time window (since/until as ISO 8601), "
+        "or keyword. history=true shows completed "
+        f"restores instead of ongoing ones. {LIST_RESULT_SUFFIX}"
     ))
     async def list_restore_activities(
         ctx: Context,

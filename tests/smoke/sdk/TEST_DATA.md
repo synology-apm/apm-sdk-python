@@ -95,11 +95,36 @@ no pre-existing plans are required.
 For the `exchange` and `group` scopes, the workload's latest version must have a non-empty
 `portal_version_id` — needed for `m365.<scope>.export.start` and the rest of the export round
 trip (`export.list`, `export.download_url.get`, `export.cancel`). Without it, all four export
-steps (and, for `group`, `m365.group.check[export_no_archive_param]`) are skipped.
+steps are skipped.
 
 - Optional: at least one **retired** workload in any scope
   (`apm.m365.workloads.list(tenant_id, workload_type, is_retired=True, limit=500)`) — used by
   `m365.change_plan[retired_noop]` (see "Plan" below). If absent, that round trip is skipped.
+
+## GWS / SaaS
+
+- At least one domain with `category == WorkloadCategory.GWS` (`apm.saas.list(limit=500)`) —
+  **required**: without it, the entire `gws` domain is skipped.
+- For each of the five `GWSWorkloadType` sub-types — `drive`, `mail`, `contact`, `calendar`,
+  `shared_drive` — at least one workload (`apm.gws.workloads.list(domain, workload_type,
+  limit=500)`) with at least one backup version
+  (`apm.gws.workloads.list_versions(workload, limit=20)`).
+
+> **Note:** A fresh domain with data in only one or two sub-types is fine — the remaining
+> sub-types are skipped gracefully but go unexercised. To cover all five, configure one
+> protected workload per sub-type.
+
+Unlike M365, GWS has no export feature, so there is no equivalent of the M365 export-round-trip
+prerequisite (no `portal_version_id` requirement).
+
+- Optional: at least one **retired** workload in any sub-type
+  (`apm.gws.workloads.list(domain, workload_type, is_retired=True, limit=500)`) — used by
+  `gws.change_plan[retired_noop]` (see "Plan" below). If absent, that round trip is skipped.
+
+The `gws_rule` phase (`GWSAutoBackupRuleCollection` CRUD, collab settings, and
+protected-account-types roundtrips) needs no additional prerequisite data beyond a domain and a
+backup server (see "Infra" above) — it creates its own disposable protection plans inline, same
+as `m365_rule`.
 
 ## Activity
 
@@ -135,6 +160,12 @@ steps (and, for `group`, `m365.group.check[export_no_archive_param]`) are skippe
 - Optional: at least one retired workload in any scope whose `plan.name` matches the `name` of
   an existing Retirement Plan — needed for `m365.change_plan[retired_noop]`. Auto-selected;
   skipped if absent.
+- Optional: at least **two distinct**, non-`is_immutable` GWS-category Protection Plans, plus a
+  workload in any sub-type whose `plan.name` matches one of them — needed for
+  `gws.change_plan[switch]`/`[restore]`. Both are auto-selected; skipped if absent.
+- Optional: at least one retired GWS workload in any sub-type whose `plan.name` matches the
+  `name` of an existing Retirement Plan — needed for `gws.change_plan[retired_noop]`.
+  Auto-selected; skipped if absent.
 
 ## Log
 

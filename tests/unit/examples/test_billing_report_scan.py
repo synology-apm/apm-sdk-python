@@ -21,6 +21,8 @@ from billing_report import (
 )
 
 from synology_apm.sdk import (
+    GWSWorkload,
+    GWSWorkloadType,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
@@ -34,10 +36,12 @@ from tests.unit.examples._billing_fixtures import (
 from tests.unit.examples._fixtures import (
     make_backup_server,
     make_fake_apm,
+    make_gws_domain_info,
+    make_gws_workload,
+    make_m365_tenant_info,
     make_m365_workload,
     make_machine_workload,
     make_protection_plan,
-    make_saas_tenant,
     patch_make_client,
 )
 
@@ -69,6 +73,20 @@ def _m365_lister(
         *, tenant_id: str, workload_type: M365WorkloadType, is_retired: bool, limit: int, offset: int
     ) -> tuple[list[M365Workload], int]:
         items = items_by_key.get((tenant_id, workload_type, is_retired), [])
+        return items[offset:offset + limit], len(items)
+
+    return _list
+
+
+def _gws_lister(
+    items_by_key: dict[tuple[str, GWSWorkloadType, bool], list[GWSWorkload]],
+) -> Callable[..., Coroutine[None, None, tuple[list[GWSWorkload], int]]]:
+    """A GWS workloads list() fake keyed by (domain, workload_type, is_retired)."""
+
+    async def _list(
+        *, domain: str, workload_type: GWSWorkloadType, is_retired: bool, limit: int, offset: int
+    ) -> tuple[list[GWSWorkload], int]:
+        items = items_by_key.get((domain, workload_type, is_retired), [])
         return items[offset:offset + limit], len(items)
 
     return _list
@@ -191,7 +209,7 @@ async def test_scan_billing_first_seen_plan_meta_wins() -> None:
 
 async def test_scan_billing_m365_fans_out_per_tenant_type_and_retired_flag() -> None:
     apm = make_fake_apm()
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     apm.saas.list = AsyncMock(return_value=([tenant], 1))
     exchange_wl = make_m365_workload(
         tenant_id=tenant.tenant_id, workload_type=M365WorkloadType.EXCHANGE,
@@ -214,6 +232,37 @@ async def test_scan_billing_m365_fans_out_per_tenant_type_and_retired_flag() -> 
     }
     assert len(stats) == 1
     assert stats[0].type_label == "Exchange"
+    assert stats[0].count == 1
+    assert stats[0].storage_bytes == _GB
+    assert len(sections) == 1
+    assert sections[0].plan_type == "Protection Plan"
+
+
+async def test_scan_billing_gws_fans_out_per_domain_type_and_retired_flag() -> None:
+    apm = make_fake_apm()
+    domain = make_gws_domain_info()
+    apm.saas.list = AsyncMock(return_value=([domain], 1))
+    mail_wl = make_gws_workload(
+        domain=domain.domain, workload_type=GWSWorkloadType.MAIL,
+        protected_data_bytes=_GB,
+    )
+    apm.gws.workloads.list = AsyncMock(side_effect=_gws_lister(
+        {(domain.domain, GWSWorkloadType.MAIL, False): [mail_wl]}
+    ))
+
+    sections, stats = await _scan_billing(apm, concurrency=3, pricing=make_default_config())
+
+    calls = {
+        (c.kwargs["domain"], c.kwargs["workload_type"], c.kwargs["is_retired"])
+        for c in apm.gws.workloads.list.call_args_list
+    }
+    assert calls == {
+        (domain.domain, service, is_retired)
+        for service in GWSWorkloadType
+        for is_retired in (False, True)
+    }
+    assert len(stats) == 1
+    assert stats[0].type_label == "Mail"
     assert stats[0].count == 1
     assert stats[0].storage_bytes == _GB
     assert len(sections) == 1

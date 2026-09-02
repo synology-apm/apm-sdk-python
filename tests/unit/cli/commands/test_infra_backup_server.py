@@ -377,7 +377,7 @@ def test_server_list_status_filter_passes_to_sdk(mock_apm: AsyncMock, status_fla
     result = invoke_cli(mock_apm, ["infra", "server", "list"] + status_flags)
     assert result.exit_code == 0, result.output
     mock_apm.backup_servers.list.assert_called_once_with(
-        name_contains=None, status_filter=expected_filter, type_filter=None, limit=25, offset=0,
+        keyword=None, status_filter=expected_filter, type_filter=None, limit=25, offset=0,
     )
 
 
@@ -391,8 +391,22 @@ def test_server_list_type_filter_passes_to_sdk(mock_apm: AsyncMock, type_flags: 
     result = invoke_cli(mock_apm, ["infra", "server", "list"] + type_flags)
     assert result.exit_code == 0, result.output
     mock_apm.backup_servers.list.assert_called_once_with(
-        name_contains=None, status_filter=None, type_filter=expected_filter, limit=25, offset=0,
+        keyword=None, status_filter=None, type_filter=expected_filter, limit=25, offset=0,
     )
+
+
+@pytest.mark.parametrize("option_flag,invalid_value", [
+    ("--status", "nope"),
+    ("--type", "cloud"),
+], ids=["status", "type"])
+def test_server_list_invalid_filter_value_exits_1(mock_apm: AsyncMock, option_flag: str, invalid_value: str) -> None:
+    """infra server list with an invalid --status/--type value should exit 1 with a
+    styled error, not Click's native UsageError (exit 2) — regression test for the
+    native-Enum-binding -> parse_enum_list() migration."""
+    result = invoke_cli(mock_apm, ["infra", "server", "list", option_flag, invalid_value])
+    assert result.exit_code == 1, result.output
+    assert "Unsupported" in result.output
+    mock_apm.backup_servers.list.assert_not_called()
 
 
 def test_server_get_no_storage_shows_dash(mock_apm: AsyncMock) -> None:

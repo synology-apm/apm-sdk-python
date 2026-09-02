@@ -17,22 +17,22 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import time
-from typing import Any
 
 from synology_apm.sdk import (
     APIError,
     APMClient,
+    BackupServer,
     M365AutoBackupRule,
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
     M365PlanCreateRequest,
+    M365TenantInfo,
     M365WorkloadType,
     ProtectionPlan,
     ProtectionRetentionPolicy,
     ProtectionSchedule,
     RetentionType,
     ScheduleFrequency,
-    WorkloadCategory,
 )
 
 from .._context import SmokeContext
@@ -60,7 +60,7 @@ async def run(ctx: SmokeContext) -> None:
     if "m365_tenant" not in ctx.data:
         saas_result = await ctx.call(DOMAIN, "m365_rule.saas.list", lambda: apm.saas.list(limit=500))
         tenants, _ = saas_result if saas_result is not None else ([], 0)
-        m365_tenant = next((t for t in tenants if t.category == WorkloadCategory.M365), None)
+        m365_tenant = next((t for t in tenants if isinstance(t, M365TenantInfo)), None)
     else:
         m365_tenant = ctx.data.get("m365_tenant")
         suffix = " (no tenant found)" if m365_tenant is None else ""
@@ -73,7 +73,7 @@ async def run(ctx: SmokeContext) -> None:
     # ── Namespace from first backup server ────────────────────────────────────
     # Use ctx.data["servers"] when populated by the infra phase; fetch directly otherwise so
     # that --group m365_rule works as a standalone run.
-    servers: list[Any] = ctx.data.get("servers", [])
+    servers: list[BackupServer] = ctx.data.get("servers", [])
     if not servers:
         servers_result = await ctx.call(
             DOMAIN, "m365_rule.prereq.servers.list",

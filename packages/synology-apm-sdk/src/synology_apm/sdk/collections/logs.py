@@ -191,14 +191,14 @@ class LogCollection:
             offset: Pagination start offset (default 0).
 
         Returns:
-            (list of ConnectionLog, None — total count is not available for this log type)
+            (list of ConnectionLog, total count)
         """
         params = _build_log_params(
             levels=levels, since=since, until=until, keyword=keyword,
             limit=limit, offset=offset,
         )
         entries_raw, total = await self._list_logs(
-            server, "/api/v1/log/connection-log", "connectionLogs", params,
+            server, "/api/v1/log/connection-log", "connectionLogs", params, with_total=True,
         )
         return ListResult([ConnectionLog(**_user_log_fields(e)) for e in entries_raw], total)
 
@@ -225,14 +225,14 @@ class LogCollection:
             offset: Pagination start offset (default 0).
 
         Returns:
-            (list of SystemLog, None — total count is not available for this log type)
+            (list of SystemLog, total count)
         """
         params = _build_log_params(
             levels=levels, since=since, until=until, keyword=keyword,
             limit=limit, offset=offset,
         )
         entries_raw, total = await self._list_logs(
-            server, "/api/v1/log/general-log", "generalLogs", params,
+            server, "/api/v1/log/general-log", "generalLogs", params, with_total=True,
         )
         return ListResult([SystemLog(**_user_log_fields(e)) for e in entries_raw], total)
 

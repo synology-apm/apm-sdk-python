@@ -15,6 +15,9 @@ from synology_apm.sdk import (
     BackupCopyPolicy,
     DbActionOnError,
     GFSRetention,
+    GWSAutoBackupRule,
+    GWSAutoBackupRuleListResult,
+    GWSSharedDriveSetting,
     M365AutoBackupRule,
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
@@ -38,11 +41,12 @@ from synology_apm.sdk import (
 from tests.unit.examples._fixtures import (
     make_backup_server,
     make_file_server_config,
+    make_gws_domain_info,
     make_location_info,
+    make_m365_tenant_info,
     make_machine_workload,
     make_protection_plan,
     make_remote_storage,
-    make_saas_tenant,
 )
 
 # ── _yaml_scalar ──────────────────────────────────────────────────────────────
@@ -115,15 +119,31 @@ def test_ser_backup_server_without_description_omits_description_part() -> None:
 
 
 def test_ser_saas_tenant_entry_and_comment() -> None:
-    """The entry carries ref_key + tenant_id; the comment lists name and email."""
-    tenant = make_saas_tenant()
+    """The entry carries ref_key + tenant_id; the comment lists name and domain."""
+    tenant = make_m365_tenant_info()
 
     result = ie._ser_saas_tenant(tenant, "tenant-1")
 
     assert result == {
         "ref_key": "tenant-1",
         "tenant_id": "123e4567-e89b-12d3-a456-426614174060",
-        "_comment": "name: Contoso | email: admin@contoso.com",
+        "_comment": "name: Contoso | domain: contoso.onmicrosoft.com",
+    }
+
+
+# ── _ser_gws_domain ────────────────────────────────────────────────────────────
+
+
+def test_ser_gws_domain_entry_and_comment() -> None:
+    """The entry carries ref_key + domain; the comment lists the display name."""
+    domain = make_gws_domain_info()
+
+    result = ie._ser_gws_domain(domain, "domain-1")
+
+    assert result == {
+        "ref_key": "domain-1",
+        "domain": "gwsdemo.example.com",
+        "_comment": "name: gwsdemo.example.com",
     }
 
 
@@ -316,7 +336,7 @@ def test_write_saas_tenants_section_entries_round_trip_with_comment() -> None:
         {
             "ref_key": "tenant-1",
             "tenant_id": "123e4567-e89b-12d3-a456-426614174060",
-            "_comment": "name: Contoso | email: admin@contoso.com",
+            "_comment": "name: Contoso | domain: contoso.onmicrosoft.com",
         }
     ]
 
@@ -328,7 +348,7 @@ def test_write_saas_tenants_section_entries_round_trip_with_comment() -> None:
             {"ref_key": "tenant-1", "tenant_id": "123e4567-e89b-12d3-a456-426614174060"}
         ]
     }
-    assert "  # name: Contoso | email: admin@contoso.com" in raw.splitlines()
+    assert "  # name: Contoso | domain: contoso.onmicrosoft.com" in raw.splitlines()
 
 
 # ── _ser_protection_plan fallbacks ────────────────────────────────────────────
@@ -528,7 +548,7 @@ def test_ser_m365_auto_backup_rules_block_all_disabled_returns_none() -> None:
         sharepoint=disabled,
         teams=disabled,
     )
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
 
     result = ie._ser_m365_auto_backup_rules_block(tenant, result_obj, {}, {}, "ref-tenant")
 
@@ -550,7 +570,7 @@ def test_ser_m365_auto_backup_rules_block_maps_refs_and_omits_disabled_services(
         sharepoint=disabled,
         teams=disabled,
     )
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     plan_id_to_ref = {"123e4567-e89b-12d3-a456-426614174001": "plan-1"}
     bs_ns_to_ref = {"ns-apm-server-01": "server-1"}
 
@@ -586,7 +606,7 @@ def test_ser_m365_auto_backup_rules_block_serializes_user_rules() -> None:
         sharepoint=disabled,
         teams=disabled,
     )
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     plan_id_to_ref = {"123e4567-e89b-12d3-a456-426614174001": "plan-1"}
     bs_ns_to_ref = {"ns-apm-server-01": "server-1"}
 
@@ -609,6 +629,103 @@ def test_ser_m365_auto_backup_rules_block_serializes_user_rules() -> None:
     }
 
 
+# ── _ser_gws_auto_backup_rules_block ──────────────────────────────────────────
+
+
+def test_ser_gws_auto_backup_rules_block_all_disabled_returns_none() -> None:
+    """Returns None when there are no user rules, shared_drive is disabled, and both
+    protected-account-type flags are false."""
+    result_obj = GWSAutoBackupRuleListResult(
+        rules=(),
+        shared_drive_setting=None,
+        include_unlicensed_accounts=False,
+        include_archived_accounts=False,
+    )
+
+    result = ie._ser_gws_auto_backup_rules_block(result_obj, {}, {}, "domain-1")
+
+    assert result is None
+
+
+def test_ser_gws_auto_backup_rules_block_maps_refs_and_includes_account_types() -> None:
+    """The enabled shared_drive setting maps plan_id/namespace to their ref keys;
+    protected_account_types is always present; user_rules is empty when there are none."""
+    shared_drive = GWSSharedDriveSetting(
+        plan_id="123e4567-e89b-12d3-a456-426614174001",
+        namespace="ns-apm-server-01",
+        backup_user_id="",
+    )
+    result_obj = GWSAutoBackupRuleListResult(
+        rules=(),
+        shared_drive_setting=shared_drive,
+        include_unlicensed_accounts=True,
+        include_archived_accounts=False,
+    )
+    plan_id_to_ref = {"123e4567-e89b-12d3-a456-426614174001": "plan-1"}
+    bs_ns_to_ref = {"ns-apm-server-01": "server-1"}
+
+    result = ie._ser_gws_auto_backup_rules_block(
+        result_obj, plan_id_to_ref, bs_ns_to_ref, "domain-1"
+    )
+
+    assert result == {
+        "domain_ref": "domain-1",
+        "user_rules": [],
+        "collab_services": {
+            "shared_drive": {"backup_server_ref": "server-1", "plan_ref": "plan-1"},
+        },
+        "protected_account_types": {
+            "include_unlicensed_accounts": True,
+            "include_archived_accounts": False,
+        },
+    }
+
+
+def test_ser_gws_auto_backup_rules_block_serializes_user_rules() -> None:
+    """User rules map namespace/plan_id to ref keys and carry all four group ID lists."""
+    rule = GWSAutoBackupRule(
+        uid="123e4567-e89b-12d3-a456-426614174011",
+        namespace="ns-apm-server-01",
+        domain="gwsdemo.example.com",
+        plan_id="123e4567-e89b-12d3-a456-426614174001",
+        mail_group_ids=("123e4567-e89b-12d3-a456-426614174012",),
+        calendar_group_ids=(),
+        contact_group_ids=("123e4567-e89b-12d3-a456-426614174013",),
+        drive_group_ids=(),
+    )
+    result_obj = GWSAutoBackupRuleListResult(
+        rules=(rule,),
+        shared_drive_setting=None,
+        include_unlicensed_accounts=False,
+        include_archived_accounts=False,
+    )
+    plan_id_to_ref = {"123e4567-e89b-12d3-a456-426614174001": "plan-1"}
+    bs_ns_to_ref = {"ns-apm-server-01": "server-1"}
+
+    result = ie._ser_gws_auto_backup_rules_block(
+        result_obj, plan_id_to_ref, bs_ns_to_ref, "domain-1"
+    )
+
+    assert result == {
+        "domain_ref": "domain-1",
+        "user_rules": [
+            {
+                "backup_server_ref": "server-1",
+                "plan_ref": "plan-1",
+                "mail_groups": ["123e4567-e89b-12d3-a456-426614174012"],
+                "calendar_groups": [],
+                "contact_groups": ["123e4567-e89b-12d3-a456-426614174013"],
+                "drive_groups": [],
+            }
+        ],
+        "collab_services": {},
+        "protected_account_types": {
+            "include_unlicensed_accounts": False,
+            "include_archived_accounts": False,
+        },
+    }
+
+
 # ── _write_export_yaml ───────────────────────────────────────────────────────
 
 
@@ -626,6 +743,8 @@ def test_write_export_yaml_writes_each_section_under_correct_key(tmp_path: Path)
         fs_data=[{"backup_server_ref": "server-1", "name": "Corp Share"}],
         saas_data=[{"ref_key": "tenant-1", "tenant_id": "123e4567-e89b-12d3-a456-426614174060"}],
         m365_auto_bkp_data=[{"tenant_ref": "tenant-1", "user_rules": [], "collab_services": {}}],
+        gws_domains_data=[{"ref_key": "domain-1", "domain": "gwsdemo.example.com"}],
+        gws_auto_bkp_data=[{"domain_ref": "domain-1", "user_rules": [], "collab_services": {}}],
     )
 
     parsed: dict[str, Any] = yaml.safe_load(Path(output).read_text(encoding="utf-8"))
@@ -637,6 +756,8 @@ def test_write_export_yaml_writes_each_section_under_correct_key(tmp_path: Path)
     assert parsed["file_servers"][0]["name"] == "Corp Share"
     assert parsed["saas_tenants"][0]["tenant_id"] == "123e4567-e89b-12d3-a456-426614174060"
     assert parsed["m365_auto_backup_rules"][0]["tenant_ref"] == "tenant-1"
+    assert parsed["gws_domains"][0]["domain"] == "gwsdemo.example.com"
+    assert parsed["gws_auto_backup_rules"][0]["domain_ref"] == "domain-1"
 
 
 # ── _write_fs_credentials_csv / _write_storage_credentials_csv ──────────────

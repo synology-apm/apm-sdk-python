@@ -12,6 +12,7 @@ Usage:
     python backup_activity_report.py --category machine --retired
     python backup_activity_report.py --category m365 --m365-service exchange
     python backup_activity_report.py --category m365 --m365-service exchange --m365-service onedrive
+    python backup_activity_report.py --category gws --gws-workload-type mail
 
 Environment variables (see .env.example and examples/README.md):
     APM_HOST          hostname or IP (supports host:port)
@@ -40,6 +41,7 @@ from _common import (
     fmt_duration,
     make_client,
     paginate,
+    resolve_gws_workload_types,
     resolve_m365_services,
     run_main,
     workload_type_label,
@@ -48,6 +50,8 @@ from _common import (
 from synology_apm.sdk import (
     BackupActivity,
     BackupActivityStatus,
+    GWSWorkload,
+    GWSWorkloadType,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
@@ -72,7 +76,7 @@ def _merge_activities(
 
 
 def _tally(
-    wl: MachineWorkload | M365Workload,
+    wl: MachineWorkload | M365Workload | GWSWorkload,
     wl_act: BackupActivity | None,
 ) -> dict[str, Any]:
     base   = {"workload_id": wl.workload_id, "name": wl.name,
@@ -101,6 +105,7 @@ async def run(
     retired_only: bool,
     category: str,
     m365_services: list[M365WorkloadType] | None,
+    gws_services: list[GWSWorkloadType] | None,
     output_format: str,
     profile: str | None = None,
 ) -> None:
@@ -109,8 +114,9 @@ async def run(
 
     rows: list[dict[str, Any]] = []
 
-    # Resolve which M365 types to query (None means all types).
+    # Resolve which M365/GWS types to query (None means all types).
     m365_types_to_query = m365_services if m365_services is not None else list(M365WorkloadType)
+    gws_types_to_query = gws_services if gws_services is not None else list(GWSWorkloadType)
 
     print(f"Fetching backup activities for {report_date}...", file=sys.stderr)
     async with make_client(profile=profile) as apm:
@@ -125,10 +131,12 @@ async def run(
             if category in ("machine", "all") else None
         )
         _m365_types = m365_types_to_query if category in ("m365", "all") else None
+        _gws_types = gws_types_to_query if category in ("gws", "all") else None
         completed, _ = await paginate(
             lambda limit, offset: apm.activities.backup.list(
                 machine_types=_machine_types,
                 m365_types=_m365_types,
+                gws_types=_gws_types,
                 since=day_start,
                 until=day_end,
                 history=True,
@@ -140,6 +148,7 @@ async def run(
             lambda limit, offset: apm.activities.backup.list(
                 machine_types=_machine_types,
                 m365_types=_m365_types,
+                gws_types=_gws_types,
                 since=day_start,
                 until=day_end,
                 history=False,
@@ -152,7 +161,7 @@ async def run(
         # 2. Collect workloads and tally into rows.
         workloads, total_workloads = await collect_workloads(
             apm, category, m365_services,
-            is_retired=retired_only,
+            is_retired=retired_only, gws_services=gws_services,
         )
 
     rows.extend(_tally(wl, act_map.get(wl.workload_id)) for wl in workloads)
@@ -261,6 +270,7 @@ def main() -> None:
     args = parser.parse_args()
 
     m365_services = resolve_m365_services(parser, args)
+    gws_services = resolve_gws_workload_types(parser, args)
 
     report_date = (
         date.fromisoformat(args.date) if args.date
@@ -268,7 +278,7 @@ def main() -> None:
     )
 
     run_main(run(
-        report_date, args.retired_only, args.category, m365_services, args.output,
+        report_date, args.retired_only, args.category, m365_services, gws_services, args.output,
         profile=args.profile,
     ))
 

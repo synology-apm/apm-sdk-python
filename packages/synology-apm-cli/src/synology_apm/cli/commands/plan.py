@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import timedelta
-from typing import Any
 
 import typer
 from rich.padding import Padding
@@ -34,6 +33,7 @@ from synology_apm.cli._options import (
     OFFSET_OPTION,
     OUTPUT_OPTION,
     PAGE_ALL_OPTION,
+    SEARCH_OPTION,
 )
 from synology_apm.cli._serializers import (
     protection_plan_to_csv_row,
@@ -42,8 +42,12 @@ from synology_apm.cli._serializers import (
     retirement_plan_to_dict,
     tiering_plan_to_csv_row,
 )
-from synology_apm.cli._validate import resolve_by_name_or_id, validate_name_or_id_args
-from synology_apm.cli.errors import EXIT_ERROR, err_console
+from synology_apm.cli._validate import (
+    WORKLOAD_CATEGORY_ARGS,
+    parse_enum_scalar,
+    resolve_by_name_or_id,
+    validate_name_or_id_args,
+)
 from synology_apm.cli.output import (
     ListOutputFormat,
     OutputFormat,
@@ -57,10 +61,11 @@ from synology_apm.sdk import (
     EventTriggerConfig,
     MachineTaskConfig,
     MachineTaskScope,
+    ProtectionPlan,
     ProtectionPlanPolicy,
+    RetirementPlan,
     TieringPlan,
     VersionCopyStatus,
-    WorkloadCategory,
 )
 
 app = typer.Typer(help="Manage Protection Plans, Retirement Plans, and Tiering Plans.", no_args_is_help=True)
@@ -71,9 +76,6 @@ app.add_typer(_protection_app, name="protection")
 app.add_typer(_retirement_app, name="retirement")
 app.add_typer(_tiering_app, name="tiering")
 
-_CATEGORY_MAP = {"machine": WorkloadCategory.MACHINE, "m365": WorkloadCategory.M365}
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # synology-apm-cli plan protection
 # ═══════════════════════════════════════════════════════════════════════════
@@ -83,9 +85,9 @@ _CATEGORY_MAP = {"machine": WorkloadCategory.MACHINE, "m365": WorkloadCategory.M
 async def protection_list(
     ctx: typer.Context,
     category: str | None = typer.Option(
-        None, "--category", "-c", help="Workload category filter: machine / m365 (omit for all)"
+        None, "--category", "-c", help="Workload category filter: machine / m365 / gws (omit for all)"
     ),
-    search: str | None = typer.Option(None, "--search", "-s", help="Name keyword search"),
+    search: str | None = SEARCH_OPTION,
     limit: int = LIMIT_OPTION,
     offset: int = OFFSET_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
@@ -96,20 +98,19 @@ async def protection_list(
 
     \b
     Examples:
-      synology-apm-cli plan protection list                   # list all (machine + m365)
+      synology-apm-cli plan protection list                   # list all (machine + m365 + gws)
       synology-apm-cli plan protection list --category machine  # Machine Plans only
       synology-apm-cli plan protection list --category m365     # M365 Plans only
-      synology-apm-cli plan protection list -v                # show Description column
+      synology-apm-cli plan protection list --category gws      # GWS Plans only
+      synology-apm-cli plan protection list -v                # show Description and Plan ID columns
     """
-    if category is not None and category.lower() not in _CATEGORY_MAP:
-        err_console.print(f"[red]✗[/red] Invalid category: {category!r} (expected: machine / m365)")
-        raise typer.Exit(code=EXIT_ERROR)
+    category_enum = parse_enum_scalar(category, WORKLOAD_CATEGORY_ARGS, "category")
 
     async with apm_session(ctx, spinner="Fetching protection plans...") as apm:
         result = await dispatch_paginated_list(
             lambda off, lim: apm.plans.list(
-                category=_CATEGORY_MAP.get(category.lower()) if category else None,
-                name_contains=search,
+                category=category_enum,
+                keyword=search,
                 limit=lim,
                 offset=off,
             ),
@@ -135,12 +136,12 @@ async def protection_get(
 ) -> None:
     """Show details for a Protection Plan.
 
-    Searches across both Machine and M365 categories; there is no --category filter.
+    Searches across Machine, M365, and GWS categories; there is no --category filter.
 
     \b
     Examples:
       synology-apm-cli plan protection get "Daily Backup"                           # name search
-      synology-apm-cli plan protection get --id 0c8f033b-fb57-4f46-9a9d-85e9d21c08ab  # exact lookup
+      synology-apm-cli plan protection get --id 123e4567-e89b-12d3-a456-426614174001  # exact lookup
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:
@@ -200,7 +201,7 @@ async def protection_get(
 @run_async
 async def retirement_list(
     ctx: typer.Context,
-    search: str | None = typer.Option(None, "--search", "-s", help="Name keyword search"),
+    search: str | None = SEARCH_OPTION,
     limit: int = LIMIT_OPTION,
     offset: int = OFFSET_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
@@ -210,7 +211,7 @@ async def retirement_list(
     """List all Retirement Plans."""
     async with apm_session(ctx, spinner="Fetching retirement plans...") as apm:
         result = await dispatch_paginated_list(
-            lambda off, lim: apm.retirement_plans.list(name_contains=search, limit=lim, offset=off),
+            lambda off, lim: apm.retirement_plans.list(keyword=search, limit=lim, offset=off),
             limit=limit, offset=offset, page_all=page_all, output=output,
             to_dict=retirement_plan_to_dict, to_csv_row=retirement_plan_to_csv_row,
         )
@@ -236,7 +237,7 @@ async def retirement_get(
     \b
     Examples:
       synology-apm-cli plan retirement get "Compliance Retention"                 # name search
-      synology-apm-cli plan retirement get --id cc39711f-deb9-40fa-b6c4-27ca82958d3c  # exact lookup
+      synology-apm-cli plan retirement get --id 123e4567-e89b-12d3-a456-426614174002  # exact lookup
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:
@@ -267,7 +268,7 @@ async def retirement_get(
 @run_async
 async def tiering_list(
     ctx: typer.Context,
-    search: str | None = typer.Option(None, "--search", "-s", help="Name keyword search"),
+    search: str | None = SEARCH_OPTION,
     limit: int = LIMIT_OPTION,
     offset: int = OFFSET_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
@@ -277,7 +278,7 @@ async def tiering_list(
     """List all Tiering Plans."""
     async with apm_session(ctx, spinner="Fetching tiering plans...") as apm:
         result = await dispatch_paginated_list(
-            lambda off, lim: apm.tiering_plans.list(name_contains=search, limit=lim, offset=off),
+            lambda off, lim: apm.tiering_plans.list(keyword=search, limit=lim, offset=off),
             limit=limit, offset=offset, page_all=page_all, output=output,
             to_dict=TieringPlan.to_dict, to_csv_row=tiering_plan_to_csv_row,
         )
@@ -303,7 +304,7 @@ async def tiering_get(
     \b
     Examples:
       synology-apm-cli plan tiering get "My Tiering Plan"                          # name search
-      synology-apm-cli plan tiering get --id f56f8969-a831-47a6-9de0-279696dafea6  # exact lookup
+      synology-apm-cli plan tiering get --id 123e4567-e89b-12d3-a456-426614174003  # exact lookup
     """
     validate_name_or_id_args(ctx, name, plan_id)
     async with apm_session(ctx) as apm:
@@ -411,7 +412,7 @@ def _print_tasks_section(tasks: tuple[MachineTaskConfig, ...]) -> None:
 
 
 def _print_protection_plan_table(
-    plans: Sequence[Any], show_type: bool = True, verbose: bool = False
+    plans: Sequence[ProtectionPlan], show_type: bool = True, verbose: bool = False
 ) -> None:
     t = new_table()
     t.add_column("Name", min_width=20)
@@ -460,7 +461,7 @@ def _print_protection_plan_table(
     console.print(t)
 
 
-def _print_retirement_plan_table(plans: Sequence[Any], verbose: bool = False) -> None:
+def _print_retirement_plan_table(plans: Sequence[RetirementPlan], verbose: bool = False) -> None:
     t = new_table()
     t.add_column("Name", min_width=20)
     t.add_column("Description", min_width=16)
@@ -494,7 +495,7 @@ def _fmt_schedule_detail(policy: ProtectionPlanPolicy) -> str:
     return fmt_schedule_str(policy.schedule)
 
 
-def _print_tiering_plan_table(plans: Sequence[Any], verbose: bool = False) -> None:
+def _print_tiering_plan_table(plans: Sequence[TieringPlan], verbose: bool = False) -> None:
     t = new_table()
     t.add_column("Name", min_width=20)
     t.add_column("Description", min_width=16)

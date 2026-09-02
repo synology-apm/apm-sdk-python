@@ -28,12 +28,20 @@ from synology_apm.cli._options import (
     OFFSET_OPTION,
     OUTPUT_OPTION,
     PAGE_ALL_OPTION,
+    SEARCH_OPTION,
 )
 from synology_apm.cli._serializers import (
     hypervisor_to_csv_row,
     server_to_csv_row,
 )
-from synology_apm.cli._validate import _resolve_tiering_plan, resolve_by_name_or_id, validate_name_or_id_args
+from synology_apm.cli._validate import (
+    BACKUP_SERVER_TYPE_ARGS,
+    SERVER_STATUS_ARGS,
+    _resolve_tiering_plan,
+    parse_enum_list,
+    resolve_by_name_or_id,
+    validate_name_or_id_args,
+)
 from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.cli.output import (
     ListOutputFormat,
@@ -48,10 +56,8 @@ from synology_apm.cli.output import (
 from synology_apm.sdk import (
     BackupServer,
     BackupServerRole,
-    BackupServerType,
     Hypervisor,
     RemoteStorage,
-    ServerStatus,
     SiteInfo,
     VersionCopyStatus,
     WorkloadStatType,
@@ -180,9 +186,14 @@ async def infra_info(
 @run_async
 async def server_list(
     ctx: typer.Context,
-    search: str | None = typer.Option(None, "--search", help="Keyword search"),
-    status: list[ServerStatus] | None = typer.Option(None, "--status", help="Filter by status; repeatable"),
-    type_filter: list[BackupServerType] | None = typer.Option(None, "--type", help="Filter by server type; repeatable"),
+    search: str | None = SEARCH_OPTION,
+    status: list[str] | None = typer.Option(
+        None, "--status",
+        help="Filter by status, repeatable: healthy / warning / critical / disconnected / syncing",
+    ),
+    type_filter: list[str] | None = typer.Option(
+        None, "--type", help="Filter by server type, repeatable: dp / nas",
+    ),
     limit: int = LIMIT_OPTION,
     offset: int = OFFSET_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
@@ -192,12 +203,14 @@ async def server_list(
     ),
 ) -> None:
     """List all backup servers in the cluster."""
+    status_enums = parse_enum_list(status, SERVER_STATUS_ARGS, "status")
+    type_enums = parse_enum_list(type_filter, BACKUP_SERVER_TYPE_ARGS, "type")
     async with apm_session(ctx, spinner="Fetching backup servers...") as apm:
         result = await dispatch_paginated_list(
             lambda off, lim: apm.backup_servers.list(
-                name_contains=search,
-                status_filter=status or None,
-                type_filter=type_filter or None,
+                keyword=search,
+                status_filter=status_enums,
+                type_filter=type_enums,
                 limit=lim,
                 offset=off,
             ),

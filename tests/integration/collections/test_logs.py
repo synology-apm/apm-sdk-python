@@ -74,7 +74,7 @@ async def test_list_connection_returns_list(apm: APMClient) -> None:
     server = await _first_server(apm)
     logs, total = await apm.logs.list_connection(server)
     assert isinstance(logs, list)
-    assert total is None  # endpoint never reports a total
+    assert isinstance(total, int)
 
 
 async def test_list_connection_items_are_connection_log_instances(apm: APMClient) -> None:
@@ -91,7 +91,7 @@ async def test_list_system_returns_list(apm: APMClient) -> None:
     server = await _first_server(apm)
     logs, total = await apm.logs.list_system(server)
     assert isinstance(logs, list)
-    assert total is None  # endpoint never reports a total
+    assert isinstance(total, int)
 
 
 async def test_list_system_items_are_system_log_instances(apm: APMClient) -> None:

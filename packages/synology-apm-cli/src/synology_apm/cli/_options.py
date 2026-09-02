@@ -3,6 +3,20 @@
 Each constant is a typer.Option metadata object; commands reference it as the
 parameter default (e.g. ``limit: int = LIMIT_OPTION``) so option names, defaults,
 and help text stay identical everywhere they appear.
+
+Short flags currently in use across the CLI (check here before adding a new one, to
+avoid an accidental collision in some future command):
+
+- ``-s`` search (this module's SEARCH_OPTION)
+- ``-n`` namespace (per-command; workload/log commands)
+- ``-v`` verbose (per-command; list commands)
+- ``-o`` output (this module's OUTPUT_OPTION / LIST_OUTPUT_OPTION)
+- ``-y`` yes (per-command; destructive/confirmable actions)
+- ``-q`` quiet (per-command; scriptable actions)
+- ``-c`` category (``plan.py``)
+- ``-d`` domain (``gws.py``)
+- ``-t`` tenant-id (``m365_export.py``)
+- ``-u`` / ``-p`` / ``-h`` (root-level: username / password / help)
 """
 from __future__ import annotations
 
@@ -10,6 +24,7 @@ import typer
 
 from synology_apm.cli.output import ListOutputFormat, OutputFormat
 
+SEARCH_OPTION = typer.Option(None, "--search", "-s", help="Keyword search")
 LIMIT_OPTION = typer.Option(25, "--limit", help="Maximum records to show")
 VERSION_LIMIT_OPTION = typer.Option(25, "--limit", help="Maximum versions to show")
 OFFSET_OPTION = typer.Option(0, "--offset", help="Pagination start offset (default 0)")

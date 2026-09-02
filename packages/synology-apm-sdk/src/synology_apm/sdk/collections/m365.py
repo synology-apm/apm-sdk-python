@@ -16,43 +16,25 @@ from ..models.workload import (
     M365Workload,
 )
 from ._shared import (
+    _SAAS_STATUS_TO_API_BACKUP_STATUS,
     ListResult,
     _build_location_info,
     _build_workload_plan_ref,
     _check_active_for_write,
     _check_change_plan_preconditions,
     _check_not_retired,
-    _m365_plan_type,
     _not_found_as,
     _paginate,
     _parse_ts_optional,
+    _plan_type_filter,
     _raise_first_batch_error,
-    _resolve_namespace_to_server_id,
+    _resolve_namespaces_to_server_ids,
+    _resolve_saas_workload_status,
     _VersionMixin,
 )
 from .m365_auto_backup_rule import M365AutoBackupRuleCollection
 from .m365_mail_export import ExchangeExportCollection, GroupExportCollection
 from .protection_plans import M365PlanCollection
-
-_M365_STATUS_MAP: dict[str, WorkloadStatus] = {
-    "SUCCESS":           WorkloadStatus.SUCCESS,
-    "WARNING":           WorkloadStatus.PARTIAL,
-    "ERROR":             WorkloadStatus.FAILED,
-    "CANCELED":          WorkloadStatus.CANCELED,
-    "NOT_BACKED_UP_YET": WorkloadStatus.NO_BACKUPS,
-}
-
-# WorkloadStatus filter reverse map (list() `status` parameter). RETIRED is intentionally
-# absent — it's controlled by the is_retired parameter, not a raw status field, and is
-# rejected by list() if requested via `status`.
-_STATUS_TO_API_BACKUP_STATUS: dict[WorkloadStatus, str] = {
-    **{v: k for k, v in _M365_STATUS_MAP.items()},
-    # no forward-map counterpart; parsed via elif branches in _parse_workload() instead
-    WorkloadStatus.BACKING_UP: "BACKUPING",
-    WorkloadStatus.QUEUING:    "QUEUING",
-    WorkloadStatus.DELETING:   "DELETING",
-}
-
 
 _TYPE_TO_API_TYPE: dict[M365WorkloadType, str] = {
     M365WorkloadType.EXCHANGE:   "USER_EXCHANGE",
@@ -91,29 +73,8 @@ def _parse_m365_workload(raw: dict[str, Any]) -> M365Workload | None:
     protected_data_bytes = int(raw.get("backupUsage") or 0)
     backup_copy_data_bytes = int(raw.get("copyUsage") or 0)
 
-    _backup_status = raw.get("backupStatus") or ""
     backup_progress: int | None = None
-    items_backed_up: int | None
-    workload_status: WorkloadStatus
-    if _backup_status == "DELETING":
-        items_backed_up = None
-        workload_status = WorkloadStatus.DELETING
-    elif is_retired:
-        items_backed_up = None
-        workload_status = WorkloadStatus.RETIRED
-    elif _backup_status == "BACKUPING":
-        workload_status = WorkloadStatus.BACKING_UP
-        # processItemCount is declared int32, not string, in the API schema — same reasoning
-        # as MachineWorkloadCollection._parse_workload's processedSuccessCount guard: a
-        # compliant numeric field can't legally serialize as "", so only None is guarded here.
-        raw_items = raw.get("processItemCount")
-        items_backed_up = int(raw_items) if raw_items is not None else None
-    elif _backup_status == "QUEUING":
-        items_backed_up = None
-        workload_status = WorkloadStatus.QUEUING
-    else:
-        items_backed_up = None
-        workload_status = _M365_STATUS_MAP.get(_backup_status, WorkloadStatus.NO_BACKUPS)
+    workload_status, items_backed_up = _resolve_saas_workload_status(raw, is_retired=is_retired)
 
     info: M365UserInfo | M365SiteInfo | M365TeamInfo | M365GroupInfo
     if workload_type in (M365WorkloadType.EXCHANGE, M365WorkloadType.ONEDRIVE, M365WorkloadType.CHAT):
@@ -197,7 +158,7 @@ class M365WorkloadCollection(_VersionMixin):
         self,
         tenant_id: str,
         workload_type: M365WorkloadType,
-        namespace: str | None = None,
+        namespace: list[str] | None = None,
         plan: list[ProtectionPlan | RetirementPlan] | None = None,
         keyword: str | None = None,
         is_retired: bool = False,
@@ -210,8 +171,10 @@ class M365WorkloadCollection(_VersionMixin):
         Args:
             tenant_id:     Azure AD tenant ID (required).
             workload_type: Service sub-type to list (EXCHANGE / ONEDRIVE / etc.).
-            namespace:     Return only workloads on a specific backup server (= workload.namespace).
-                           The SDK resolves the namespace to an internal backup server reference automatically.
+            namespace:     Return only workloads on one or more backup servers (OR logic; =
+                           workload.namespace). The SDK resolves each namespace to an internal
+                           backup server reference automatically; a namespace with no matching
+                           backup server contributes no matches rather than raising.
             plan:          Restrict results to workloads assigned to one of the given plans (OR logic).
             keyword:       Name keyword (partial match).
             is_retired:    True = retired only; False = protected workloads only (default).
@@ -224,7 +187,6 @@ class M365WorkloadCollection(_VersionMixin):
             (list of M365Workload, total count).
 
         Raises:
-            ResourceNotFoundError: No backup server matching the specified namespace exists.
             ValueError: WorkloadStatus.RETIRED was passed in `status`.
         """
         if status and WorkloadStatus.RETIRED in status:
@@ -232,12 +194,16 @@ class M365WorkloadCollection(_VersionMixin):
                 "WorkloadStatus.RETIRED cannot be used as a status filter; use is_retired=True instead."
             )
 
-        # Resolve namespace → backup_server_id
-        backup_server_id: str | None = None
+        # Resolve namespace(s) → backup_server_ids; a namespace filter that matches no
+        # backup server at all short-circuits to an empty result instead of falling
+        # through to an unfiltered lookup.
+        backup_server_ids: list[str] = []
         if namespace:
-            backup_server_id = await _resolve_namespace_to_server_id(self._session, namespace)
+            backup_server_ids = await _resolve_namespaces_to_server_ids(self._session, namespace)
+            if not backup_server_ids:
+                return ListResult([], 0)
 
-        plan_type = _m365_plan_type(is_retired)
+        plan_type = _plan_type_filter(is_retired)
 
         filter_body: dict[str, Any] = {
             "primKey": tenant_id,
@@ -248,12 +214,12 @@ class M365WorkloadCollection(_VersionMixin):
         if keyword:
             filter_body["keyword"] = keyword
         filter_body["planType"] = plan_type
-        if backup_server_id:
-            filter_body["backupServerUids"] = [backup_server_id]
+        if backup_server_ids:
+            filter_body["backupServerUids"] = backup_server_ids
         if plan:
             filter_body["planUids"] = [p.plan_id for p in plan]
         if status:
-            filter_body["backupStatus"] = [_STATUS_TO_API_BACKUP_STATUS[s] for s in status]
+            filter_body["backupStatus"] = [_SAAS_STATUS_TO_API_BACKUP_STATUS[s] for s in status]
         raw = await self._session.post(
             "/api/v1/workload/m365_workload",
             json={"filter": filter_body},
@@ -325,7 +291,7 @@ class M365WorkloadCollection(_VersionMixin):
         Raises:
             ResourceNotFoundError: No workload with an exact match was found.
         """
-        plan_type = _m365_plan_type(is_retired)
+        plan_type = _plan_type_filter(is_retired)
 
         async def fetch(offset: int, limit: int) -> tuple[list[dict[str, Any]], int | None]:
             filter_body: dict[str, Any] = {
@@ -439,7 +405,10 @@ class M365WorkloadCollection(_VersionMixin):
         resp = await self._session.delete(
             "/api/v1/workload/m365_workload/batch",
             json={
+                # tenantId is the field name in APM 1.2; APM 2.0 renamed it to primKey.
+                # Send both to keep this working against either version.
                 "tenantId": workload.tenant_id,
+                "primKey": workload.tenant_id,
                 "isFromUnmanagedWorkload": False,
                 "nsUidPairs": [{"namespace": workload.namespace, "uid": workload.workload_id}],
             },

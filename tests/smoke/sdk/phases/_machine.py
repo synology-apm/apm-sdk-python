@@ -15,6 +15,7 @@ from typing import Any
 from synology_apm.sdk import (
     APIError,
     APMClient,
+    BackupServer,
     DuplicateWorkloadError,
     FileServerAddRequest,
     FileServerPathSelector,
@@ -593,7 +594,7 @@ async def _cleanup_orphan_fs(apm: APMClient, namespace: str, host_ip: str) -> No
     for is_retired in (False, True):
         try:
             result = await apm.machine.workloads.list(
-                is_retired=is_retired, workload_types=[MachineWorkloadType.FS], namespace=namespace
+                is_retired=is_retired, workload_types=[MachineWorkloadType.FS], namespace=[namespace]
             )
             for wl in result[0]:
                 if wl.fs_config and wl.fs_config.host_ip == host_ip:
@@ -670,7 +671,7 @@ async def _run_fs_crud_active(ctx: SmokeContext) -> None:
     """Flow 1 — active workload lifecycle: add → update → backup_cancel → change_plan → delete."""
     apm = ctx.apm
 
-    _infra_servers: list[Any] = ctx.data.get("servers", [])
+    _infra_servers: list[BackupServer] = ctx.data.get("servers", [])
     if _infra_servers:
         ctx.na(DOMAIN, "machine.fs_crud.active.backup_servers.list", "Reusing server from infra phase")
         server = _infra_servers[0]
@@ -761,7 +762,7 @@ async def _run_fs_crud_active(ctx: SmokeContext) -> None:
         after_add_result = await ctx.call(
             DOMAIN, "machine.fs_crud.active.list[after_add]",
             lambda: apm.machine.workloads.list(
-                workload_types=[MachineWorkloadType.FS], namespace=server.namespace
+                workload_types=[MachineWorkloadType.FS], namespace=[server.namespace]
             ),
         )
         after_add: list[MachineWorkload] = list(after_add_result[0]) if after_add_result else []
@@ -844,7 +845,7 @@ async def _run_fs_crud_active(ctx: SmokeContext) -> None:
         _after_c_result = await ctx.call(
             DOMAIN, "machine.fs_crud.active.list[after_add_c]",
             lambda: apm.machine.workloads.list(
-                workload_types=[MachineWorkloadType.FS], namespace=server.namespace
+                workload_types=[MachineWorkloadType.FS], namespace=[server.namespace]
             ),
         )
         fake_ip_c_wl = next(
@@ -922,7 +923,7 @@ async def _run_fs_crud_active(ctx: SmokeContext) -> None:
             after_upd_result = await ctx.call(
                 DOMAIN, "machine.fs_crud.active.list[after_update]",
                 lambda: apm.machine.workloads.list(
-                    workload_types=[MachineWorkloadType.FS], namespace=server.namespace
+                    workload_types=[MachineWorkloadType.FS], namespace=[server.namespace]
                 ),
             )
             after_upd: list[MachineWorkload] = list(after_upd_result[0]) if after_upd_result else []
@@ -1201,7 +1202,7 @@ async def _run_fs_crud_retired(ctx: SmokeContext) -> None:
         after_add_result = await ctx.call(
             DOMAIN, "machine.fs_crud.retired.list[after_add]",
             lambda: apm.machine.workloads.list(
-                workload_types=[MachineWorkloadType.FS], namespace=server.namespace
+                workload_types=[MachineWorkloadType.FS], namespace=[server.namespace]
             ),
         )
         added_wl: MachineWorkload | None = next(
@@ -1234,7 +1235,7 @@ async def _run_fs_crud_retired(ctx: SmokeContext) -> None:
         after_retire_result = await ctx.call(
             DOMAIN, "machine.fs_crud.retired.list[after_retire]",
             lambda: apm.machine.workloads.list(
-                is_retired=True, workload_types=[MachineWorkloadType.FS], namespace=server.namespace
+                is_retired=True, workload_types=[MachineWorkloadType.FS], namespace=[server.namespace]
             ),
         )
         retired_wl: MachineWorkload | None = next(

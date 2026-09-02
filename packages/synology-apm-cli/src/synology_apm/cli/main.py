@@ -5,6 +5,7 @@ import typer
 
 from synology_apm.cli.commands import activity as activity_commands
 from synology_apm.cli.commands import config as config_commands
+from synology_apm.cli.commands import gws as gws_commands
 from synology_apm.cli.commands import infra as infra_commands
 from synology_apm.cli.commands import log as log_commands
 from synology_apm.cli.commands import m365 as m365_commands
@@ -80,6 +81,7 @@ app.add_typer(config_commands.app, name="config")
 app.add_typer(machine_commands.app, name="machine")
 app.add_typer(saas_commands.app, name="saas")
 app.add_typer(m365_commands.app, name="m365")
+app.add_typer(gws_commands.app, name="gws")
 app.add_typer(plan_commands.app, name="plan")
 app.add_typer(activity_commands.app, name="activity")
 app.add_typer(infra_commands.app, name="infra")

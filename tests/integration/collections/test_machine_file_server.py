@@ -77,7 +77,7 @@ async def test_add_and_delete_file_server(apm: APMClient) -> None:
 
     # Locate the newly created workload by workload_id (more precise than host_ip alone).
     workloads, _ = await apm.machine.workloads.list(
-        workload_types=[MachineWorkloadType.FS], namespace=server.namespace
+        workload_types=[MachineWorkloadType.FS], namespace=[server.namespace]
     )
     added = next((wl for wl in workloads if wl.fs_config and wl.fs_config.host_ip == "192.0.2.250"), None)
     assert added is not None, "Newly added FS workload not found in list"
@@ -105,7 +105,7 @@ async def test_add_and_delete_file_server(apm: APMClient) -> None:
     # Verify removal: after delete() returns, the workload is immediately
     # either gone from the list or visible with DELETING status.  A single list call suffices.
     workloads_after, _ = await apm.machine.workloads.list(
-        workload_types=[MachineWorkloadType.FS], namespace=server.namespace
+        workload_types=[MachineWorkloadType.FS], namespace=[server.namespace]
     )
     wl_after = next((wl for wl in workloads_after if wl.workload_id == added.workload_id), None)
     assert wl_after is None or wl_after.status == WorkloadStatus.DELETING, (

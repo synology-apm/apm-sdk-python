@@ -104,7 +104,7 @@ def config_set(
             "store — macOS Keychain / Windows Credential Manager / Linux Secret Service)."
         ),
     ),
-    profile: str = typer.Option(DEFAULT_PROFILE, "--profile", help="Profile name"),
+    profile: str | None = typer.Option(None, "--profile", help="Profile name"),
 ) -> None:
     """Configure APM connection settings (interactive wizard).
 
@@ -125,6 +125,7 @@ def config_set(
       synology-apm-cli config set --host apm.corp.com --username admin --profile prod
       synology-apm-cli config set --save-password keyring --profile prod
     """
+    profile = profile or DEFAULT_PROFILE
     no_input: bool = (ctx.obj or {}).get("no_input", False)
     cfg = load_config()
     existing = cfg.get_profile(profile)
@@ -239,6 +240,7 @@ def config_clear(
     profile: str | None = typer.Option(None, "--profile", help="Profile name to clear"),
     all_profiles: bool = typer.Option(False, "--all", help="Clear all profiles"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
 ) -> None:
     """Clear APM connection settings.
 
@@ -255,7 +257,8 @@ def config_clear(
             _clear_keyring_password(name, p)
         cfg.profiles.clear()
         save_config(cfg)
-        console.print("[green]✓[/green] All settings cleared.")
+        if not quiet:
+            console.print("[green]✓[/green] All settings cleared.")
         return
 
     target = profile or DEFAULT_PROFILE
@@ -267,7 +270,8 @@ def config_clear(
     if cfg.remove_profile(target):
         _clear_keyring_password(target, existing)
         save_config(cfg)
-        console.print(f"[green]✓[/green] Profile cleared: {target}")
+        if not quiet:
+            console.print(f"[green]✓[/green] Profile cleared: {target}")
     else:
         console.print(f"[yellow]⚠[/yellow] Profile '{target}' does not exist.")
 

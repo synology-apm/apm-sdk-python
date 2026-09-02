@@ -14,12 +14,15 @@ relies on (list vs. get field completeness, pagination, permission modes).
 ## Cancelling a running job
 
 1. If the user names a workload rather than a specific job: find its id with
-   `list_machine_workloads`/`list_m365_workloads` (`name_contains`/`keyword`), then cancel by
-   workload with `cancel_machine_backup`/`cancel_m365_backup`. If the user already knows the
-   activity (e.g. from a report produced by `daily-backup-report` or
+   `list_machine_workloads`/`list_m365_workloads`/`list_gws_workloads`
+   (`keyword`), then cancel by workload with
+   `cancel_machine_backup`/`cancel_m365_backup`/`cancel_gws_backup`. If the user already knows
+   the activity (e.g. from a report produced by `daily-backup-report` or
    `analyze-restore-activities`), cancel it directly by id with `cancel_backup_activity` or
-   `cancel_restore_activity` instead — no workload lookup needed.
-2. All four cancel tools require `operator` mode or higher (see
+   `cancel_restore_activity` instead — no workload lookup needed. To cancel an in-progress M365
+   mailbox export instead, see [export-m365-mailboxes](../export-m365-mailboxes/SKILL.md)
+   (`cancel_exchange_export`/`cancel_group_export`) — a different job type, not covered here.
+2. All five cancel tools require `operator` mode or higher (see
    [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#permission-modes) for what to do on a
    permission error).
 3. Report the outcome; a job that already finished before the cancel call reaches the server is
@@ -27,12 +30,14 @@ relies on (list vs. get field completeness, pagination, permission modes).
 
 ## Locking or unlocking a version
 
-4. List the workload's versions with `list_machine_versions`/`list_m365_versions` (newest
-   first) to find the target `version_id` — or use `get_machine_version`/`get_m365_version`
-   with no `version_id` if the user means the latest version.
-5. Call `lock_machine_version`/`lock_m365_version` to prevent a version from being
-   auto-deleted by its plan's retention policy, or `unlock_machine_version`/`unlock_m365_version`
-   to release that hold and let normal retention apply again.
+4. List the workload's versions with
+   `list_machine_versions`/`list_m365_versions`/`list_gws_versions` (newest first) to find the
+   target `version_id` — or use `get_machine_version`/`get_m365_version`/`get_gws_version` with
+   no `version_id` if the user means the latest version.
+5. Call `lock_machine_version`/`lock_m365_version`/`lock_gws_version` to prevent a version from
+   being auto-deleted by its plan's retention policy, or
+   `unlock_machine_version`/`unlock_m365_version`/`unlock_gws_version` to release that hold and
+   let normal retention apply again.
 6. Both require `admin` mode.
 7. Report the outcome, including the version's timestamp so the user can confirm it's the one
    they meant.

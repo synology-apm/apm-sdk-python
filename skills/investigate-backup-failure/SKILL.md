@@ -13,8 +13,9 @@ relies on (list vs. get field completeness, pagination, permission modes).
 
 1. **Identify the scope**:
    - If the user names a specific workload: find its id with `list_machine_workloads` (or
-     `list_m365_workloads`) using `name_contains`/`keyword`, then call `get_machine_workload` (or
-     `get_m365_workload`) with that id to get its current `status` and `last_backup_at`.
+     `list_m365_workloads`/`list_gws_workloads`) using `keyword`, then call
+     `get_machine_workload` (or `get_m365_workload`/`get_gws_workload`) with that id to get its
+     current `status` and `last_backup_at`.
    - If the scope is broad ("why are backups failing?"): proceed to step 2 without
      filtering to a single workload.
 
@@ -44,8 +45,9 @@ relies on (list vs. get field completeness, pagination, permission modes).
    - Pattern assessment: server-wide, workload-specific, or transient
    - Recommended action:
      - Server issue → check server health, network, disk
-     - Workload issue → re-run backup with `backup_machine_workload` or review workload config
+     - Workload issue → re-run backup with `backup_machine_workload`/`backup_m365_workload`/
+       `backup_gws_workload` or review workload config
      - Transient → monitor next scheduled backup
 
-6. If the user asks to re-trigger a failed backup, use `backup_machine_workload` or
-   `backup_m365_workload`. These require `operator` mode or higher.
+6. If the user asks to re-trigger a failed backup, use `backup_machine_workload`,
+   `backup_m365_workload`, or `backup_gws_workload`. These require `operator` mode or higher.

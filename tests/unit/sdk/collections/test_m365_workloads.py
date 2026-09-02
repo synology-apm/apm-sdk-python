@@ -180,12 +180,86 @@ async def test_list_namespace_resolves_backup_server_id_and_filters_server_side(
         mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
 
         collection = M365WorkloadCollection(session)
-        workloads, total = await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=BS_NAMESPACE)
+        workloads, total = await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=[BS_NAMESPACE])
 
     # backupServerUids contains the resolved backup_server_id (not namespace)
     posted_filter = mock_post.call_args[1]["json"]["filter"]
     assert posted_filter.get("backupServerUids") == [BS_ID]
     assert len(workloads) == 1
+
+
+async def test_list_multiple_namespaces_resolves_all_and_filters_server_side() -> None:
+    """list(namespace=[a, b]) resolves both namespaces in one backup-server scan and posts
+    both resolved IDs as filter.backupServerUids, in the same order as the input."""
+    from unittest.mock import AsyncMock, patch
+
+    NS_1, ID_1 = "ns-m365-001", "bs-id-001"
+    NS_2, ID_2 = "ns-m365-002", "bs-id-002"
+    SERVERS_RESPONSE = {
+        "backupServers": [
+            {"id": ID_1, "namespace": NS_1, "spec": {}, "status": {}},
+            {"id": ID_2, "namespace": NS_2, "spec": {}, "status": {}},
+        ]
+    }
+    session = make_session()
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get, \
+         patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_get.return_value = SERVERS_RESPONSE
+        mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
+
+        collection = M365WorkloadCollection(session)
+        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=[NS_1, NS_2])
+
+    assert mock_get.call_count == 1  # one shared scan, not one per namespace
+    posted_filter = mock_post.call_args[1]["json"]["filter"]
+    assert posted_filter.get("backupServerUids") == [ID_1, ID_2]
+
+
+async def test_list_multiple_namespaces_all_unmatched_returns_empty() -> None:
+    """list(namespace=[bad1, bad2]) short-circuits to an empty result (no workload API call)
+    when none of the given namespaces resolve to a backup server."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get, \
+         patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_get.return_value = {"backupServers": [], "total": 0}
+
+        collection = M365WorkloadCollection(session)
+        workloads, total = await collection.list(
+            TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=["bad-ns-1", "bad-ns-2"]
+        )
+        mock_post.assert_not_called()
+
+    assert workloads == []
+    assert total == 0
+
+
+async def test_list_multiple_namespaces_partial_match_filters_by_resolved_id_only() -> None:
+    """list(namespace=[good, bad]) still queries workloads, scoped to only the namespace(s)
+    that resolved — an unmatched namespace among several contributes nothing (OR-filter
+    semantics), it does not invalidate the whole lookup."""
+    from unittest.mock import AsyncMock, patch
+
+    NS_GOOD, ID_GOOD = "ns-m365-001", "bs-id-001"
+    SERVERS_RESPONSE = {
+        "backupServers": [
+            {"id": ID_GOOD, "namespace": NS_GOOD, "spec": {}, "status": {}},
+        ]
+    }
+    session = make_session()
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get, \
+         patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_get.return_value = SERVERS_RESPONSE
+        mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
+
+        collection = M365WorkloadCollection(session)
+        await collection.list(
+            TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=[NS_GOOD, "bad-ns"]
+        )
+
+    posted_filter = mock_post.call_args[1]["json"]["filter"]
+    assert posted_filter.get("backupServerUids") == [ID_GOOD]
 
 
 async def test_list_parses_workload_category() -> None:
@@ -716,8 +790,9 @@ async def test_list_parses_deleting_backup_status() -> None:
     assert wl.items_backed_up is None
 
 
-async def test_list_unknown_namespace_raises_not_found() -> None:
-    """list(namespace=...) raises ResourceNotFoundError when no backup server matches."""
+async def test_list_unknown_namespace_returns_empty() -> None:
+    """list(namespace=...) short-circuits to an empty result (no workload API call) when no
+    backup server matches — the namespace filter matches nothing, it is not an error."""
     from unittest.mock import AsyncMock, patch
 
     session = make_session()
@@ -726,17 +801,19 @@ async def test_list_unknown_namespace_raises_not_found() -> None:
         mock_get.return_value = {"backupServers": [], "total": 0}
 
         collection = M365WorkloadCollection(session)
-        with pytest.raises(ResourceNotFoundError) as exc_info:
-            await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace="no-such-ns")
+        workloads, total = await collection.list(
+            TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=["no-such-ns"]
+        )
         mock_post.assert_not_called()
 
-    assert_resource_error(exc_info, resource_type="BackupServer", resource_id="no-such-ns")
+    assert workloads == []
+    assert total == 0
 
 
 async def test_list_namespace_survives_null_backup_servers_key() -> None:
-    """_resolve_namespace_to_server_id: backupServers present as JSON null (key present,
+    """_resolve_namespaces_to_server_ids: backupServers present as JSON null (key present,
     value null — distinct from an absent key) paginates as an empty page, same as an
-    absent key, and raises ResourceNotFoundError rather than crashing."""
+    absent key, and resolves to an empty result rather than crashing."""
     from unittest.mock import AsyncMock, patch
 
     session = make_session()
@@ -745,18 +822,20 @@ async def test_list_namespace_survives_null_backup_servers_key() -> None:
         mock_get.return_value = {"backupServers": None, "total": 0}
 
         collection = M365WorkloadCollection(session)
-        with pytest.raises(ResourceNotFoundError) as exc_info:
-            await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace="no-such-ns")
+        workloads, total = await collection.list(
+            TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=["no-such-ns"]
+        )
         mock_post.assert_not_called()
 
-    assert_resource_error(exc_info, resource_type="BackupServer", resource_id="no-such-ns")
+    assert workloads == []
+    assert total == 0
 
 
-async def test_list_namespace_survives_null_backup_server_id() -> None:
-    """_resolve_namespace_to_server_id: a matching backup server whose "id" is JSON null
-    (key present, value null) resolves to an empty string instead of crashing. That empty
-    string is falsy, so the caller's `if backup_server_id:` guard drops the
-    backupServerUids constraint entirely rather than posting a bogus [""] filter."""
+async def test_list_namespace_with_null_backup_server_id_returns_empty() -> None:
+    """_resolve_namespaces_to_server_ids: a matching backup server whose "id" is JSON null
+    (key present, value null) carries no usable ID to filter on, so the namespace is
+    treated the same as unmatched — resolving to an empty result rather than silently
+    omitting the backupServerUids filter and returning every workload unfiltered."""
     from unittest.mock import AsyncMock, patch
 
     BS_NAMESPACE = "ns-m365-002"
@@ -766,13 +845,15 @@ async def test_list_namespace_survives_null_backup_server_id() -> None:
         mock_get.return_value = {
             "backupServers": [{"id": None, "namespace": BS_NAMESPACE, "spec": {}, "status": {}}],
         }
-        mock_post.return_value = {"m365Workloads": [SAMPLE_M365_WORKLOAD]}
 
         collection = M365WorkloadCollection(session)
-        await collection.list(TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=BS_NAMESPACE)
+        workloads, total = await collection.list(
+            TENANT_ID, workload_type=M365WorkloadType.EXCHANGE, namespace=[BS_NAMESPACE]
+        )
+        mock_post.assert_not_called()
 
-    posted_filter = mock_post.call_args[1]["json"]["filter"]
-    assert "backupServerUids" not in posted_filter
+    assert workloads == []
+    assert total == 0
 
 
 # ── _parse_m365_workload: null vs. absent JSON field handling ─────────────

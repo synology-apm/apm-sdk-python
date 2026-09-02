@@ -24,12 +24,17 @@ from synology_apm.cli._options import (
     OFFSET_OPTION,
     OUTPUT_OPTION,
     PAGE_ALL_OPTION,
+    SEARCH_OPTION,
     SINCE_OPTION,
     UNTIL_OPTION,
 )
 from synology_apm.cli._serializers import activity_to_dict, backup_activity_to_csv_row, restore_activity_to_csv_row
 from synology_apm.cli._validate import (
+    BACKUP_ACTIVITY_STATUS_ARGS,
+    GWS_TYPE_ARGS,
+    M365_TYPE_ARGS,
     MACHINE_TYPE_ARGS,
+    RESTORE_ACTIVITY_STATUS_ARGS,
     parse_enum_list,
     parse_time_range,
     require_or_help,
@@ -45,50 +50,12 @@ from synology_apm.cli.output import (
     dispatch_paginated_list,
     new_table,
 )
-from synology_apm.sdk import (
-    BackupActivityStatus,
-    M365WorkloadType,
-    RestoreActivityStatus,
-)
 
 app = typer.Typer(help="Query activity records.", no_args_is_help=True)
 _backup_app  = typer.Typer(help="Query backup activity records.", no_args_is_help=True)
 _restore_app = typer.Typer(help="Query restore activity records.", no_args_is_help=True)
 app.add_typer(_backup_app,  name="backup")
 app.add_typer(_restore_app, name="restore")
-
-_BACKUP_STATUS_MAP = {
-    "queuing":    BackupActivityStatus.QUEUING,
-    "backing_up": BackupActivityStatus.BACKING_UP,
-    "canceling":  BackupActivityStatus.CANCELING,
-    "success":    BackupActivityStatus.SUCCESS,
-    "failed":     BackupActivityStatus.FAILED,
-    "partial":    BackupActivityStatus.PARTIAL,
-    "canceled":   BackupActivityStatus.CANCELED,
-}
-
-_RESTORE_STATUS_MAP = {
-    "preparing":            RestoreActivityStatus.PREPARING,
-    "restoring":            RestoreActivityStatus.RESTORING,
-    "canceling":            RestoreActivityStatus.CANCELING,
-    "ready_for_migrate":    RestoreActivityStatus.READY_FOR_MIGRATE,
-    "migrate_vm_manually":  RestoreActivityStatus.MIGRATE_VM_MANUALLY,
-    "migrating":            RestoreActivityStatus.MIGRATING,
-    "success":              RestoreActivityStatus.SUCCESS,
-    "failed":               RestoreActivityStatus.FAILED,
-    "partial":              RestoreActivityStatus.PARTIAL,
-    "canceled":             RestoreActivityStatus.CANCELED,
-}
-
-
-_M365_TYPE_MAP: dict[str, M365WorkloadType] = {
-    "exchange":   M365WorkloadType.EXCHANGE,
-    "onedrive":   M365WorkloadType.ONEDRIVE,
-    "chat":       M365WorkloadType.CHAT,
-    "sharepoint": M365WorkloadType.SHAREPOINT,
-    "teams":      M365WorkloadType.TEAMS,
-    "group":      M365WorkloadType.GROUP,
-}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -103,7 +70,7 @@ async def backup_list(
         None, "--status",
         help="Repeatable: queuing / backing_up / canceling / success / failed / partial / canceled",
     ),
-    search: str | None = typer.Option(None, "--search", help="Keyword search"),
+    search: str | None = SEARCH_OPTION,
     machine_type: list[str] | None = typer.Option(
         None, "--machine-type",
         help="Machine sub-type filter, repeatable: pc / ps / vm / fs",
@@ -111,6 +78,10 @@ async def backup_list(
     m365_type: list[str] | None = typer.Option(
         None, "--m365-type",
         help="M365 service type filter, repeatable: exchange / onedrive / chat / sharepoint / teams / group",
+    ),
+    gws_type: list[str] | None = typer.Option(
+        None, "--gws-type",
+        help="GWS service type filter, repeatable: drive / mail / contact / calendar / shared_drive",
     ),
     namespace: list[str] | None = typer.Option(
         None, "--namespace", "-n",
@@ -133,12 +104,10 @@ async def backup_list(
     Prints a hint instead of an empty table when there are no ongoing tasks and --history
     was not given.
     """
-    status_enums = parse_enum_list(status, _BACKUP_STATUS_MAP, "status")
-    machine_type_enums = parse_enum_list(machine_type, MACHINE_TYPE_ARGS, "machine-type", "pc / ps / vm / fs")
-    m365_type_enums = parse_enum_list(
-        m365_type, _M365_TYPE_MAP, "m365-type",
-        "exchange / onedrive / chat / sharepoint / teams / group",
-    )
+    status_enums = parse_enum_list(status, BACKUP_ACTIVITY_STATUS_ARGS, "status")
+    machine_type_enums = parse_enum_list(machine_type, MACHINE_TYPE_ARGS, "machine-type")
+    m365_type_enums = parse_enum_list(m365_type, M365_TYPE_ARGS, "m365-type")
+    gws_type_enums = parse_enum_list(gws_type, GWS_TYPE_ARGS, "gws-type")
     since_dt, until_dt = parse_time_range(since, until)
 
     async with apm_session(ctx, spinner="Fetching backup activities...") as apm:
@@ -148,6 +117,7 @@ async def backup_list(
                 keyword=search,
                 machine_types=machine_type_enums,
                 m365_types=m365_type_enums,
+                gws_types=gws_type_enums,
                 namespace=namespace,
                 since=since_dt,
                 until=until_dt,
@@ -270,7 +240,7 @@ async def restore_list(
             "/ migrating / success / failed / partial / canceled"
         ),
     ),
-    search: str | None = typer.Option(None, "--search", help="Keyword search"),
+    search: str | None = SEARCH_OPTION,
     since: str | None = SINCE_OPTION,
     until: str | None = UNTIL_OPTION,
     history: bool = typer.Option(False, "--history", help="Show completed activities instead of ongoing activities"),
@@ -285,7 +255,7 @@ async def restore_list(
     Prints a hint instead of an empty table when there are no ongoing tasks and --history
     was not given.
     """
-    status_enums = parse_enum_list(status, _RESTORE_STATUS_MAP, "status")
+    status_enums = parse_enum_list(status, RESTORE_ACTIVITY_STATUS_ARGS, "status")
     since_dt, until_dt = parse_time_range(since, until)
 
     async with apm_session(ctx, spinner="Fetching restore activities...") as apm:

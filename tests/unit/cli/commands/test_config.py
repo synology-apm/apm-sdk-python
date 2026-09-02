@@ -100,6 +100,38 @@ def test_config_clear_with_yes_flag_removes_profile() -> None:
     assert DEFAULT_PROFILE not in saved.profiles
 
 
+def test_config_clear_with_quiet_flag_produces_no_output() -> None:
+    """config clear --yes --quiet removes the profile without printing the success line."""
+    cfg = AppConfig(profiles={DEFAULT_PROFILE: ProfileConfig(host="apm.corp.com", username="admin")})
+    with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
+         patch("synology_apm.cli.commands.config.save_config") as mock_save:
+        result = runner.invoke(app, ["config", "clear", "--yes", "--quiet"])
+    assert result.exit_code == 0
+    assert result.output.strip() == ""
+    mock_save.assert_called_once()
+
+
+def test_config_clear_all_with_quiet_flag_produces_no_output() -> None:
+    """config clear --all --yes --quiet clears all profiles without printing the success line."""
+    cfg = AppConfig(profiles={DEFAULT_PROFILE: ProfileConfig(host="apm.corp.com", username="admin")})
+    with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
+         patch("synology_apm.cli.commands.config.save_config") as mock_save:
+        result = runner.invoke(app, ["config", "clear", "--all", "--yes", "--quiet"])
+    assert result.exit_code == 0
+    assert result.output.strip() == ""
+    mock_save.assert_called_once()
+
+
+def test_config_clear_nonexistent_profile_with_quiet_still_shows_warning() -> None:
+    """config clear --quiet only suppresses success messages; the not-found warning still prints."""
+    cfg = AppConfig()
+    with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
+         patch("synology_apm.cli.commands.config.save_config"):
+        result = runner.invoke(app, ["config", "clear", "--profile", "ghost", "--yes", "--quiet"])
+    assert result.exit_code == 0
+    assert "Profile 'ghost' does not exist" in result.output
+
+
 def test_config_clear_requires_confirmation_and_aborts_on_no() -> None:
     """config clear without --yes prompts for confirmation; answering n cancels with exit 4."""
     cfg = AppConfig(profiles={DEFAULT_PROFILE: ProfileConfig(host="apm.corp.com", username="admin")})
@@ -127,6 +159,26 @@ def test_config_set_saves_host_and_username() -> None:
     assert profile.host == "apm.corp.com"
     assert profile.username == "admin"
     assert profile.no_verify_ssl is False
+
+
+def test_config_set_no_profile_flag_defaults_to_default_profile() -> None:
+    """config set with no --profile at all should still write to DEFAULT_PROFILE.
+
+    Regression test for the --profile default changing from a concrete DEFAULT_PROFILE
+    value to None (matching every other profile-flavored option's None-default convention).
+    """
+    cfg = AppConfig()
+    with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
+         patch("synology_apm.cli.commands.config.save_config") as mock_save:
+        result = runner.invoke(
+            app,
+            ["config", "set", "--host", "apm.corp.com", "--username", "admin"],
+            input="\nn\n",
+        )
+    assert result.exit_code == 0
+    assert f"profile: {DEFAULT_PROFILE}" in result.output
+    saved: AppConfig = mock_save.call_args[0][0]
+    assert saved.get_profile(DEFAULT_PROFILE).host == "apm.corp.com"
 
 
 @pytest.mark.parametrize("provided_args,stdin_input,expected_prompt", [

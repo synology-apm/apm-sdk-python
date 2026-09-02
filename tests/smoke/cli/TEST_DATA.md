@@ -46,6 +46,23 @@ exercised rather than gracefully skipped.
 - Optional: at least one **retired** workload in any scope (`synology-apm-cli m365 <scope> list
   --retired`) — exercises a non-empty `list --retired` for that scope.
 
+## GWS / SaaS
+
+- At least one GWS-category domain (`synology-apm-cli saas list`) — **required**: without it,
+  the entire `gws` domain is skipped.
+- For each of the five scopes — `mail`, `calendar`, `contact`, `drive`, `shared-drive` — at
+  least one workload (`synology-apm-cli gws <scope> list`) with at least one backup version
+  (`synology-apm-cli gws <scope> version list <name>`). The phase prefers a workload that has
+  been backed up when picking each scope's get/version target. Unlike M365, GWS has no export
+  feature, so there is no `export list` step to exercise.
+
+> **Note:** A fresh domain with data in only one or two scopes is fine — the remaining scopes
+> are skipped gracefully but go unexercised. To cover all five, configure one protected
+> workload per scope.
+
+- Optional: at least one **retired** workload in any scope (`synology-apm-cli gws <scope> list
+  --retired`) — exercises a non-empty `list --retired` for that scope.
+
 ## Activity
 
 - Backup activity history (`synology-apm-cli activity backup list --history`) — populated
@@ -68,7 +85,7 @@ exercised rather than gracefully skipped.
 
 ## Sample environment
 
-If you are setting up a test APM from scratch, the placeholder names in root `CLAUDE.md`'s
+If you are setting up a test APM from scratch, the placeholder names in `CONTRIBUTING.md`'s
 "Example Data Conventions" table double as a ready-made naming scheme — e.g. a `vm-web-01`
 Machine Workload under a `Daily Backup` Protection Plan, an `alice@contoso.com` mailbox and
 OneDrive, a `Marketing` SharePoint site, and so on. Naming real test resources after these

@@ -1,6 +1,6 @@
 # APM CLI — Design Contract
 
-> Corresponding product: Synology ActiveProtect Manager 1.2
+> Corresponding product: Synology ActiveProtect Manager
 
 **Purpose of this document**: A design contract for CLI implementers (human developers or AI
 sessions) — command structure, output format conventions, color/status rules, and the
@@ -8,30 +8,24 @@ CLI → SDK call mapping. It is a guide for maintaining consistency, not a copy 
 output: exact option lists live in each command's Typer decorators (`--help` shows them);
 exact display strings and table-column definitions live next to the code that renders them
 (`_display.py`, `_serializers.py`, `commands/*.py`) — see the note at the top of
-[Detailed Command Specifications](#detailed-command-specifications).
+[`COMMAND_REFERENCE.md`'s Detailed Command Specifications](COMMAND_REFERENCE.md#detailed-command-specifications).
 
 ---
 
 ## Table of Contents
 
 - [Purpose and Design Principles](#purpose-and-design-principles)
+- [Adding a New Command](#adding-a-new-command)
+   - [Renaming or Moving a Command](#renaming-or-moving-a-command)
+   - [Renaming or Changing an Option](#renaming-or-changing-an-option)
 - [Package Structure](#package-structure)
 - [Authentication Configuration](#authentication-configuration)
 - [Global Options](#global-options)
 - [Command Overview](#command-overview)
-- [Output Formats](#output-formats)
-- [Detailed Command Specifications](#detailed-command-specifications)
-   - [config — Configuration Management](#config--configuration-management)
-   - [machine — Device Workload Management](#machine--device-workload-management)
-   - [saas — SaaS Tenant Overview](#saas--saas-tenant-overview)
-   - [m365 — M365 Workload Management](#m365--m365-workload-management)
-   - [m365 exchange export / m365 group export — Mailbox PST Export](#m365-exchange-export--m365-group-export--mailbox-pst-export)
-   - [plan protection / retirement / tiering — Plan Management](#plan-protection--retirement--tiering--plan-management)
-   - [activity — Activity Log Queries](#activity--activity-log-queries)
-   - [infra — Infrastructure Information](#infra--infrastructure-information)
-   - [synology-apm-cli log — Backup Server Logs](#synology-apm-cli-log--backup-server-logs)
-- [Status and Color Conventions](#status-and-color-conventions)
-- [Error Handling](#error-handling)
+
+For output-format rendering, the per-command behavior contract, status/color conventions, and
+error handling, see the companion [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md) — read it
+per-command as needed, not cover to cover.
 
 ---
 
@@ -39,8 +33,9 @@ exact display strings and table-column definitions live next to the code that re
 
 ### Purpose
 
-`synology-apm-cli` is the official CLI front-end for the APM Python SDK, providing a complete experience for end users to operate APM from the terminal.
-The CLI depends solely on the SDK and does not call the REST API directly.
+See the root `CLAUDE.md`'s Project Background for what `synology-apm-cli` is. The data flow
+below is the detail that matters for implementers: the CLI depends solely on the SDK and
+never calls the REST API directly.
 
 ```
 End user            →  apm CLI (synology_apm.cli)  →  apm SDK (synology_apm.sdk)  →  APM REST API
@@ -49,8 +44,8 @@ Program integration →                                  apm SDK (synology_apm.s
 
 ### Design Principles
 
-- **Domain-oriented command structure**: `synology-apm-cli machine` manages device backups, `synology-apm-cli saas` shows the SaaS tenant overview, `synology-apm-cli m365` manages M365 backups — aligned with the SDK's `apm.machine` / `apm.m365` object model
-- **Resource-oriented addressing**: every resource-addressed command accepts either a positional `<NAME>` (search) or `--id` (+ `--namespace` for workloads) for direct lookup — see [Search / Direct mode](#search--direct-mode)
+- **Domain-oriented command structure**: `synology-apm-cli machine` manages device backups, `synology-apm-cli saas` shows the SaaS application overview, `synology-apm-cli m365` manages M365 backups — aligned with the SDK's `apm.machine` / `apm.m365` object model
+- **Resource-oriented addressing**: every resource-addressed command accepts either a positional `<NAME>` (search) or `--id` (+ `--namespace` for workloads) for direct lookup — see [Search / Direct mode](COMMAND_REFERENCE.md#search--direct-mode)
 - **Progressive disclosure**: the most commonly used fields are shown by default; `--verbose` shows full information
 - **Scriptable**: `--output json` outputs JSON for use with jq; the exit code reflects success/failure
 - **Friendly terminal UX**: Rich colorized output, progress bars, clear error messages
@@ -62,17 +57,42 @@ When adding or modifying commands, follow the conventions of existing commands (
 
 - **Error handling / session setup**: SDK calls run inside `async with apm_session(ctx) as apm:` (`synology_apm.cli._helpers`), which stacks `apm_error_handler()` → optional `api_spinner` → `get_client()` in one context manager. List commands pass `spinner="Fetching ..."`; destructive commands pass `abortable=True` so a declined confirmation exits cleanly with `EXIT_CANCEL`. Do not hand-nest `apm_error_handler()` / `api_spinner()` / `get_client()` in commands.
 - **Output dispatch**: non-table output is dispatched via `dispatch_list_output()` / `dispatch_output()` (`synology_apm.cli.output`); returning `True` ends early; `to_csv_row` fields must align with the table columns (not the JSON fields).
-- **Workload resolution and argument validation**: when the search (`<NAME>`) and direct (`--id` / `--namespace`) modes are mutually exclusive, use `validate_*()` from `synology_apm.cli._validate` along with `WorkloadRef.resolve_machine()` / `.resolve_m365()` — do not hand-roll the dispatch (see their docstrings for the resolution details). Any value the CLI auto-fills on the user's behalf (the M365 tenant when `--tenant-id` is omitted; the version when `--id`/`--version-id` is omitted) must be reported back to the user via `print_resolved_tenant()` / `print_resolved_version()`.
-- **Plan resolution (`--plan`)**: any `--plan <id or name>` option is resolved via the shared `_resolve_plan()` helper in `synology_apm.cli._validate` (see its docstring for the id-vs-name dispatch) — do not reimplement this inline. Which plan type it targets follows the operation, not user input: always a Retirement Plan for `retire` (retiring a workload always assigns one, regardless of its current state), the resolved workload's current state for `change-plan`, and the command's `--retired` flag for list filters. The repeatable `--plan` filter on `machine list` / `m365 <scope> list` maps the same helper over every value via `_resolve_plans()`. **Exception**: `infra server change-plan --plan` resolves against Tiering Plans through the separate `_resolve_tiering_plan()` helper, not `_resolve_plan()` — always use the domain-appropriate helper.
+- **Workload resolution and argument validation**: when the search (`<NAME>`) and direct (`--id` / `--namespace`) modes are mutually exclusive, use `validate_*()` from `synology_apm.cli._validate` along with `WorkloadRef.resolve_machine()` / `.resolve_m365()` / `.resolve_gws()` — do not hand-roll the dispatch (see their docstrings for the resolution details). Any value the CLI auto-fills on the user's behalf (the M365 tenant when `--tenant-id` is omitted; the GWS domain when `--domain` is omitted; the version when `--id`/`--version-id` is omitted) must be reported back to the user via `print_resolved_saas_tenant()` (pass `label="domain"` for GWS) / `print_resolved_version()`.
+- **Plan resolution (`--plan`)**: any `--plan <id or name>` option is resolved via the shared `_resolve_plan()` helper in `synology_apm.cli._validate` (see its docstring for the id-vs-name dispatch) — do not reimplement this inline. Which plan type it targets follows the operation, not user input: always a Retirement Plan for `retire` (retiring a workload always assigns one, regardless of its current state), the resolved workload's current state for `change-plan`, and the command's `--retired` flag for list filters. The repeatable `--plan` filter on `machine list` / `m365 <scope> list` / `gws <scope> list` maps the same helper over every value via `_resolve_plans()`. **Exception**: `infra server change-plan --plan` resolves against Tiering Plans through the separate `_resolve_tiering_plan()` helper, not `_resolve_plan()` — always use the domain-appropriate helper.
 - **Stderr**: always use `err_console` (`synology_apm.cli.errors`); do not create a separate `Console(stderr=True)`.
 - **Missing required arguments**: declare as `Optional` at the Typer layer; the function checks for `None` internally and prints `ctx.get_help()`, then exits with 0.
 - **Global connection options that feed `resolve_connection()`'s priority cascade** (`--host`/`--username`/`--password`/`--profile`/`--no-verify-ssl`): declare with a `None` default, never a concrete value — a `None` means "not given" and lets the environment-variable/config-file fallback take effect, while an explicit value at any tier (CLI flag, env var, or config file) always wins over a lower-priority tier regardless of direction. Defaulting one of these options to a concrete value (e.g. `False`) instead of `None` silently breaks the cascade for that option, since the CLI would then always "explicitly" pass that default and the option could never fall through to the env var or config file.
 - **Shared option constants**: the recurring pagination (`--limit`/`--offset`/`--page-all`), output (`--output`), and time-filter (`--since`/`--until`) options are declared once in `synology_apm.cli._options` and referenced as parameter defaults (e.g. `limit: int = LIMIT_OPTION`); `--since`/`--until` values are parsed with `parse_time_range(since, until)` from `synology_apm.cli._validate`. Only declare an option inline when its default or help text genuinely differs.
 - **Destructive operations** (`retire`, overwrite-style `change-plan`): require interactive confirmation unless `--yes` is given; the summary message is always printed.
 - **Enum display text**: all enum → display-string mapping tables live in `_display.py` (e.g. `_SERVER_STATUS_DISPLAY`, `_FILE_SERVER_TYPE_DISPLAY`, `_RESTORE_TYPE_DISPLAY`); command modules import and use them — they do not define their own. Each table is accessed through a public `fmt_*` wrapper (e.g. `fmt_server_status`, `fmt_export_status`) that owns the fallback for unmapped values, and the wrapper is what commands call and unit tests exercise. SDK enums contain only semantic values, so adding or adjusting display text requires changes in `_display.py` only. Display maps must always contain final display strings — no intermediate empty-string sentinels requiring call-site post-processing.
-- **Datetime precision**: use `fmt_datetime()` for table/text output and `fmt_datetime_iso()` / `to_local_iso()` for JSON/CSV — see [Output Formats](#output-formats) for the resulting precision/format per mode. **Exception**: schedule time-of-day fields (`schedule.start_time`, `daily_check_time`) are always `HH:MM` (no seconds, no timezone) in every output format, since APM schedules only support minute granularity.
+- **Datetime precision**: use `fmt_datetime()` for table/text output and `fmt_datetime_iso()` / `to_local_iso()` for JSON/CSV — see [`COMMAND_REFERENCE.md`'s Output Formats](COMMAND_REFERENCE.md#output-formats) for the resulting precision/format per mode. **Exception**: schedule time-of-day fields (`schedule.start_time`, `daily_check_time`) are always `HH:MM` (no seconds, no timezone) in every output format, since APM schedules only support minute granularity.
 - **External non-SDK dependencies** (e.g. the OS keyring): wrap calls with a narrow `try/except` and the SDK-defined `KeyringUnavailableError` (re-exported via `synology_apm.sdk`), not `apm_error_handler()` — that helper converts `APMError` to structured messages and also converts `ValueError` to a plain `EXIT_ERROR` message; it re-raises everything else.
-- **Shared backup/cancel/retire/change-plan action bodies**: `machine` and `m365` implement the same four destructive/state-changing commands (`backup`, `cancel`, `retire`, `change-plan`) with identical resolve → confirm → invoke → print-success flow. The domain-agnostic body of each lives once in `commands/_actions.py` (`_do_backup` / `_do_cancel` / `_do_retire` / `_do_change_plan`); each command module passes in closures for workload resolution and a `label_fn` callable (`_machine_type_label` for `machine`, `lambda wl: None` for `m365`) to absorb the only real per-domain differences — see [Action confirmation flow](#action-confirmation-flow) for the resulting output difference.
+- **Shared backup/cancel/retire/change-plan action bodies**: `machine`, `m365`, and `gws` implement the same four destructive/state-changing commands (`backup`, `cancel`, `retire`, `change-plan`) with identical resolve → confirm → invoke → print-success flow. The domain-agnostic body of each lives once in `commands/_actions.py` (`_do_backup` / `_do_cancel` / `_do_retire` / `_do_change_plan`); each command module passes in closures for workload resolution and a `label_fn` callable (`_machine_type_label` for `machine`, `lambda wl: None` for `m365`/`gws`) to absorb the only real per-domain differences — see [`COMMAND_REFERENCE.md`'s Action confirmation flow](COMMAND_REFERENCE.md#action-confirmation-flow) for the resulting output difference.
+
+### Flag Arity Reference
+
+Two flag families are deliberately reused across many commands with more than one meaning
+or arity. Both are correctly-applied conventions, not inconsistencies — read the specific
+command's `--help` when in doubt.
+
+**`--namespace`** — arity depends on context:
+
+| Context | Arity | Notes |
+|---|---|---|
+| List-filter — `machine`/`m365`/`gws list --namespace`, `activity backup list --namespace` | Repeatable (`list[str] \| None`) | Mirrors the underlying SDK method's own arity: `MachineWorkloadCollection.list()` / `M365WorkloadCollection.list()` / `GWSWorkloadCollection.list()` / `BackupActivityCollection.list()` all take `list[str] \| None` (OR logic) |
+| Direct-mode companion to `--id`/`--workload-id` — `get`/`backup`/`cancel`/`retire`/`change-plan`/`version *`/`export *` on `machine`/`m365`/`gws` | Scalar (`str \| None`) | A workload always has exactly one namespace; never co-occurs with the list-filter usage above in the same command |
+| `log * list --id` | No `--namespace` at all | `--id` there names a *server* ID (a different resource than workload commands' `--id`) — a server's own namespace has no bearing on which server owns its logs |
+
+**`--id`** — always names the current command's headline resource, with a resource-specific
+companion flag used only when a second resource needs addressing in the same invocation:
+
+| Commands | `--id` names | Companion flag |
+|---|---|---|
+| Workload `get`/`backup`/`cancel`/`retire`/`change-plan`; `plan */get`; `infra server/storage/hypervisor get`; `activity */get/cancel`; `log */list` | That command's one resource (workload, plan, server, storage, hypervisor, activity, or log server) | — |
+| `version get`/`lock`/`unlock`; `export cancel` | The version/activity (the headline resource) | `--workload-id` names the owning workload |
+| `version list`; `export list` | Not used — lists every version/export of one workload, so there's no single one for `--id` to address | `--workload-id` names the workload |
+| `export download`, `--id` given (direct-download mode) | The activity | `--workload-id` names the owning workload; `--version-id` is accepted but ignored in this mode |
+| `export download`, `--id` omitted (auto-start mode) | Not used — providing it switches to direct-download mode above | `--workload-id` (workload) + `--version-id` (a *third* distinct meaning: the backup version to export from) |
 
 ### Serialization Convention
 
@@ -104,11 +124,47 @@ required to source from `to_dict()`.
 
 ---
 
+## Adding a New Command
+
+1. Implement it in `commands/<module>` — SDK calls only, never raw HTTP (see "Development Conventions" above).
+2. Add a command-level unit test in `tests/unit/cli/commands/` (SDK wiring, exit codes, output dispatch — see `tests/CLAUDE.md` for the assertion conventions).
+3. Update this README's [Command Overview](#command-overview) and `COMMAND_REFERENCE.md`'s [Detailed Command Specifications](COMMAND_REFERENCE.md#detailed-command-specifications) if the command surface changed.
+4. Update `packages/synology-apm-cli/README.md` example blocks if user-facing usage changed.
+5. Consider a matching invocation in `tests/smoke/cli/phases/_<domain>.py`.
+6. Run `make test`.
+
+### Renaming or Moving a Command
+
+- Command path changed (e.g. `synology-apm-cli infra backup-server` → `synology-apm-cli infra server`): update all `runner.invoke(app, [...])` paths in its tests, and this README's Command Overview and `COMMAND_REFERENCE.md`'s Detailed Command Specifications.
+- Command moved to a different module (e.g. `backup_server.py` → `infra.py`): update all `patch("synology_apm.cli.commands.<old_module>.get_client", ...)` call sites to the new module path.
+- Either case: update `packages/synology-apm-cli/README.md` example blocks if the change is user-facing, and run `make test`.
+
+### Renaming or Changing an Option
+
+Applies when a flag's name or arity changes (e.g. `--id` → `--workload-id`, or a scalar
+option becoming repeatable) — distinct from the command-level renames above:
+
+- Update the command's own help text/examples (docstring and `--help` output).
+- Update this README's Command Overview and `COMMAND_REFERENCE.md`'s Detailed Command
+  Specifications, and `packages/synology-apm-cli/README.md`'s example blocks.
+- Update the literal flag strings in every `runner.invoke(app, [...])` test call that
+  exercises the old flag.
+- Update the matching invocation in `tests/smoke/cli/phases/_<domain>.py`, if one exists —
+  `make test` does not run the smoke suite (a separate `make smoke-test` target), so a clean
+  `make test` will not catch a stale flag string there.
+- Run `make test`.
+
+---
+
 ## Package Structure
 
 Each `commands/<name>.py` file implements the `synology-apm-cli <name> ...` top-level command
 group named for the file; only files spanning multiple subcommand groups or with a
 non-command role are annotated below.
+
+Keep this tree in sync when a source file is added, renamed, or removed under
+`synology_apm/cli/` — add an inline comment only when the file doesn't follow the naming
+convention above.
 
 ```
 synology_apm/cli/
@@ -121,15 +177,16 @@ synology_apm/cli/
 ├── _options.py          # Shared typer.Option constants: LIMIT/VERSION_LIMIT, OFFSET, PAGE_ALL, LIST_OUTPUT/OUTPUT, SINCE/UNTIL
 ├── _display.py          # All enum → display-string mapping tables and formatting functions (fmt_*); print_list_footer / render_log_table / print_version_detail / print_workload_detail / render_version_table
 ├── _serializers.py      # All model → dict serializers (`*_to_dict` / `*_to_csv_row`) for every resource the CLI outputs
-├── _validate.py         # validate_resolve_args, validate_version_workload_args, validate_version_lock_args, validate_activity_args, validate_name_or_id_args, parse_time_filter / parse_time_range, require_or_help, _resolve_tenant, _resolve_plan, _resolve_plans, _resolve_tiering_plan; WorkloadRef.resolve_machine() / .resolve_m365()
+├── _validate.py         # validate_resolve_args, validate_version_workload_args, validate_version_lock_args, validate_activity_args, validate_name_or_id_args, parse_time_filter / parse_time_range, require_or_help, _resolve_saas_tenant_id, _resolve_plan, _resolve_plans, _resolve_tiering_plan; WorkloadRef.resolve_machine() / .resolve_m365() / .resolve_gws()
 └── commands/
     ├── __init__.py
-    ├── _actions.py      # Shared backup/cancel/retire/change-plan resolve-confirm-invoke-print bodies; consumed by machine.py and m365.py
+    ├── _actions.py      # Shared backup/cancel/retire/change-plan resolve-confirm-invoke-print bodies; consumed by machine.py, m365.py, and gws.py
     ├── config.py
     ├── machine.py
     ├── saas.py
     ├── m365.py
     ├── m365_export.py   # Shared M365 export infrastructure (_TENANT_ID_OPTION, _make_export_app, etc.); consumed by m365.py
+    ├── gws.py
     ├── plan.py          # synology-apm-cli plan protection / synology-apm-cli plan retirement / synology-apm-cli plan tiering
     ├── activity.py
     ├── infra.py         # synology-apm-cli infra info / synology-apm-cli infra server ... / synology-apm-cli infra storage ... / synology-apm-cli infra hypervisor ...
@@ -140,11 +197,10 @@ synology_apm/cli/
 
 ## Authentication Configuration
 
-Connection settings are resolved by `synology_apm.sdk.resolve_connection()`, priority high → low:
-
-1. CLI flags: `--host` / `--username` / `--password` / `--profile` / `--no-verify-ssl`
-2. Environment variables: `APM_HOST` / `APM_USERNAME` / `APM_PASSWORD` / `APM_PROFILE` / `APM_NO_VERIFY_SSL`
-3. Config file profile (`~/.config/synology-apm/config.toml`, selected via `--profile` / `APM_PROFILE`) — a profile's password may itself be stored in plaintext in this file or looked up from the OS keyring; see [config — Configuration Management](#config--configuration-management).
+Connection settings are resolved by `synology_apm.sdk.resolve_connection()`. See
+`packages/synology-apm-cli/README.md`'s "Authentication" section for the full flag/env-var list
+and priority order; a config file profile's password may itself be stored in plaintext or looked
+up from the OS keyring — see [`COMMAND_REFERENCE.md`'s config — Configuration Management](COMMAND_REFERENCE.md#config--configuration-management).
 
 > **Note:** The config directory follows the XDG Base Directory Specification:
 > `$XDG_CONFIG_HOME/synology-apm` when set to a non-empty absolute path, otherwise
@@ -166,38 +222,18 @@ username = "admin"
 password_storage = "keyring"   # password itself lives in the OS keyring, not this file
 ```
 
-> **Warning:** `password_storage = "plaintext"` stores the password in plaintext in this
-> file. Recommended only for trusted local environments; prefer `password_storage =
-> "keyring"` (OS-native credential store) or the `APM_PASSWORD` environment variable instead.
-
-### Environment Variables
-
-```bash
-APM_PROFILE=lab          # Select a profile in config.toml
-
-# Or set connection details directly instead of using a profile:
-APM_HOST=apm.corp.com
-APM_USERNAME=admin
-APM_PASSWORD=secret
-APM_NO_VERIFY_SSL=true   # Skip SSL verification (self-signed certificates)
-```
+See `packages/synology-apm-cli/README.md`'s "Config file — recommended" section for the
+plaintext-vs-keyring tradeoff and its user-facing warning.
 
 ---
 
 ## Global Options
 
-The following options are defined on the root command and accepted by every subcommand; for the configuration source priority order of `--host`, `--username`, `--password`, `--profile`, and `--no-verify-ssl`, see [Authentication Configuration](#authentication-configuration).
-
-| Option | Short | Description |
-|------|--------|------|
-| `--host` | | APM hostname or IP, supports host:port (https:// is prepended automatically) |
-| `--username` | `-u` | APM account |
-| `--password` | `-p` | APM password; prompted interactively if missing |
-| `--profile` | | Use the specified config profile (default `default`) |
-| `--no-verify-ssl` | | Skip SSL verification |
-| `--no-input` | | Disable all interactive prompts; if required input is missing, immediately error with exit 1 (suitable for scripts / CI environments) |
-| `--debug` | | Print every API request and response to stderr (hidden, not shown in `--help`) |
-| `--help` | `-h` | Show help |
+Full behavior, priority order, and examples for each of these are in
+`packages/synology-apm-cli/README.md`'s "Authentication" and "Debugging" sections; do not
+restate that explanation here when it changes, just keep this list in sync: `--host`,
+`--username`/`-u`, `--password`/`-p`, `--profile`, `--no-verify-ssl`, `--no-input`, `--debug`,
+`--help`/`-h`.
 
 The following options are **per-command**, not global — they are declared only on the commands that support them, but keep the same name, short flag, and semantics everywhere they appear. Run `synology-apm-cli <command> --help` to see exactly which options a given command accepts.
 
@@ -214,7 +250,7 @@ The following options are **per-command**, not global — they are declared only
 
 This tree shows command **structure** only — the group hierarchy and each command's
 addressing mode (positional `<NAME>` search vs. `--id`/`--namespace` direct lookup, per
-[Search / Direct mode](#search--direct-mode)). It intentionally omits filter/option flags;
+[Search / Direct mode](COMMAND_REFERENCE.md#search--direct-mode)). It intentionally omits filter/option flags;
 run `synology-apm-cli <command> --help` for the full, authoritative option list.
 
 ```
@@ -237,8 +273,8 @@ synology-apm-cli
 │       ├── lock    --id <VERSION_ID>     Lock a version (protects it from retention deletion)
 │       └── unlock  --id <VERSION_ID>     Unlock a version
 │
-├── saas                                    # SaaS Tenant Overview (M365 / GWS)
-│   └── list         List all connected SaaS tenants
+├── saas                                    # SaaS Application Overview (M365 / GWS)
+│   └── list         List all connected SaaS applications
 │
 ├── m365                                    # Microsoft 365 Workload Management, grouped by service type:
 │   │                                       #   exchange / onedrive / chat / group / sharepoint / teams
@@ -248,9 +284,13 @@ synology-apm-cli
 │           ├── cancel    --id <ACTIVITY_ID>   Cancel an in-progress export
 │           └── download  [--id <ACTIVITY_ID>]   Start a new export and download it (no --id), or download an existing one
 │
+├── gws                                      # Google Workspace Workload Management, grouped by service type:
+│   │                                       #   mail / calendar / contact / drive / shared-drive
+│   └── <scope>      # Each scope has the same subcommand set as `machine` (no `export`)
+│
 ├── plan                                    # Protection, Retirement, and Tiering Plan Management
 │   ├── protection   list / get    Backup protection plans
-│   ├── retirement   list / get    Retirement plans (used by machine/m365 `retire`)
+│   ├── retirement   list / get    Retirement plans (used by machine/m365/gws `retire`)
 │   └── tiering      list / get    Tiering plans (applied to backup servers)
 │
 ├── activity
@@ -270,512 +310,34 @@ synology-apm-cli
     └── system       list   Advanced system logs
 ```
 
-The `m365` scopes share one command implementation; see
-[m365 — M365 Workload Management](#m365--m365-workload-management) for the per-scope
+The `m365` scopes share one command implementation; see `COMMAND_REFERENCE.md`'s
+[m365 — M365 Workload Management](COMMAND_REFERENCE.md#m365--m365-workload-management) for the per-scope
 differences (identifier field, tenant auto-resolution, which scopes support `export`).
 
----
+### Known Gaps
 
-## Output Formats
+SDK capabilities with no CLI command at all, deliberately out of scope for the
+parameter-consistency refactor — tracked here rather than left silently absent:
 
-This section is the canonical example library: each interaction pattern (list table, get detail block, action confirmation, irreversible warning) is rendered **once** here, using `machine` commands as the subject. Command sections in [Detailed Command Specifications](#detailed-command-specifications) do not repeat rendered output — they only note how their output differs from these patterns.
-
-### Table (default)
-
-Rendered with Rich, with status colors and icons. Canonical list example (`synology-apm-cli machine list` default columns):
-
-```
-$ synology-apm-cli machine list
-
- Name            Type             Status         Verification  Last Backup          Protected Size  Copy Size  Protection Plan  Backup Server  Copy Destination
- ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- CORP-PC-001     PC/Mac           ✓ Success      -             2026-04-21 09:23:00  145.3 GB        -          Daily Backup     apm-server-01  -
- prod-server-01  Physical Server  ✓ Success      ✓ Success     2026-04-21 09:15:00  80.2 GB         12.4 GB    Daily Backup     apm-server-01  DSM-Storage (MyVault)
- vm-web-01       Virtual Machine  — No Backups   -             -                    0 B             -          Daily Backup     apm-server-01  -
- old-laptop      PC/Mac           ✗ Failed       -             2026-03-10 14:00:00  22.1 GB         -          Daily Backup     apm-server-01  -
-Showing 4 of 4
-```
-
-> **Note (pagination summary):** table list output is followed by `Showing N of M` (number of results / total matching count). When `--offset` is used, it shows `Showing X–Y of M`. When the endpoint does not report a total count, only `Showing N` is printed.
-
-Every list command's exact column set (and which extra columns `--verbose` adds) is defined
-next to that command's table-rendering function in `commands/*.py` / `_display.py` — treat
-that code as the source of truth rather than a hand-maintained column list here.
-
-### JSON (`--output json`)
-
-Outputs a curated set of fields (nested structure, matching the SDK model's `to_dict()`), suitable for jq / script processing. datetime fields are output in local-timezone ISO 8601 (e.g. `2026-05-16T16:54:20+08:00`):
-
-```bash
-$ synology-apm-cli machine list --output json | jq '.[].name'
-```
-
-```json
-[
-  {
-    "workload_id": "123e4567-e89b-12d3-a456-426614174000",
-    "name": "vm-web-01",
-    "workload_type": "virtual_machine",
-    "status": "success",
-    "last_backup_at": "2026-04-21T09:23:00+08:00",
-    "protected_data_bytes": 155917238272,
-    "backup_server": { "name": "apm-server-01", "endpoint": "192.0.2.1", "..." : "..." },
-    "plan_name": "Daily Backup",
-    "plan_id": "123e4567-e89b-12d3-a456-426614174002"
-  }
-]
-```
-
-> **Note:** the full field set is the workload model's `to_dict()` output; see the SDK model
-> docstring for every field and when each is populated (e.g. `backup_progress` only while a
-> backup is in progress, `fs_config` only for File Server workloads).
-
-### YAML (`--output yaml`)
-
-Same fields as JSON, rendered as YAML — e.g. `synology-apm-cli machine get "CORP-PC-001" --output yaml`.
-
-### CSV (`--output csv`)
-
-**Supported only by list commands** (get commands do not offer this option). Outputs a flattened set of fields, suitable for importing into spreadsheets or pipeline processing:
-
-```bash
-$ synology-apm-cli machine list --output csv > machines.csv
-```
-
-Field policy:
-- The field set aligns with table mode (not the full set of dataclass fields)
-- Values are machine-readable raw values (datetime → local-timezone ISO 8601; bytes → integer; enum → semantic string)
-- Nested objects are flattened into separate fields (e.g. `backup_server_name`, `retention_type`)
-- Empty values are output as an empty string
-
-### Auto-pagination (`--page-all`)
-
-All list commands that support `--limit` / `--offset` provide a `--page-all` flag: starting from `--offset`, using `--limit`
-as the page size, it automatically fetches page by page until all data is retrieved (with a fixed internal delay between fetches).
-
-| `--page-all` + `--output` | Actual output |
-| --- | --- |
-| `--page-all --output table` (default) | First fetches all pages, then renders a **single** merged table and footer, in the same format as a single-page output without `--page-all` |
-| `--page-all --output json` | NDJSON: each record is output as one line of compact JSON, streamed page by page |
-| `--page-all --output csv` | The first page outputs the header + data rows; subsequent pages output only data rows (same field order) |
-| `--page-all --output yaml` | Each page is prefixed with `---`, forming a YAML multi-document stream |
-
-`synology-apm-cli infra storage list` and `synology-apm-cli infra hypervisor list` do not support `--limit` / `--offset` (the API returns all data in one call), so `--page-all` is not provided.
-
-### Search / Direct mode
-
-Resource-addressed commands accept two mutually exclusive addressing modes; combining them is an argument error, and omitting both prints the command help:
-
-- **Search mode** — positional `<NAME>`: keyword search, then case-insensitive exact match. Machine workloads match on name; M365 workloads match on display name / UPN / group email and are scoped by `-t/--tenant-id` (auto-resolves to the first M365 tenant when omitted, reported on stderr as `(Using tenant: <id>)`). Plan / server / storage / hypervisor commands match on name (or endpoint/address where noted per command).
-- **Direct mode** — `--id <ID>`: direct ID lookup. Workload commands additionally require `--namespace <NS>`; `version` and `export` subcommands use `--workload-id` instead, because `--id` there addresses the version/activity.
-
-### Get detail block
-
-Canonical example (`synology-apm-cli machine get`, table mode). Workload get commands (`machine get` / `m365 <scope> get`) share this two-block layout; plan / infra get commands use a similar `Header: <name>` + `─` rule + `Label: value` section layout whose fields are listed per command.
-
-```
-$ synology-apm-cli machine get "CORP-PC-001"
-
-Workload: CORP-PC-001
-── Workload Information
-  ID:             123e4567-e89b-12d3-a456-426614174000
-  Namespace:      123e4567-e89b-12d3-a456-426614174001
-  Type:           Machine / PC/Mac
-  Device UUID:    123e4567-e89b-12d3-a456-426614174006
-  Agent:          1.2.0-71845
-  IP:             192.0.2.30
-
-── Backup Status
-  Status:         ✓ Success
-  Plan:           Daily Backup
-  Plan ID:        123e4567-e89b-12d3-a456-426614174002
-  Last Backup:    2026-04-21 09:23:00
-  Protected Size: 145.3 GB
-  Backup Server:  apm-server-01
-  Copy Dest:      -
-```
-
-> - The Workload Information block always starts with ID / Namespace / Type; the rows after Type vary by workload type (see each get command).
-> - The Backup Status block ends with Plan / Plan ID / Last Backup / Protected Size / Backup Server / Copy Dest; a `Copy Size` row is inserted before Backup Server only when the workload has backup copy data (non-zero).
-> - Retired workload: the Backup Status block does not show the Status line.
-
-### Copy status detail lines
-
-Wherever a backup-copy / tiering status is rendered in a detail view (`plan protection get` Copy Status, `plan tiering get` and `infra server get` Tiering Status — all via `fmt_copy_status` / `fmt_copy_reason`), the status line appears only when the status is set and not NOT_ENABLED, and is followed by up to two indented detail lines:
-
-```
-<formatted status>
-<N version(s) pending, X remaining>   ← WAITING/SCHEDULED/IN_PROGRESS/RETRY/FAILED, when pending_version_count > 0;
-                                         the ", X remaining" suffix is omitted when remaining_bytes is unavailable
-<N workload(s) skipped.>              ← SKIPPED: skipped workload count (plan protection get only)
-<error detail message>                ← RETRY/FAILED/SKIPPED: reason string (fmt_copy_reason)
-```
-
-### Action confirmation flow
-
-Canonical example (`synology-apm-cli machine change-plan`). The plan and workload summary is always printed (to stderr) even with `--yes`; `--yes` skips only the prompt. A declined confirmation prints `Cancelled.` and exits 4. Note the ASCII `->` arrow in the `Current plan:` line.
-
-```
-$ synology-apm-cli machine change-plan "CORP-PC-001" --plan "Daily Backup"
-
-Applying protection plan:
-  Plan:      Daily Backup (123e4567-e89b-12d3-a456-426614174002)
-  Retention: 30 days
-  Schedule:  Daily Backup
-  Workload:  CORP-PC-001 (PC/Mac, ID: 123e4567-e89b-12d3-a456-426614174000)
-
-⚠ Current plan: Old Plan -> Daily Backup
-
-Confirm change plan? [y/N]: y
-✓ Plan changed: CORP-PC-001
-```
-
-> - When the resolved plan is a Retirement Plan (retired workload), the header is `Updating retirement plan:` and the summary shows Plan / Retention only (no Schedule line).
-> - The workload type label in parentheses is machine-only; M365 workloads show `<name> (ID: <workload-id>)` without a type label.
-> - Simple cancel confirmations (`machine cancel` / `m365 <scope> cancel`) use a shorter variant: header `⚠ Confirm cancel backup?`, `  Workload:  <name> (<type label>)` (no type label for M365), prompt `  Confirm? [y/N]:`, success line `✓ Backup cancelled: <name>`.
-
-### Irreversible-warning flow
-
-Canonical example (`synology-apm-cli machine retire`). Even with `--yes`, the warning summary is still printed (this action is irreversible — the summary must be reviewable):
-
-```
-$ synology-apm-cli machine retire "old-laptop" --plan "Compliance Retention"
-
-⚠ Warning: this action is irreversible!
-
-  Workload:     old-laptop (PC/Mac)
-  Retirement Plan: Compliance Retention (123e4567-e89b-12d3-a456-426614174003)
-  Retention:    90 days
-  The workload will be retired and no longer backed up.
-  Existing backup versions will not be deleted immediately.
-
-  Confirm retire? [y/N]: y
-✓ Workload retired: old-laptop
-```
-
-> The M365 variant is identical except the Workload line has no type label. The `config set` interactive wizard transcript lives in the [config section](#config--configuration-management).
+- **Plan CRUD** — `plan protection/retirement/tiering` are list/get only; the SDK also
+  supports create/update/delete for all three plan types (plus per-domain create/update
+  for Machine/M365/GWS Protection Plans), with no CLI command surfacing any of it.
+- **Workload delete** — only `retire` is exposed for Machine/M365/GWS workloads; the SDK's
+  `.delete()` methods have no CLI command (retire is plausibly the deliberately-safer
+  operation; delete's absence has not been confirmed as intentional).
+- **File Server registration** — `machine.workloads.add_file_server()` /
+  `.update_file_server()` have no CLI command; File Server workloads can be listed/backed
+  up/retired via `machine`, but not registered or reconfigured.
+- **Backup-verification video retrieval** — `machine.workloads.get_verification_video_url()`
+  has no CLI command.
+- **Remote Storage add/update/delete** — `infra storage` is list/get only; the SDK also
+  supports registering, updating, and removing an external vault.
+- **M365/GWS Auto Backup Rules** — `apm.m365.auto_backup_rules` / `apm.gws.auto_backup_rules`
+  (list/create/update/delete/update_collab_settings, plus
+  `update_protected_account_types` for GWS) have no CLI command group at all — the largest
+  gap in this list.
 
 ---
 
-## Detailed Command Specifications
-
-> This section records only what `--help` and the canonical [Output Formats](#output-formats)
-> examples above can't show: Search/Direct mode deviations, cross-command behavioral rules,
-> and non-obvious flow logic (e.g. how a value is auto-resolved, what triggers a specific
-> error, an action's exact terminal states). It deliberately does **not** enumerate table
-> columns, enum → display-string mappings, or full JSON shapes — those live as code next to
-> their implementation (`_display.py`'s `*_DISPLAY` dicts and `fmt_*` functions,
-> `_serializers.py`'s `*_to_dict` functions, each command's table-rendering function) and
-> are visible by reading that source or running the command.
-
-### config — Configuration Management
-
-`config set` is an interactive wizard (host → username → password → SSL verify); see its own
-docstring for the `--no-input` behavior.
-
-```
-$ synology-apm-cli config set
-
-APM host (e.g. apm.corp.com or apm.corp.com:10443): apm.corp.com
-Username: admin
-Password (leave blank to prompt each time, not saved):
-Skip SSL verification? (choose y for self-signed certificates) [y/N]: y
-
-✓ Settings saved to ~/.config/synology-apm/config.toml (profile: default)
-```
-
-`config show` never displays the password itself; see its own docstring, and `config clear`'s,
-for their keyring-interaction behavior.
-
-**OS Keyring Storage**: a profile's password is stored under a stable, documented
-`service`/`username` pair — `synology-apm-cli:<profile>` / `<profile's APM account>` — which
-lets a credential be pre-seeded directly (`keyring set synology-apm-cli:lab admin`) without
-the interactive wizard; the config file still needs `password_storage = "keyring"` recorded
-for the profile.
-
-> **Warning:** if the OS keyring backend is unavailable (e.g. a headless Linux host with no
-> Secret Service running), commands needing the password fail with a hint to use
-> `APM_PASSWORD` instead.
-
----
-
-### machine — Device Workload Management
-
-Manages device backup Workloads (PC, Physical Server, VM, File Server).
-
-Subcommands that support search mode (`get` / `version list` / `version get` / `version lock` / `version unlock`) by default search only protected Workloads; adding `--retired` searches retired Workloads instead. In direct mode (`--id`/`--workload-id` + `--namespace`), `--retired` has no effect.
-
-`retire`: in search mode, when the name is not found among protected workloads, the CLI
-probes retired workloads; if the workload is already retired, the error is `Workload
-'<name>' is already retired.` (exit 1) instead of a not-found error.
-
-`change-plan`: see its own docstring for how the target plan type is auto-detected; in search
-mode, add `--retired` to look up an already-retired Workload by name.
-
-`version get`: `--id` (Version ID) is optional; the latest version is fetched automatically
-if omitted (reported on stderr as `(Using version: <id>, created at <time>)`). Its detail
-view reuses the same `Activity Detail` body as `synology-apm-cli activity backup get` (see
-[activity backup get](#synology-apm-cli-activity-backup-get)).
-
----
-
-### saas — SaaS Tenant Overview
-
-`synology-apm-cli saas list` lists all connected SaaS tenants (M365 + GWS).
-
----
-
-### m365 — M365 Workload Management
-
-Manages Microsoft 365 SaaS backup Workloads, divided into six subcommand groups by service
-type — each behaves like the corresponding `machine` command (same search/direct modes,
-confirmation flows, and version subcommands), with the differences below.
-
-| Subcommand | Service Type | Search-mode `<NAME>` matches |
-|--------|---------|---------|
-| `exchange` | Mailbox (Exchange) | UPN |
-| `onedrive` | OneDrive | UPN |
-| `chat` | Teams Chat | UPN |
-| `group` | Group Exchange | Group mailbox email |
-| `sharepoint` | SharePoint Sites | Site name |
-| `teams` | Teams Channels | Team name |
-
-Tenant ID auto-resolution (`-t`/`--tenant-id`; see [Search / Direct mode](#search--direct-mode)
-and the option's own help) is not required in direct mode. Only `exchange` and `group` support
-`export` (mailbox PST export; see the next section).
-
-Differences from `machine`:
-- M365 workloads have no verification concept (`--verify-status` doesn't exist; `get`/`version`
-  detail views never show a Verification line).
-- Backups are triggered directly by the API with no Job ID returned; use `synology-apm-cli
-  activity backup list` to check progress.
-- `retire` requires at least one retirement plan already created in the APM UI.
-
----
-
-### m365 exchange export / m365 group export — Mailbox PST Export
-
-Applies to the `exchange` and `group` subcommand groups, which share one implementation. Differences:
-
-| Item | exchange | group |
-|------|---------|-------|
-| Identifier | UPN | Group email |
-| `--archive-mailbox` | Supported | Hidden and silently ignored (no archive-mailbox concept for a group mailbox) |
-
-`download`'s two modes (auto-start vs. direct) are described in its own `--help`; the internal
-flow once auto-start begins:
-
-1. Resolve the backup version (latest unless `--version-id`) → start the export.
-2. If immediately downloadable, download it.
-3. Otherwise: with `--no-wait`, print the Activity ID (or a hint to run `export list`) and
-   suggest re-running with `--id` to download (exit 0). Without `--no-wait`, poll until
-   downloadable; on Ctrl+C, ask whether to cancel the server-side task, then **exit 4 either
-   way**. If the export reaches a non-downloadable terminal state (FAILED / CANCELED /
-   EXPIRED / DOWNLOADED), print the status and exit 1.
-4. Stream the file with a progress bar (stderr); if the local destination file already
-   exists, prompt to overwrite (declined → exit 4; `--yes` skips).
-
-Local filenames are auto-generated when `--filename`/`-f` is omitted — see
-`_auto_download_filename()` / `_auto_download_filename_by_id()` for the exact templates.
-
----
-
-### plan protection / retirement / tiering — Plan Management
-
-Manages Protection Plans, Retirement Plans, and Tiering Plans. `plan protection get` and
-`plan retirement get`/`plan tiering get` support the standard [Search / Direct
-mode](#search--direct-mode); see `plan protection get`'s own docstring for its cross-category
-search scope.
-
-`plan retirement` is the source for the `--plan` parameter of `machine`/`m365 <scope>
-retire` and `change-plan` (on an already-retired Workload); `plan tiering` is the source for
-`infra server change-plan`. Every plan ID needed for those commands can be listed with
-`--verbose` here.
-
-`plan protection get`'s detail view is a section-based text block (Backup Copy Policy /
-Backup Policy / Backup Window / Custom Scopes & Schedules); the exact formatting rules for
-retention text, the weekly Backup Window grid, and per-task workload-type/OS/scope labels
-are defined next to the rendering code in `plan.py` / `_display.py` — read those functions
-rather than a hand-transcribed copy here.
-
----
-
-### activity — Activity Log Queries
-
-Queries backup/restore activity records. `backup list` / `restore list` by default show only in-progress tasks (Ongoing); adding `--history` switches to showing completed historical records.
-
-#### `synology-apm-cli activity backup get`
-
-```bash
-synology-apm-cli activity backup get WORKLOAD_NAME       # Search mode (gets the latest entry by workload name)
-synology-apm-cli activity backup get --id ACTIVITY_ID    # Direct mode (gets directly by Activity ID)
-```
-
-This detail body's shared use across `machine version get` / `m365 <scope> version get` is
-documented on `print_activity_detail()`'s own docstring (`_display.py`). Its field set and
-each field's conditional-visibility rule are defined next to that function and
-`activity.py` — the fields that only appear for certain workload categories (e.g. `Backup
-Scope` for machine workloads, `Processed items` for FS/M365) are exactly the kind of detail
-worth reading there rather than duplicating here.
-
-#### `synology-apm-cli activity backup cancel` / `activity restore cancel`
-
-Exit code 1 if the activity is not found (or already completed); exit code 4 if the user
-declines the confirmation prompt.
-
-#### `synology-apm-cli activity restore get`
-
-Same search/direct dispatch as `activity backup get`. Its detail body additionally shows
-Restore Type / Version / Restore from / Destination / Destination path / Destination
-hypervisor / Operator — see `RestoreActivity`'s own docstring (SDK) for why the latter two
-are never both set.
-
----
-
-### infra — Infrastructure Information
-
-Manages basic APM Management Server information, the backup server cluster, and remote storage devices.
-
-`infra info` shows site identity, Management Center/Recovery Portal URLs, Primary/Secondary
-Management Server health, site-wide storage statistics, and per-workload-type usage.
-
-`infra server change-plan` applies or removes a Tiering Plan on a (DP-only) backup server;
-exactly one of `--plan` or `--remove` is required. Follows the standard [action confirmation
-flow](#action-confirmation-flow); `--remove` prints an extra warning paragraph about tiering
-being stopped (ongoing operations continue; immutable-workload lock durations are adjusted).
-
-`infra storage list` / `infra hypervisor list` return all results in one API call — no
-`--limit`/`--offset`/`--page-all`.
-
----
-
-### `synology-apm-cli log` — Backup Server Logs
-
-Queries the system logs of a specified backup server; see `_run_log_list()`'s own docstring
-(`log.py`) for the DP-only server requirement, shared by all four `log * list` commands.
-Column sets and the Level/Type → display-string mappings are defined in `log.py` / `_display.py`.
-
----
-
-## Status and Color Conventions
-
-### Status Icons
-
-| Status | Icon | Color | Description |
-|------|------|------|------|
-| **Workload Backup Result** | | | |
-| Success | `✓` | Green | The most recent backup succeeded |
-| Failed | `✗` | Red | The most recent backup failed |
-| Partial | `⚠` | Yellow | The most recent backup partially succeeded (including M365 WARNING) |
-| Canceled | `⊘` | Dim | The most recent backup was canceled |
-| No Backups | `—` | Dim | No backup has ever completed (first backup not yet run) |
-| Retired | `—` | Dim | Workload is under a Retirement Plan; new backups will no longer be created |
-| Waiting for Backup | `⠸` (spinner) | Blue | Backup is queued, waiting to run |
-| Backing up (n%) | `⠸` (spinner) | Blue | PC/PS/VM backup in progress (block level) |
-| Backing up (n items) | `⠸` (spinner) | Blue | FS/M365 backup in progress (file/item level; n = success + warning + error) |
-| Deleting | `⟳` | Dim | Workload deletion is in progress (transient) |
-| **Activity Status** (backup/restore activities, in addition to the result icons above) | | | |
-| Canceling | `⊗` | Yellow | An in-progress backup/restore activity is being canceled |
-| **Version Status** (in addition to Success / Failed / Partial / Canceled above) | | | |
-| Paused | `‖` | Dim | The backup producing this version is paused |
-| Delete Failed | — | Red | Deletion of this version failed |
-| Deleting | — | Dim | This version is being deleted (no icon at version level) |
-| **Backup Server Status** | | | |
-| Healthy | `●` | Green | `NORMAL`: operating normally |
-| Warning | `⚠` | Yellow | `ATTENTION`: there is a warning that needs attention |
-| Critical | `✗` | Red | `DANGER`: a serious issue |
-| Syncing... | `⟳` | Cyan | `spec.syncStatus=JOINING`: joining the cluster |
-| Disconnected | `○` | Dim | `DISCONNECTED` / `JOINING_DISCONNECTED` / `NOTINITIALIZED` / `INCOMPATIBLE` |
-| **Remote Storage Status** | | | |
-| Connected | `●` | Green | `Connection`: connection normal |
-| Authentication Failed | `✗` | Red | `AuthFailed`: authentication failed |
-| Disconnected | `○` | Dim | `Disconnect`: disconnected |
-| Unknown | `?` | Dim | `Unknown`: status unknown |
-| Vault Not Mounted | `⚠` | Yellow | `VaultNotMounted`: vault not mounted |
-| Vault Missing | `✗` | Red | `DataCorrupted`: vault data corrupted or missing |
-| Unmanaged Catalog | `⚠` | Yellow | `SomeUnmanaged`: vault contains pre-existing catalogs not linked to any plan |
-| **Backup Verification Status** | | | |
-| ✓ Success | `✓` | Green | Backup verification succeeded |
-| ✗ Failed | `✗` | Red | Backup verification failed |
-| ⚠ Partial | `⚠` | Yellow | Backup verification partially succeeded |
-| ⊘ Canceled | `⊘` | Dim | Backup verification was canceled |
-| ⠸ Verifying | `⠸` | Blue | Backup verification in progress |
-| ⠸ Waiting | `⠸` | Blue | Waiting for backup verification |
-| Unable to perform | — | Dim | This workload does not support backup verification |
-| Not enabled | — | Dim | Backup verification is not enabled |
-| **Other** | | | |
-| Success | `✓` | Green | Activity / Version completed successfully |
-| Locked | `🔒` | Dim | The version is locked |
-
-The concrete raw-status → icon/color mapping for each row above lives in `_display.py`'s
-`*_DISPLAY` dicts — this table is the cross-cutting rendering *convention* new mappings must
-follow (which icon/color means what across the whole CLI), not a duplicate of those dicts.
-
-### Exit Codes
-
-| Code | Description |
-|------|------|
-| `0` | Success |
-| `1` | General error (API error, resource not found, etc.) |
-| `2` | Authentication failed |
-| `3` | Connection failed |
-| `4` | User canceled the operation (Ctrl+C or answered N to a confirmation prompt) |
-| `5` | Operation not supported (NotSupportedError) |
-
----
-
-## Error Handling
-
-### Error Message Format
-
-Errors are printed to stderr; the exit code is returned to the shell (it is not printed):
-
-```
-✗ <Short description>
-  <Detailed description or suggested action>     ← optional second line
-```
-
-### SDK Exception → CLI Error Mapping
-
-| SDK Exception | Exit Code | Output |
-|---------------|-----------|---------|
-| `AuthenticationError` | 2 | `✗ Authentication failed: <message>` |
-| `NotManagementServerError` | 3 | `✗ <message>` |
-| `BackupServerDisconnectedError` | 3 | `✗ Unable to perform this operation because the designated backup server is disconnected` |
-| `ConnectionTimeoutError` | 3 | `✗ Connection timed out` + detail line with the SDK message |
-| `ResourceNotFoundError` | 1 | `✗ <ResourceType> not found: <resource-id>` (falls back to the raw message when the resource type is unknown) |
-| `InvalidOperationError` / `ResourceNotReadyError` / `PlanNameConflictError` / `PlanInUseError` / `DuplicateWorkloadError` / `RemoteStorageConflictError` / `RemoteStorageEncryptionMismatchError` / `RemoteStorageInUseError` / `RemoteStorageUnmanagedCatalogError` | 1 | `✗ <message>` |
-| `PermissionDeniedError` | 1 | `✗ Permission denied: <message>` |
-| `NotSupportedError` | 5 | `✗ Not supported: <message>` |
-| `APIError` (message indicates an SSL certificate verification failure) | 3 | `✗ SSL certificate verification failed` + hint suggesting `--no-verify-ssl` or skipping SSL verification in `config set` |
-| `APIError` (message indicates a connection problem, e.g. contains "connect"/"connection") | 3 | `✗ <message>` |
-| Any other `APMError` | 1 | `✗ API error: <message>` |
-
-Additionally (non-`APMError` paths): a `ValueError` raised inside a command is printed as `✗ <message>` with exit 1; `KeyringUnavailableError` (OS keyring backend unavailable) is printed with exit 1; a declined confirmation prompt prints `Cancelled.` and exits 4.
-
-### Hints for Common Usage Issues
-
-When connection settings can't be resolved (`missing_config_hint()` in `errors.py`), the
-hint names the profile that was checked, points at the interactive wizard and the relevant
-environment variables, and — when other profiles are already configured — lists them as a
-faster fix:
-
-```
-✗ Connection settings not configured for profile 'default'
-
-  Configured profiles found: prod
-  Select one with --profile <name> or APM_PROFILE=<name>, or configure this one:
-
-  Run first (interactive wizard):
-    synology-apm-cli config set
-
-  Or set environment variables:
-    export APM_HOST=apm.corp.com
-    export APM_USERNAME=admin
-    export APM_PASSWORD=...
-    export APM_NO_VERIFY_SSL=true   # only needed for self-signed certificates
-```
-
-The "Configured profiles found" block and the `--profile <name>` flag on the `config set`
-line only appear when relevant (no other profiles exist / a non-default profile was
-requested); otherwise the message is the same, without that block.
+*For per-command behavior, output rendering, and error handling, see
+[`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md).*

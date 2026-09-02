@@ -39,7 +39,9 @@ synology-apm-cli config set --host apm.corp.com --username admin --save-password
 synology-apm-cli config set --host apm.corp.com --username admin --save-password keyring
 ```
 
-> **Warning:** `--save-password plaintext` saves the password in **plain text** in `~/.config/synology-apm/config.toml`. Only use it on a trusted machine; prefer `--save-password keyring` or the `APM_PASSWORD` environment variable on shared/server machines.
+> **Warning:** `--save-password plaintext` saves the password in **plain text**. Only use it on
+> a trusted machine; prefer `--save-password keyring` or the `APM_PASSWORD` environment variable
+> on shared/server machines.
 
 Multiple profiles are supported:
 
@@ -56,6 +58,7 @@ synology-apm-cli config show --profile lab    # show specific profile
 synology-apm-cli config clear                 # clear default profile
 synology-apm-cli config clear --profile lab   # clear specific profile
 synology-apm-cli config clear --all           # clear all profiles
+synology-apm-cli config clear --yes --quiet   # skip confirmation and success output (scripting)
 ```
 
 Config is stored in `~/.config/synology-apm/config.toml`.
@@ -133,90 +136,76 @@ synology-apm-cli --debug machine list -o json 2>debug.log | jq '.[].name'
 
 Manages device backup workloads: PC, Physical Server, VM, and File Server.
 
+Every subcommand below that operates on a single workload accepts it one of two mutually
+exclusive ways: **search mode** (a name/keyword positional argument) or **direct mode** (an
+exact ID lookup + `--namespace`). Flag support differs per subcommand:
+
+| Subcommand | Direct-mode ID flag | `--retired` | `--yes` | `--quiet` |
+|---|---|---|---|---|
+| `get` | `--id` | yes | – | – |
+| `backup` | `--id` | – | – | yes |
+| `cancel` | `--id` | – | yes | yes |
+| `retire` | `--id` | – | yes | yes |
+| `change-plan` | `--id` | yes | yes | yes |
+| `version list` | `--workload-id` | yes | – | – |
+| `version get` | `--workload-id` | yes | – | – |
+| `version lock` / `unlock` | `--workload-id` | yes | – | yes |
+
+Every `version` subcommand uses `--workload-id` for the workload — `--id` there instead
+addresses the Version (`version get`/`lock`/`unlock`'s `--id`) or has no meaning at all
+(`version list`, which lists every version of the workload, so there's no single Version to
+address).
+
 #### `synology-apm-cli machine list`
 
 ```bash
 # List all machine workloads (no --type = all types)
 synology-apm-cli machine list
 
-# Filter by type (values: pc / ps / vm / fs; --type is repeatable)
-synology-apm-cli machine list --type vm                    # Virtual Machines only
-synology-apm-cli machine list --type vm --type fs          # VMs and File Servers
+# Filter by type (values: pc / ps / vm / fs; --type is repeatable), retirement, or keyword
+synology-apm-cli machine list --type vm --type fs --retired --search "prod"
+synology-apm-cli machine list --verbose   # add IP Address / Workload ID / Namespace / Plan ID columns
 
-# Additional filters (default shows protected workloads only)
-synology-apm-cli machine list --retired                    # only retired workloads
-synology-apm-cli machine list --search "prod"              # name keyword search
-synology-apm-cli machine list --type vm --retired          # combine type + retired filter
-synology-apm-cli machine list --verbose                    # add IP Address / Workload ID / Namespace columns
-
-# Filter by backup status / verification status (both repeatable)
-synology-apm-cli machine list --status failed --status partial
-synology-apm-cli machine list --verify-status not_enabled   # PS/VM only
+# Other filters (all repeatable except --hypervisor): --namespace <namespace> (backup server),
+# --hypervisor <id> (VMs only, single value), --plan <name-or-id>, --status <status>,
+# --verify-status <status> (PS/VM only)
+synology-apm-cli machine list --status failed --status partial --verify-status not_enabled
 ```
 
 #### `synology-apm-cli machine get`
 
-Two modes (mutually exclusive):
-- **Search mode** — find by name (keyword search, default: protected workloads only)
-- **Direct mode** — exact lookup, requires both `--id` and `--namespace`
-
 ```bash
-# Search by name
 synology-apm-cli machine get "CORP-PC-001"
 synology-apm-cli machine get "old" --retired        # only among retired workloads
 synology-apm-cli machine get "CORP-PC-001" -o json
-
-# Direct lookup
 synology-apm-cli machine get --id <workload-id> --namespace <namespace>
-synology-apm-cli machine get --id <workload-id> --namespace <namespace> -o json
 ```
 
-#### `synology-apm-cli machine backup`
+#### `synology-apm-cli machine backup` / `cancel`
 
-Two modes (mutually exclusive):
+`cancel` requires confirmation in both modes, unless `--yes` is passed.
 
 ```bash
-# Search mode — find by name, then backup
 synology-apm-cli machine backup "CORP-PC-001"
-synology-apm-cli machine backup "CORP-PC-001" --quiet    # no output (scripts)
-
-# Direct mode — exact lookup by ID + namespace
 synology-apm-cli machine backup --id <workload-id> --namespace <namespace>
-```
 
-#### `synology-apm-cli machine cancel`
-
-Two modes (mutually exclusive):
-
-```bash
-# Search mode (requires confirmation)
 synology-apm-cli machine cancel "CORP-PC-001"
-synology-apm-cli machine cancel "CORP-PC-001" --yes          # skip confirmation
-synology-apm-cli machine cancel "CORP-PC-001" --yes --quiet  # skip confirmation + no output
-
-# Direct mode
-synology-apm-cli machine cancel --id <workload-id> --namespace <namespace>
 synology-apm-cli machine cancel --id <workload-id> --namespace <namespace> --yes
 ```
 
 #### `synology-apm-cli machine retire`
 
-Two modes (mutually exclusive). `--plan` is required — get the ID from `synology-apm-cli plan retirement list --verbose`.
+Irreversible; requires confirmation in both modes, unless `--yes` is passed. `--plan` is
+required — get the ID from `synology-apm-cli plan retirement list --verbose`.
 
 ```bash
-# Search mode (irreversible — requires confirmation)
 synology-apm-cli machine retire "CORP-PC-001" --plan <retirement-plan-id>
-synology-apm-cli machine retire "CORP-PC-001" --plan <retirement-plan-id> --yes
-synology-apm-cli machine retire "CORP-PC-001" --plan <retirement-plan-id> --yes --quiet  # no output
-
-# Direct mode
-synology-apm-cli machine retire --id <workload-id> --namespace <namespace> --plan <retirement-plan-id>
 synology-apm-cli machine retire --id <workload-id> --namespace <namespace> --plan <retirement-plan-id> --yes
 ```
 
 #### `synology-apm-cli machine change-plan`
 
-Two modes (mutually exclusive). `--plan` accepts a plan name or UUID. The plan type it is resolved
+`--plan` accepts a plan name or UUID. The plan type it is resolved
 against is auto-detected from the workload's current state: a Protection Plan for an active
 Workload, a Retirement Plan for an already-retired one (add `--retired` in search mode to look up
 a retired Workload by name).
@@ -242,29 +231,24 @@ Default search mode finds protected workloads; use `--retired` for retired workl
 # Search mode
 synology-apm-cli machine version list "CORP-PC-001"
 synology-apm-cli machine version list "CORP-PC-001" --limit 25 --offset 25   # page 2
-synology-apm-cli machine version list "CORP-PC-001" --since 7d       # 30m | 1h | 24h | 7d | ISO 8601
-synology-apm-cli machine version list "CORP-PC-001" --since 2026-04-01T00:00:00
-synology-apm-cli machine version list "CORP-PC-001" --until 2026-04-20T23:59:59
+synology-apm-cli machine version list "CORP-PC-001" --since 7d --until 2026-04-20T23:59:59  # 30m|1h|24h|7d|ISO 8601
 synology-apm-cli machine version list "old-laptop" --retired
 
 # Direct mode
-synology-apm-cli machine version list --id <workload-id> --namespace <namespace>
-synology-apm-cli machine version list --id <workload-id> --namespace <namespace> --since 7d
+synology-apm-cli machine version list --workload-id <workload-id> --namespace <namespace> --since 7d
 ```
 
 #### `synology-apm-cli machine version get`
 
-Shows version info (Version ID, Workload ID, Namespace, storage Locations) followed by activity detail (status, timing, Data Change / Transferred / Actual Capacity Used metrics, logs). M365 activities additionally show `Processed items: N succeeded, N warning, N error`.
+Shows version info (Version ID, Workload ID, Namespace, storage Locations) followed by activity detail (status, timing, Data Change / Transferred / Actual Capacity Used metrics, logs). File Server (FS) activities additionally show `Processed items: N succeeded, N warning, N error`.
 `--id` is the Version ID (from `version list`); omit to get the latest version automatically. Default search mode finds protected workloads; use `--retired` for retired workloads.
 
 ```bash
 # Search mode (omit --id to get the latest version)
 synology-apm-cli machine version get "CORP-PC-001"
-synology-apm-cli machine version get "CORP-PC-001" --id <version-id>
 synology-apm-cli machine version get "old-laptop" --id <version-id> --retired
 
 # Direct mode (skips workload lookup — faster)
-synology-apm-cli machine version get --workload-id <workload-id> --namespace <namespace>
 synology-apm-cli machine version get --workload-id <workload-id> --namespace <namespace> --id <version-id>
 ```
 
@@ -273,26 +257,23 @@ synology-apm-cli machine version get --workload-id <workload-id> --namespace <na
 Locks a backup version to prevent automatic deletion by retention policies. `--id` (Version ID) is required and comes from `version list`.
 
 ```bash
-# Search mode
-synology-apm-cli machine version lock "CORP-PC-001" --id <version-id>
-synology-apm-cli machine version lock "CORP-PC-001" --id <version-id> --quiet  # no output
-synology-apm-cli machine version unlock "CORP-PC-001" --id <version-id>
-
-# Direct mode
+synology-apm-cli machine version lock "CORP-PC-001" --id <version-id>   # unlock: same syntax
 synology-apm-cli machine version lock --workload-id <workload-id> --namespace <namespace> --id <version-id>
-synology-apm-cli machine version unlock --workload-id <workload-id> --namespace <namespace> --id <version-id>
 ```
 
 ---
 
 ### `synology-apm-cli saas`
 
-Lists connected SaaS tenants (Microsoft 365 and Google Workspace).
+Lists connected SaaS applications (Microsoft 365 tenants and Google Workspace domains).
 
 ```bash
-# List all connected SaaS tenants (M365 + GWS)
-# Output includes: Category, Name, Email/Domain, Protected Size, Tenant ID
+# List all connected SaaS applications (M365 + GWS)
+# Output includes: Category, Name, Tenant / Domain, Protected Size, ID
 synology-apm-cli saas list
+
+synology-apm-cli saas list --search contoso   # keyword search by name
+synology-apm-cli saas list -v                 # also show Domain Admin (GWS only)
 ```
 
 ---
@@ -303,75 +284,93 @@ Manages Microsoft 365 backup workloads grouped by service type.
 
 Service types: `exchange` | `onedrive` | `chat` | `group` | `sharepoint` | `teams`
 
-The `--tenant-id` / `-t` option selects the M365 tenant. For `list`, and for `get`/`backup`/`cancel`/`retire` in search mode, it is optional — if omitted, the first M365 tenant from `synology-apm-cli saas list` is used automatically. For direct mode (`--id + --namespace`), it is not needed.
+The `--tenant-id` / `-t` option selects the M365 tenant: optional in search mode (auto-resolves
+to the first M365 tenant from `synology-apm-cli saas list` when omitted), not needed in direct
+mode.
 
 The examples below use `exchange`; every other service type has the identical interface (substitute the scope name).
 
 ```bash
 TENANT="123e4567-e89b-12d3-a456-426614174005"
 
-# List M365 workloads by service type
+# List M365 workloads by service type (scopes: exchange / onedrive / chat / group / sharepoint / teams)
 # In table mode, tenant name and domain are displayed above the workload table.
-synology-apm-cli m365 exchange   list                       # auto-resolve tenant
-synology-apm-cli m365 exchange   list -t $TENANT            # scopes: exchange / onedrive / chat / group / sharepoint / teams
-synology-apm-cli m365 exchange   list --retired             # only retired workloads (default: protected)
-synology-apm-cli m365 exchange   list --search "alice"      # name/email keyword search
-synology-apm-cli m365 exchange   list --verbose             # add Workload ID / Namespace columns
-synology-apm-cli m365 exchange   list -o json               # JSON output (no tenant header)
-synology-apm-cli m365 exchange   list --status failed --status partial  # repeatable
+synology-apm-cli m365 exchange list                                                  # auto-resolve tenant
+synology-apm-cli m365 exchange list -t $TENANT --retired --search "alice" --verbose   # combine filters
+synology-apm-cli m365 exchange list --status failed --status partial --namespace <ns1> --namespace <ns2>  # repeatable
+synology-apm-cli m365 exchange list -o json                                          # JSON output (no tenant header)
 
-# Inspect a single M365 workload — two modes:
-# Search mode (find by name/email/URL — auto-resolves tenant if -t omitted; add --retired
-# to search among retired workloads):
+# Inspect a single M365 workload — search mode auto-resolves tenant if -t omitted (add --retired
+# to search among retired workloads); direct mode needs no --tenant-id:
 synology-apm-cli m365 exchange get "alice@contoso.com"
-# Direct mode (requires workload uid + namespace — no --tenant-id needed):
 synology-apm-cli m365 exchange get --id <workload-uid> --namespace <ns>
 
 # Trigger / cancel a manual backup (cancel requires confirmation; --yes skips it)
 synology-apm-cli m365 exchange backup "alice@contoso.com"
-synology-apm-cli m365 exchange cancel "alice@contoso.com"
 synology-apm-cli m365 exchange cancel --id <workload-uid> --namespace <ns> --yes
 
-# Retire an M365 workload (irreversible — use synology-apm-cli plan retirement list --verbose to get plan ID)
+# Retire (irreversible — get the plan ID from `synology-apm-cli plan retirement list --verbose`)
 synology-apm-cli m365 exchange retire "alice@contoso.com" --plan <retirement-plan-id>
 
-# Change the plan assigned to an M365 workload (--plan accepts plan name or UUID; the plan type
-# it is resolved against is auto-detected from the workload's current state)
+# Change plan (--plan accepts name or UUID; type auto-detected from the workload's current state)
 synology-apm-cli m365 exchange change-plan "alice@contoso.com" --plan "Daily Backup"
 synology-apm-cli m365 exchange change-plan "bob@contoso.com" --retired --plan "Compliance Retention"
 
 # List backup versions (Table columns: #, Created, Status, Locked, Changed Size, Copy Status, Locations, Version ID)
-synology-apm-cli m365 exchange version list "alice@contoso.com"
-synology-apm-cli m365 exchange version list "alice@contoso.com" --limit 25 --offset 25   # page 2
-synology-apm-cli m365 exchange version list --id <workload-uid> --namespace <ns> --since 7d  # direct mode
+synology-apm-cli m365 exchange version list "alice@contoso.com" --limit 25 --offset 25              # page 2
+synology-apm-cli m365 exchange version list --workload-id <workload-uid> --namespace <ns> --since 7d  # direct mode
 
-# Show version info and activity detail (omit --id to get the latest version)
+# Show version info + activity detail (omit --id for the latest version); M365 activities
+# additionally show "Processed items: N succeeded, N warning, N error"
 synology-apm-cli m365 exchange version get "alice@contoso.com"
 synology-apm-cli m365 exchange version get --workload-id <workload-uid> --namespace <ns> --id <version-id>
 
-# Lock / unlock a version (--id is required)
+# Lock / unlock a version (--id is required; unlock uses the same syntax)
 synology-apm-cli m365 exchange version lock "alice@contoso.com" --id <version-id>
-synology-apm-cli m365 exchange version unlock "alice@contoso.com" --id <version-id>
 
-# Export mailbox to PST — list export tasks
+# Export mailbox to PST — list tasks, auto-start + download (waits by default), or act on a
+# previously started export by --id
 synology-apm-cli m365 exchange export list "alice@contoso.com"
+synology-apm-cli m365 exchange export download "alice@contoso.com" --archive-mailbox --version-id <vid> --filename mailbox.pst
 
-# Export mailbox to PST — start export and download (auto-start mode)
-# Starts a new export for the latest version and downloads when ready
-synology-apm-cli m365 exchange export download "alice@contoso.com"
-synology-apm-cli m365 exchange export download "alice@contoso.com" --archive-mailbox      # export archive mailbox instead
-synology-apm-cli m365 exchange export download "alice@contoso.com" --version-id <vid>     # specify a backup version
-synology-apm-cli m365 exchange export download "alice@contoso.com" --no-wait              # print Activity ID if available, exit immediately
-synology-apm-cli m365 exchange export download "alice@contoso.com" --filename mailbox.pst # custom local filename
-
-# Export mailbox to PST — download a previously started export (direct download mode)
-synology-apm-cli m365 exchange export download "alice@contoso.com" --id <activity-id>
-
-# Export mailbox to PST — cancel an in-progress export task
-synology-apm-cli m365 exchange export cancel "alice@contoso.com" --id <activity-id>
+# --no-wait returns immediately after starting the export instead of downloading it; re-run
+# with --id (and --filename again, if desired) once it's ready
+synology-apm-cli m365 exchange export download "alice@contoso.com" --archive-mailbox --version-id <vid> --no-wait
+synology-apm-cli m365 exchange export download "alice@contoso.com" --id <activity-id> --filename mailbox.pst --quiet
+synology-apm-cli m365 exchange export cancel "alice@contoso.com" --id <activity-id> --yes --quiet
 
 # Group mailbox export: same interface via `m365 group export`, without --archive-mailbox
 synology-apm-cli m365 group export download "marketing@contoso.com"
+```
+
+---
+
+### `synology-apm-cli gws`
+
+Manages Google Workspace backup workloads grouped by service type.
+
+Service types: `mail` | `calendar` | `contact` | `drive` | `shared-drive`
+
+The `--domain` / `-d` option selects the GWS domain, working the same way `--tenant-id` does
+for [`m365`](#synology-apm-cli-m365) above (auto-resolves to the first GWS domain in search
+mode when omitted; not needed in direct mode). Command syntax is otherwise identical to
+`m365` — substitute the scope name, `-t`/`--tenant-id` for `-d`/`--domain`, and the tenant /
+mailbox identifiers for a GWS domain / email address. Two differences:
+
+- No `export` sub-app exists for any scope — GWS backups have no mailbox-export operation.
+- `shared-drive` is identified by drive name instead of email.
+
+```bash
+DOMAIN="gwsdemo.example.com"
+
+synology-apm-cli gws mail   list                                        # auto-resolve domain
+synology-apm-cli gws mail   get "alice@gwsdemo.example.com"
+synology-apm-cli gws mail   backup "alice@gwsdemo.example.com"
+synology-apm-cli gws mail   change-plan "alice@gwsdemo.example.com" --plan "Daily Backup"
+synology-apm-cli gws mail   version list "alice@gwsdemo.example.com"
+
+# Shared Drive: identified by drive name instead of email
+synology-apm-cli gws shared-drive get "Marketing Drive"
 ```
 
 ---
@@ -383,19 +382,16 @@ Manages Protection Plans, Retirement Plans, and Tiering Plans.
 #### `synology-apm-cli plan protection`
 
 Lists and inspects backup protection plans. To apply a plan to a workload, use
-`synology-apm-cli machine change-plan` / `synology-apm-cli m365 <scope> change-plan`.
+`synology-apm-cli machine change-plan` / `synology-apm-cli m365 <scope> change-plan` /
+`synology-apm-cli gws <scope> change-plan`.
 
 ```bash
-# List all protection plans (machine and M365 plans together)
+# List all protection plans (machine, M365, and GWS plans together)
 synology-apm-cli plan protection list
-synology-apm-cli plan protection list --category machine   # Machine plans only
-synology-apm-cli plan protection list --category m365      # M365 plans only
-synology-apm-cli plan protection list --search "Daily"
-synology-apm-cli plan protection list -v               # show Description and Plan ID columns
+synology-apm-cli plan protection list --category machine --search "Daily" -v   # category: machine|m365|gws
 
 # Inspect a plan (search by name or direct by ID)
-synology-apm-cli plan protection get "Daily Backup"              # search by name (machine + M365)
-synology-apm-cli plan protection get --id <plan-id>              # direct by UUID
+synology-apm-cli plan protection get "Daily Backup"     # search by name (machine + M365 + GWS)
 synology-apm-cli plan protection get --id <plan-id> -o json
 ```
 
@@ -403,17 +399,14 @@ synology-apm-cli plan protection get --id <plan-id> -o json
 
 Manages retirement plans used when retiring workloads. To re-assign a retirement plan
 to an already-retired workload, use `synology-apm-cli machine change-plan` /
-`synology-apm-cli m365 <scope> change-plan`.
+`synology-apm-cli m365 <scope> change-plan` / `synology-apm-cli gws <scope> change-plan`.
 
 ```bash
 # List all retirement plans (-v shows Plan ID)
-synology-apm-cli plan retirement list
-synology-apm-cli plan retirement list --search "30-Day"
-synology-apm-cli plan retirement list -v           # show Plan ID column
+synology-apm-cli plan retirement list --search "30-Day" -v
 
 # Inspect a retirement plan (search by name or direct by ID)
-synology-apm-cli plan retirement get "Compliance Retention"      # search by name
-synology-apm-cli plan retirement get --id <plan-id>              # direct by UUID
+synology-apm-cli plan retirement get "Compliance Retention"
 synology-apm-cli plan retirement get --id <plan-id> -o json
 ```
 
@@ -423,13 +416,10 @@ Lists and inspects tiering plans (version tiering to remote storage).
 
 ```bash
 # List all tiering plans (-v shows Plan ID)
-synology-apm-cli plan tiering list
-synology-apm-cli plan tiering list --search "30-Day"
-synology-apm-cli plan tiering list -v                  # show Plan ID column
+synology-apm-cli plan tiering list --search "30-Day" -v
 
 # Inspect a tiering plan (search by name or direct by ID)
-synology-apm-cli plan tiering get "30-Day Tiering"               # search by name
-synology-apm-cli plan tiering get --id <plan-id>                 # direct by UUID
+synology-apm-cli plan tiering get "30-Day Tiering"
 synology-apm-cli plan tiering get --id <plan-id> -o json
 ```
 
@@ -438,37 +428,25 @@ synology-apm-cli plan tiering get --id <plan-id> -o json
 ### `synology-apm-cli activity backup`
 
 ```bash
-# List ongoing backup activities (default)
+# List ongoing backup activities (default); --history switches to completed records
 synology-apm-cli activity backup list
-synology-apm-cli activity backup list --limit 100
-synology-apm-cli activity backup list --verbose              # add Transferred, Workload ID, and Workload Namespace columns (Activity ID shown by default)
+synology-apm-cli activity backup list --verbose --limit 100          # Transferred/Workload ID/Namespace columns
+synology-apm-cli activity backup list --history --limit 25 --offset 25   # page 2 of history
 
-# View completed history
-synology-apm-cli activity backup list --history
-synology-apm-cli activity backup list --history --limit 25 --offset 25         # page 2
+# Filter options (status/machine-type/m365-type/gws-type/namespace are repeatable/OR;
+# --since/--until are single-value, not repeatable)
+synology-apm-cli activity backup list --status failed --status partial
+synology-apm-cli activity backup list --machine-type pc --machine-type vm       # Machine sub-type
+synology-apm-cli activity backup list --m365-type exchange --m365-type teams    # M365 service type
+synology-apm-cli activity backup list --gws-type mail --gws-type drive         # GWS service type
+synology-apm-cli activity backup list --namespace <namespace> --since 7d --until 24h  # since/until: 30m|1h|24h|7d|ISO 8601
 
-# Filter options
-synology-apm-cli activity backup list --status backing_up                      # single status filter
-synology-apm-cli activity backup list --status failed --status partial          # multiple statuses (OR)
-synology-apm-cli activity backup list --machine-type vm                        # Machine sub-type filter
-synology-apm-cli activity backup list --machine-type pc --machine-type vm      # multiple sub-types (OR)
-synology-apm-cli activity backup list --m365-type exchange --m365-type teams   # M365 service type filter
-synology-apm-cli activity backup list --since 24h           # 30m | 1h | 24h | 7d | ISO 8601
-synology-apm-cli activity backup list --until 7d           # relative time also supported for --until
-synology-apm-cli activity backup list --until 2026-04-20T23:59:59
-
-# Inspect a single activity (includes log entries)
-# Search mode — latest activity for a workload by name
+# Inspect a single activity (includes log entries) — search mode (latest by workload name) or direct (Activity ID)
 synology-apm-cli activity backup get "CORP-PC-001"
-synology-apm-cli activity backup get "Corp Share" -o json
-# Direct mode — exact lookup by Activity ID
-synology-apm-cli activity backup get --id <activity-id>
 synology-apm-cli activity backup get --id <activity-id> -o json
 
-# Cancel a running backup activity (requires confirmation)
-synology-apm-cli activity backup cancel --id <activity-id>
-synology-apm-cli activity backup cancel --id <activity-id> --yes          # skip confirmation
-synology-apm-cli activity backup cancel --id <activity-id> --yes --quiet  # no output
+# Cancel a running backup activity (requires confirmation; --yes skips it, --quiet suppresses output)
+synology-apm-cli activity backup cancel --id <activity-id> --yes --quiet
 ```
 
 > **Tip:** Activity ID is shown by default in `synology-apm-cli activity backup list`. Use it with `synology-apm-cli activity backup get` and `synology-apm-cli activity backup cancel`.
@@ -478,33 +456,20 @@ synology-apm-cli activity backup cancel --id <activity-id> --yes --quiet  # no o
 ### `synology-apm-cli activity restore`
 
 ```bash
-# List ongoing restore activities (default)
+# List ongoing restore activities (default); --history switches to completed records
+# (no --machine-type / --m365-type / --gws-type filters here, unlike activity backup)
 synology-apm-cli activity restore list
-synology-apm-cli activity restore list --limit 50
-synology-apm-cli activity restore list --verbose                          # add Transferred, Workload ID, and Workload Namespace columns
+synology-apm-cli activity restore list --verbose --history --limit 25 --offset 25   # page 2 of history
 
-# View completed history
-synology-apm-cli activity restore list --history
-synology-apm-cli activity restore list --history --limit 25 --offset 25         # page 2
+# Filter options (--status is repeatable/OR; --since/--until are single-value, not repeatable)
+synology-apm-cli activity restore list --status success --status failed --since 7d --until 24h
 
-# Filter options (restore list has no --machine-type / --m365-type filters)
-synology-apm-cli activity restore list --status restoring                       # single status filter
-synology-apm-cli activity restore list --status success --status failed         # multiple statuses (OR)
-synology-apm-cli activity restore list --since 24h
-synology-apm-cli activity restore list --until 7d           # relative time supported
-synology-apm-cli activity restore list --until 2026-04-20T23:59:59
-
-# Inspect a single restore activity (includes log entries)
-# Search mode — latest restore activity for a workload by name
+# Inspect a single restore activity (includes log entries) — search mode or direct (Activity ID)
 synology-apm-cli activity restore get "CORP-PC-001"
-# Direct mode — exact lookup by Activity ID
-synology-apm-cli activity restore get --id <activity-id>
 synology-apm-cli activity restore get --id <activity-id> -o json
 
-# Cancel a running restore activity (requires confirmation)
-synology-apm-cli activity restore cancel --id <activity-id>
-synology-apm-cli activity restore cancel --id <activity-id> --yes          # skip confirmation
-synology-apm-cli activity restore cancel --id <activity-id> --yes --quiet  # no output
+# Cancel a running restore activity (requires confirmation; --yes skips it, --quiet suppresses output)
+synology-apm-cli activity restore cancel --id <activity-id> --yes --quiet
 ```
 
 > **Tip:** Activity ID is shown in `synology-apm-cli activity restore list`. The cancel command automatically looks up the activity details needed to call the API.
@@ -520,33 +485,18 @@ Infrastructure information: Management Server details and backup server manageme
 # (like all get/info commands, supports -o json / -o yaml)
 synology-apm-cli infra info
 
-# List all backup servers in the cluster
-synology-apm-cli infra server list
-synology-apm-cli infra server list --search "Lab"           # keyword search
-synology-apm-cli infra server list --status disconnected    # filter by status
-synology-apm-cli infra server list --status healthy --status warning  # multiple values allowed
-synology-apm-cli infra server list --type dp                # filter by server type (dp or nas)
-synology-apm-cli infra server list --type dp --type nas     # multiple values allowed
-synology-apm-cli infra server list --verbose                # add Description, Server ID, Namespace columns
-
-# Inspect a single backup server — two modes:
+# List / inspect backup servers — filters: --search, --status (repeatable), --type dp|nas (repeatable), --verbose
+synology-apm-cli infra server list --status healthy --status warning --type dp --verbose
 synology-apm-cli infra server get "apm-server-01"       # Search mode (keyword search)
 synology-apm-cli infra server get --id <server-id>      # Direct mode (exact lookup by Server ID)
 
-# List all remote storages (External Vaults)
-# Usage column: "442.8 KB (341.8 GB left)" / "442.8 KB" / "-"
-synology-apm-cli infra storage list
+# List / inspect remote storages (External Vaults) — Usage column: "442.8 KB (341.8 GB left)" / "442.8 KB" / "-"
 synology-apm-cli infra storage list --verbose               # add Remote Storage ID column
-
-# Inspect a single remote storage — two modes:
 synology-apm-cli infra storage get "DSM-Storage"        # Search mode (display name or endpoint)
 synology-apm-cli infra storage get --id <storage-id>    # Direct mode (exact lookup by Remote Storage UUID)
 
-# List all hypervisor inventory servers
-synology-apm-cli infra hypervisor list
+# List / inspect hypervisor inventory servers
 synology-apm-cli infra hypervisor list --verbose               # add Hypervisor ID column
-
-# Inspect a single hypervisor — two modes:
 synology-apm-cli infra hypervisor get "esxi1.example.com"    # Search mode (hostname or address)
 synology-apm-cli infra hypervisor get --id <hypervisor-id>   # Direct mode (exact lookup by Hypervisor UUID)
 ```
@@ -560,32 +510,23 @@ Query server-scoped logs from a specific DP (ActiveProtect Appliance) backup ser
 Get the Server ID with: `synology-apm-cli infra server list --verbose`
 
 ```bash
-# Activity logs — search mode (server name keyword)
-synology-apm-cli log activity list "apm-server-01"
-synology-apm-cli log activity list "apm-server-01" --level warning --level error
-synology-apm-cli log activity list "apm-server-01" --type protection --since 24h
-synology-apm-cli log activity list "apm-server-01" --search "copy destination"
-
-# Activity logs — direct mode (server ID from synology-apm-cli infra server list --verbose)
-synology-apm-cli log activity list --id <server-id>
-synology-apm-cli log activity list --id <server-id> --since 7d --limit 100 -o json
+# Activity logs — search mode (server name keyword) or direct mode (server ID, from
+# `synology-apm-cli infra server list --verbose`)
+synology-apm-cli log activity list "apm-server-01" --level warning --level error --type protection --since 24h
+synology-apm-cli log activity list --id <server-id> --limit 100 -o json     # direct mode, JSON output
+synology-apm-cli log activity list --id <server-id> --limit 100 -v         # -v adds Server ID/Namespace columns (table output only)
 
 # Drive information logs
-synology-apm-cli log drive list "apm-server-01"
 synology-apm-cli log drive list "apm-server-01" --level error --since 30d
-synology-apm-cli log drive list --id <server-id> --location "Slot 1"
-synology-apm-cli log drive list --id <server-id> -o csv
+synology-apm-cli log drive list --id <server-id> --location "Slot 1" -o csv
 
 # Connection logs
-synology-apm-cli log connection list "apm-server-01"
-synology-apm-cli log connection list "apm-server-01" --search "signed in" --since 24h
-synology-apm-cli log connection list --id <server-id> --level warning --level error
+synology-apm-cli log connection list "apm-server-01" --search "signed in" --since 24h --level warning --level error
 
 # Advanced system logs
-synology-apm-cli log system list "apm-server-01"
 synology-apm-cli log system list --id <server-id> --since 7d -o json
 
-# Pagination
+# Pagination (same --limit/--offset pattern as other list commands)
 synology-apm-cli log activity list --id <server-id> --limit 25 --offset 25
 ```
 
@@ -599,7 +540,7 @@ synology-apm-cli log activity list --id <server-id> --limit 25 --offset 25
 | `1` | General error (API error, invalid argument) |
 | `2` | Authentication failure (bad credentials, session expired) |
 | `3` | Connection failure (host unreachable, TLS error) |
-| `4` | Cancelled by user (confirmation prompt answered no) |
+| `4` | Cancelled by user (declined a confirmation prompt, Ctrl+C while one is shown, or Ctrl+C during an interruptible wait such as `export download` polling) |
 | `5` | Feature not supported on this APM version |
 
 ---

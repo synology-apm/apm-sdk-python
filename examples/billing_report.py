@@ -2,7 +2,7 @@
 """
 Billing report — computes workload count, storage usage, and charges across three
 independent billing dimensions: groups, backup servers, and APM plans
-(Protection Plans and Retirement Plans, covering both machine and M365 workloads).
+(Protection Plans and Retirement Plans, covering machine, M365, and GWS workloads).
 
 The pricing config (--config) has four layers:
   - pricing_plans: named rate cards (charge per instance, charge per GB); the first
@@ -74,6 +74,7 @@ from _common import (
     WORKLOAD_TYPE_ORDER,
     add_profile_arg,
     collect_backup_servers,
+    list_gws_domains,
     list_m365_tenants,
     make_client,
     paginate,
@@ -85,10 +86,13 @@ from openpyxl.worksheet.worksheet import Worksheet as _Worksheet
 
 from synology_apm.sdk import (
     APMClient,
+    GWSDomainInfo,
+    GWSWorkload,
+    GWSWorkloadType,
+    M365TenantInfo,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
-    SaasTenant,
 )
 
 _PROTECTION = "Protection Plan"
@@ -99,6 +103,7 @@ _DEFAULT_CONCURRENCY = 5
 _UNKNOWN_SERVER = "(unknown)"
 
 _M365_TYPES: list[M365WorkloadType] = [t for t in WORKLOAD_TYPE_ORDER if isinstance(t, M365WorkloadType)]
+_GWS_TYPES: list[GWSWorkloadType] = [t for t in WORKLOAD_TYPE_ORDER if isinstance(t, GWSWorkloadType)]
 
 _TYPE_ORDER_INDEX = {t: i for i, t in enumerate(WORKLOAD_TYPE_ORDER)}
 
@@ -542,7 +547,7 @@ def _sections_from_stats(
     return sections
 
 
-_WorkloadT = TypeVar("_WorkloadT", MachineWorkload, M365Workload)
+_WorkloadT = TypeVar("_WorkloadT", MachineWorkload, M365Workload, GWSWorkload)
 
 
 async def _bounded_paginate(
@@ -560,19 +565,23 @@ async def _scan_billing(
     """One _PlanSection per (plan, group set) pair with at least one workload.
 
     Fetches all workloads in a single pass (machine active/retired + M365 per tenant/type
-    active/retired) and tallies them per (backup server, plan, group set, workload type)
-    — the single granular base of all three dimensions and the --details breakdowns.
-    Each workload lands in exactly one tally: the plan comes from the lightweight plan
-    reference embedded in each workload, the group set from pricing.groups_for() (which
-    requires pricing.resolve_server_ids() to have been called). Sections aggregate the
-    tallies over backup servers; a plan whose workloads span different group sets
-    produces multiple sections. Section and row order: see _sections_from_stats.
+    active/retired + GWS per domain/type active/retired) and tallies them per (backup
+    server, plan, group set, workload type) — the single granular base of all three
+    dimensions and the --details breakdowns. Each workload lands in exactly one tally: the
+    plan comes from the lightweight plan reference embedded in each workload, the group set
+    from pricing.groups_for() (which requires pricing.resolve_server_ids() to have been
+    called). Sections aggregate the tallies over backup servers; a plan whose workloads
+    span different group sets produces multiple sections. Section and row order: see
+    _sections_from_stats.
     """
     sem = asyncio.Semaphore(concurrency)
     tenants = await list_m365_tenants(apm)
+    domains = await list_gws_domains(apm)
 
     # (is_retired, paginate coroutine) pairs; the flag classifies each result's plan kind.
-    tasks: list[tuple[bool, Awaitable[tuple[list[MachineWorkload] | list[M365Workload], int | None]]]] = []
+    tasks: list[
+        tuple[bool, Awaitable[tuple[list[MachineWorkload] | list[M365Workload] | list[GWSWorkload], int | None]]]
+    ] = []
 
     for is_retired in (False, True):
         async def _machine(
@@ -586,12 +595,24 @@ async def _scan_billing(
             for is_retired in (False, True):
                 async def _m365(
                     limit: int, offset: int,
-                    t: SaasTenant = tenant, s: M365WorkloadType = service, r: bool = is_retired,
+                    t: M365TenantInfo = tenant, s: M365WorkloadType = service, r: bool = is_retired,
                 ) -> tuple[list[M365Workload], int | None]:
                     return await apm.m365.workloads.list(
                         tenant_id=t.tenant_id, workload_type=s, is_retired=r, limit=limit, offset=offset,
                     )
                 tasks.append((is_retired, _bounded_paginate(sem, _m365)))
+
+    for domain in domains:
+        for gws_service in _GWS_TYPES:
+            for is_retired in (False, True):
+                async def _gws(
+                    limit: int, offset: int,
+                    d: GWSDomainInfo = domain, s: GWSWorkloadType = gws_service, r: bool = is_retired,
+                ) -> tuple[list[GWSWorkload], int | None]:
+                    return await apm.gws.workloads.list(
+                        domain=d.domain, workload_type=s, is_retired=r, limit=limit, offset=offset,
+                    )
+                tasks.append((is_retired, _bounded_paginate(sem, _gws)))
 
     plan_meta: dict[str, tuple[str, str]] = {}
     server_stats: dict[tuple[str, str, tuple[str, ...], str], _ServerTypeStat] = {}

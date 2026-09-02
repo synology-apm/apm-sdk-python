@@ -15,10 +15,11 @@ relies on (list vs. get field completeness, pagination, permission modes).
 
 2. Extract the distinct workload names/IDs from the failed activities.
 
-3. Also call `list_machine_workloads` with no filter to find workloads whose
-   `last_backup_at` is older than expected (e.g., more than 25 hours ago for a daily plan).
-   Treat this static threshold as the overdue signal rather than reading a per-plan schedule
-   (see `apm-mcp-conventions` for why `list_machine_workloads` can't give you that directly).
+3. Also call `list_machine_workloads`/`list_m365_workloads`/`list_gws_workloads` with no filter
+   to find workloads whose `last_backup_at` is older than expected (e.g., more than 25 hours ago
+   for a daily plan). Treat this static threshold as the overdue signal rather than reading a
+   per-plan schedule (see `apm-mcp-conventions` for why these `list_*` tools can't give you that
+   directly).
 
 4. Deduplicate: build a combined list of workloads needing catch-up.
 
@@ -26,11 +27,11 @@ relies on (list vs. get field completeness, pagination, permission modes).
    - Workload name, type, last backup time, failure reason (if available)
    - Ask: "Trigger immediate backup for all N workloads? (yes/no, or specify a subset)"
 
-6. For each workload the user approves, call `backup_machine_workload` or
-   `backup_m365_workload` as appropriate.
+6. For each workload the user approves, call `backup_machine_workload`, `backup_m365_workload`,
+   or `backup_gws_workload` as appropriate.
 
 7. After triggering, call `list_backup_activities` (without `history=true`) to show the
    queued/running activities and confirm the backups started.
 
-8. Note: `backup_machine_workload` and `backup_m365_workload` require `operator` mode or
-   higher. If the server responds with a permission error, inform the user.
+8. Note: `backup_machine_workload`, `backup_m365_workload`, and `backup_gws_workload` require
+   `operator` mode or higher. If the server responds with a permission error, inform the user.

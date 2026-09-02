@@ -224,13 +224,13 @@ class TestListConnectionLogs:
             username="admin",
             description="Login failed",
         )
-        mock_apm.logs.list_connection.return_value = ([entry], None)
+        mock_apm.logs.list_connection.return_value = ([entry], 5)
 
         result = await call_tool(admin_server, "list_connection_logs", mock_ctx, server_id="srv-001")
 
         assert result["items"][0]["level"] == "warning"
         assert "Login failed" in result["items"][0]["description"]
-        assert result["total"] is None
+        assert result["total"] == 5
         mock_apm.logs.list_connection.assert_called_once()
 
 
@@ -251,11 +251,11 @@ class TestListSystemLogs:
             username="admin",
             description="Disk failure detected",
         )
-        mock_apm.logs.list_system.return_value = ([entry], None)
+        mock_apm.logs.list_system.return_value = ([entry], 5)
 
         result = await call_tool(admin_server, "list_system_logs", mock_ctx, server_id="srv-001")
 
         assert result["items"][0]["level"] == "error"
         assert "Disk failure detected" in result["items"][0]["description"]
-        assert result["total"] is None
+        assert result["total"] == 5
         mock_apm.logs.list_system.assert_called_once()

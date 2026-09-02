@@ -12,18 +12,23 @@ from synology_apm.mcp._helpers import (
     JSON_LIST_VALIDATOR,
     LIST_RESULT_SUFFIX,
     ToolResult,
+    auto_backup_rule_delete_desc,
+    auto_backup_rule_update_desc,
     get_tool,
     list_result,
     list_tool,
     resolve_export_activity,
 )
 from synology_apm.mcp._registrar import ToolRegistrar
-from synology_apm.mcp._security import DESTRUCTIVE_PREVIEW_SUFFIX, destructive_tool, run_audited_tool
+from synology_apm.mcp._security import destructive_tool, run_audited_tool
 from synology_apm.mcp.tools._workload import register_workload_tools
 from synology_apm.mcp.tools._workload_logic import WorkloadCategory, resolve_workload
-from synology_apm.sdk import APMClient, M365AutoBackupRule, M365CollabServiceSetting, M365Workload
+from synology_apm.sdk import APMClient, M365AutoBackupRule, M365CollabServiceSetting, M365Workload, M365WorkloadType
 
-_M365_CATEGORY = WorkloadCategory(is_m365=True, name_prefix="m365", collection_fn=lambda apm: apm.m365.workloads, serializer=lambda wl: wl.to_dict())
+_M365_CATEGORY = WorkloadCategory(
+    needs_saas_scope=True, name_prefix="m365", collection_fn=lambda apm: apm.m365.workloads,
+    serializer=lambda wl: wl.to_dict(), workload_type_enum=M365WorkloadType,
+)
 
 
 async def _get_m365_workload(
@@ -31,7 +36,7 @@ async def _get_m365_workload(
 ) -> M365Workload:
     """Resolve an M365 workload for export tools, reusing the same lookup logic
     register_workload_tools() uses for the shared workload tools."""
-    workload = await resolve_workload(_M365_CATEGORY, apm, workload_id=workload_id, namespace=namespace, tenant_id=tenant_id, workload_type=workload_type)
+    workload = await resolve_workload(_M365_CATEGORY, apm, workload_id=workload_id, namespace=namespace, saas_id=tenant_id, workload_type=workload_type)
     return cast(M365Workload, workload)
 
 
@@ -165,18 +170,22 @@ def _register_export_tools(
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     """Register all M365 tools onto server."""
 
-    # ── Tenant lookup tools ───────────────────────────────────────────────────
+    # ── SaaS application lookup tools ─────────────────────────────────────────
 
     @registrar.tool(description=(
-        "List all SaaS tenants connected to APM — Microsoft 365 and Google Workspace, M365 tenants listed "
-        f"first. {LIST_RESULT_SUFFIX}"
+        "List all SaaS applications connected to APM — Microsoft 365 and Google Workspace, M365 tenants "
+        f"listed first. Filter by keyword (name, partial match). {LIST_RESULT_SUFFIX}"
     ))
-    async def list_saas_tenants(ctx: Context, limit: int = 100, offset: int = 0) -> ToolResult:
+    async def list_saas_applications(
+        ctx: Context, keyword: str | None = None, limit: int = 100, offset: int = 0
+    ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await list_tool(apm.saas.list(limit=limit, offset=offset), lambda x: x.to_dict(), offset=offset)
+        return await list_tool(
+            apm.saas.list(keyword=keyword, limit=limit, offset=offset), lambda x: x.to_dict(), offset=offset
+        )
 
-    @registrar.tool(description="Get M365 tenant details by tenant_id (see list_saas_tenants for valid IDs). protected_data_bytes in the response is always 0; use list_saas_tenants for actual usage.")
-    async def get_saas_tenant(ctx: Context, tenant_id: str) -> ToolResult:
+    @registrar.tool(description="Get M365 tenant details by tenant_id (see list_saas_applications for valid IDs). protected_data_bytes in the response is always 0; use list_saas_applications for actual usage.")
+    async def get_m365_tenant(ctx: Context, tenant_id: str) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await get_tool(apm.saas.get_m365_tenant(tenant_id), lambda x: x.to_dict())
 
@@ -185,6 +194,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     register_workload_tools(
         registrar,
         name_prefix="m365",
+        variant="m365",
         collection_fn=lambda apm: apm.m365.workloads,
         serializer=lambda wl: wl.to_dict(),
     )
@@ -281,7 +291,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
 
     # ── Admin M365 tools ──────────────────────────────────────────────────────
 
-    @registrar.tool("admin", description="Create a new M365 auto-backup rule for a tenant. Optionally specify group IDs for Exchange, OneDrive, and Teams Chat auto-backup.")
+    @registrar.tool("admin", description="Create a new M365 User Services auto-backup rule for a tenant. Optionally specify group IDs for Exchange, OneDrive, and Teams Chat auto-backup.")
     async def create_m365_auto_backup_rule(
         ctx: Context,
         namespace: str,
@@ -311,7 +321,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
             params={"tenant_id": tenant_id, "plan_id": plan_id},
         )
 
-    @registrar.tool("admin", description="Update an existing M365 auto-backup rule; find its uid via list_m365_auto_backup_rules. Omit a field (leave it unset) to keep its current value; pass an empty list `[]` for a group-id list you want cleared.")
+    @registrar.tool("admin", description=auto_backup_rule_update_desc("m365"))
     async def update_m365_auto_backup_rule(
         ctx: Context,
         rule_uid: str,
@@ -342,10 +352,10 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         )
 
     @registrar.tool("admin", description=(
-        "Replace all four M365 collaboration service settings (group Exchange, MySite, SharePoint, "
-        "Teams) for a tenant. Omitted services are disabled, not preserved — pass current values from "
-        "list_m365_auto_backup_rules to keep them unchanged. Each service requires both its plan_id and "
-        "namespace together, or neither."
+        "Replace all four M365 collaboration service settings (Microsoft 365 Groups, SharePoint "
+        "Personal Sites, SharePoint Sites, Teams) for a tenant. Omitted services are disabled, not "
+        "preserved — pass current values from list_m365_auto_backup_rules to keep them unchanged. "
+        "Each service requires both its plan_id and namespace together, or neither."
     ))
     async def update_m365_collab_settings(
         ctx: Context,
@@ -378,10 +388,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
             params={"tenant_id": tenant_id},
         )
 
-    @registrar.tool("admin", description=(
-        f"Delete an M365 auto-backup rule; find its uid via list_m365_auto_backup_rules. "
-        f"{DESTRUCTIVE_PREVIEW_SUFFIX}"
-    ))
+    @registrar.tool("admin", description=auto_backup_rule_delete_desc("an", "m365"))
     async def delete_m365_auto_backup_rule(
         ctx: Context,
         rule_uid: str,

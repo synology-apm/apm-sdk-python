@@ -31,6 +31,7 @@ from synology_apm.cli._options import (
     OFFSET_OPTION,
     OUTPUT_OPTION,
     PAGE_ALL_OPTION,
+    SEARCH_OPTION,
     SINCE_OPTION,
     UNTIL_OPTION,
     VERSION_LIMIT_OPTION,
@@ -60,7 +61,6 @@ from synology_apm.cli.commands._actions import (
     _do_version_list,
     _do_version_lock_unlock,
 )
-from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.cli.output import (
     ListOutputFormat,
     OutputFormat,
@@ -94,11 +94,11 @@ async def machine_list(
         None, "--type", metavar="[pc|ps|vm|fs]", help="Workload type filter, repeatable (default: all types)"
     ),
     retired: bool = typer.Option(False, "--retired", help="Show only retired workloads (default: show protected only)"),
-    search: str | None = typer.Option(None, "--search", help="Keyword search"),
-    namespace: str | None = typer.Option(
+    search: str | None = SEARCH_OPTION,
+    namespace: list[str] | None = typer.Option(
         None, "--namespace", "-n",
         help=(
-            "Show only workloads on the specified backup server "
+            "Show only workloads on the given backup server(s), repeatable "
             "(get namespace from synology-apm-cli infra server list --verbose)"
         ),
     ),
@@ -143,25 +143,14 @@ async def machine_list(
       synology-apm-cli machine list --type ps --retired
       synology-apm-cli machine list --search corp-pc
       synology-apm-cli machine list --namespace <ns>
+      synology-apm-cli machine list --namespace <ns1> --namespace <ns2>
       synology-apm-cli machine list --plan "Daily Backup"
       synology-apm-cli machine list --status failed --status partial
       synology-apm-cli machine list --verify-status not_enabled
     """
-    workload_types: list[MachineWorkloadType] | None = None
-    if type_filter:
-        invalid = [t for t in type_filter if t.lower() not in MACHINE_TYPE_ARGS]
-        if invalid:
-            err_console.print(f"[red]✗[/red] Invalid type: {invalid[0]!r} (expected: pc / ps / vm / fs)")
-            raise typer.Exit(code=EXIT_ERROR)
-        workload_types = [MACHINE_TYPE_ARGS[t.lower()] for t in type_filter]
-    status_enums = parse_enum_list(
-        status, WORKLOAD_STATUS_ARGS, "status",
-        "queuing / backing_up / success / failed / partial / canceled / no_backups / deleting",
-    )
-    verify_status_enums = parse_enum_list(
-        verify_status, VERIFY_STATUS_ARGS, "verify-status",
-        "verifying / success / failed / canceled / not_supported / not_enabled / partial / waiting",
-    )
+    workload_types = parse_enum_list(type_filter, MACHINE_TYPE_ARGS, "type")
+    status_enums = parse_enum_list(status, WORKLOAD_STATUS_ARGS, "status")
+    verify_status_enums = parse_enum_list(verify_status, VERIFY_STATUS_ARGS, "verify-status")
     await _do_list(
         ctx=ctx,
         workload_types=workload_types,
@@ -176,7 +165,7 @@ async def _do_list(
     workload_types: list[MachineWorkloadType] | None,
     retired: bool,
     search: str | None,
-    namespace: str | None,
+    namespace: list[str] | None,
     hypervisor_id: str | None,
     plan: list[str] | None,
     status: list[WorkloadStatus] | None,
@@ -193,7 +182,7 @@ async def _do_list(
             lambda off, lim: apm.machine.workloads.list(
                 workload_types=workload_types,
                 is_retired=retired,
-                name_contains=search,
+                keyword=search,
                 namespace=namespace,
                 hypervisor_id=hypervisor_id,
                 plan=resolved_plans,
@@ -363,10 +352,7 @@ async def machine_change_plan(
     retired: bool = typer.Option(False, "--retired", help="Search in retired workloads (search mode)"),
     plan: str | None = typer.Option(
         None, "--plan",
-        help=(
-            "Plan name or ID (required). Resolved against Protection Plans if the workload is "
-            "active, or Retirement Plans if it is already retired."
-        ),
+        help="Plan name or ID (required); see the command description for how the plan type is resolved.",
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
@@ -406,7 +392,7 @@ async def machine_change_plan(
 async def machine_version_list(
     ctx: typer.Context,
     name: str | None = typer.Argument(None, help="Workload name (search mode)"),
-    workload_id: str | None = typer.Option(None, "--id", help="Workload ID (direct mode)"),
+    workload_id: str | None = typer.Option(None, "--workload-id", help="Workload ID (direct mode)"),
     namespace: str | None = typer.Option(None, "--namespace", "-n", help="Backup server namespace (direct mode)"),
     limit: int = VERSION_LIMIT_OPTION,
     offset: int = OFFSET_OPTION,
@@ -426,9 +412,9 @@ async def machine_version_list(
 
     \b
     Direct mode:
-      synology-apm-cli machine version list --id <id> --namespace <ns>
+      synology-apm-cli machine version list --workload-id <id> --namespace <ns>
     """
-    ref = validate_resolve_args(ctx, name, workload_id, namespace)
+    ref = validate_resolve_args(ctx, name, workload_id, namespace, id_flag="--workload-id")
     since_dt, until_dt = parse_time_range(since, until)
 
     async with apm_session(ctx) as apm:

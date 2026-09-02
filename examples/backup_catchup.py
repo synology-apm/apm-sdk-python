@@ -10,6 +10,7 @@ Usage:
     python backup_catchup.py --category machine --max-age 3 --dry-run
     python backup_catchup.py --category m365 --m365-service exchange
     python backup_catchup.py --category m365 --m365-service exchange --m365-service onedrive
+    python backup_catchup.py --category gws --gws-workload-type mail
     python backup_catchup.py --category all
     python backup_catchup.py --category all --m365-service exchange
     python backup_catchup.py --category machine --timeout 600
@@ -45,6 +46,7 @@ from _common import (
     make_client,
     prompt_yes_no,
     register_interrupt,
+    resolve_gws_workload_types,
     resolve_m365_services,
     run_main,
     unregister_interrupt,
@@ -55,6 +57,8 @@ from synology_apm.sdk import (
     APMClient,
     APMError,
     BackupActivityStatus,
+    GWSWorkload,
+    GWSWorkloadType,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
@@ -72,7 +76,7 @@ POLL_INTERVAL_SEC = 15
 _MAX_CONCURRENT_POLL_REQUESTS = 10
 
 
-def _reason(wl: MachineWorkload | M365Workload, never_backed_up_only: bool) -> str:
+def _reason(wl: MachineWorkload | M365Workload | GWSWorkload, never_backed_up_only: bool) -> str:
     if wl.last_backup_at is None:
         return "never backed up"
     if not never_backed_up_only and wl.status in _NEEDS_RETRY:
@@ -81,7 +85,7 @@ def _reason(wl: MachineWorkload | M365Workload, never_backed_up_only: bool) -> s
 
 
 def _is_stale(
-    wl: MachineWorkload | M365Workload,
+    wl: MachineWorkload | M365Workload | GWSWorkload,
     cutoff: datetime,
     never_backed_up_only: bool,
 ) -> bool:
@@ -92,7 +96,7 @@ def _is_stale(
 
 async def _poll_one(
     apm: APMClient,
-    wl: MachineWorkload | M365Workload,
+    wl: MachineWorkload | M365Workload | GWSWorkload,
     triggered_at: datetime,
     sem: asyncio.Semaphore,
 ) -> BackupActivityStatus | None:
@@ -108,7 +112,7 @@ async def _poll_one(
 
 async def _poll_all(
     apm: APMClient,
-    triggered: list[tuple[MachineWorkload | M365Workload, datetime]],
+    triggered: list[tuple[MachineWorkload | M365Workload | GWSWorkload, datetime]],
     timeout_sec: int,
     interrupt: asyncio.Event,
     sem: asyncio.Semaphore,
@@ -132,7 +136,7 @@ async def _poll_all(
         statuses: list[BackupActivityStatus | None] = list(
             await asyncio.gather(*(_poll_one(apm, wl, t, sem) for wl, t in pending))
         )
-        still_pending: list[tuple[MachineWorkload | M365Workload, datetime]] = []
+        still_pending: list[tuple[MachineWorkload | M365Workload | GWSWorkload, datetime]] = []
         for (wl, triggered_at), status in zip(pending, statuses, strict=True):
             if status is not None:
                 results[wl.name] = status
@@ -154,6 +158,7 @@ async def run(
     never_backed_up_only: bool,
     category: str,
     m365_services: list[M365WorkloadType] | None,
+    gws_services: list[GWSWorkloadType] | None,
     output_format: str,
     profile: str | None = None,
 ) -> int:
@@ -170,7 +175,9 @@ async def run(
 
     print("Fetching workloads...", file=sys.stderr)
     async with make_client(profile=profile) as apm:
-        workloads, total = await collect_workloads(apm, category, m365_services, is_retired=False)
+        workloads, total = await collect_workloads(
+            apm, category, m365_services, is_retired=False, gws_services=gws_services
+        )
 
         stale = [wl for wl in workloads if _is_stale(wl, cutoff, never_backed_up_only)]
 
@@ -204,12 +211,14 @@ async def run(
 
         # ── Trigger backups ─────────────────────────────────────────
         print("\nTriggering backups...", file=sys.stderr)
-        triggered: list[tuple[MachineWorkload | M365Workload, datetime]] = []
+        triggered: list[tuple[MachineWorkload | M365Workload | GWSWorkload, datetime]] = []
         for wl in stale:
             try:
                 t = datetime.now(UTC)
                 if isinstance(wl, M365Workload):
                     await apm.m365.workloads.backup_now(wl)
+                elif isinstance(wl, GWSWorkload):
+                    await apm.gws.workloads.backup_now(wl)
                 else:
                     await apm.machine.workloads.backup_now(wl)
                 triggered.append((wl, t))
@@ -322,10 +331,11 @@ def main() -> None:
     args = parser.parse_args()
 
     m365_services = resolve_m365_services(parser, args)
+    gws_services = resolve_gws_workload_types(parser, args)
 
     run_main(run(
         args.max_age, args.dry_run, args.yes, args.timeout, args.never_backed_up,
-        args.category, m365_services, args.output,
+        args.category, m365_services, gws_services, args.output,
         profile=args.profile,
     ))
 

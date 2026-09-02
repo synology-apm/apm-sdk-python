@@ -17,6 +17,10 @@ from synology_apm.sdk import (
     FileServerUpdateRequest,
     GenericS3StorageAddRequest,
     GFSRetention,
+    GWSAutoBackupRule,
+    GWSAutoBackupRuleListResult,
+    GWSPlanCreateRequest,
+    GWSSharedDriveSetting,
     M365AutoBackupRule,
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
@@ -52,11 +56,12 @@ from synology_apm.sdk.models.tiering_plan import TieringPlanCreateRequest
 from tests.unit.examples._fixtures import (
     make_backup_server,
     make_file_server_config,
+    make_gws_domain_info,
     make_location_info,
+    make_m365_tenant_info,
     make_machine_workload,
     make_protection_plan,
     make_remote_storage,
-    make_saas_tenant,
 )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -97,7 +102,7 @@ def _roundtrip(
     ref_key: str,
     backup_servers_by_ref: dict[str, Any],
     remote_storages_by_ref: dict[str, Any],
-) -> MachinePlanCreateRequest | M365PlanCreateRequest:
+) -> MachinePlanCreateRequest | M365PlanCreateRequest | GWSPlanCreateRequest:
     """Serialize a plan to YAML and parse it back; returns the parsed request."""
     d = ie._ser_protection_plan(plan, bs_ref_keys, rs_ref_keys, ref_key)
     buf = io.StringIO()
@@ -268,6 +273,32 @@ def test_m365_plan_roundtrip_retention_and_schedule() -> None:
 
     assert isinstance(req, M365PlanCreateRequest)
     assert req.name == "M365 Weekly Backup"
+    assert req.retention == retention
+    assert req.schedule == schedule
+
+
+def test_gws_plan_roundtrip_retention_and_schedule() -> None:
+    """GWS plan round-trip preserves retention type, version count, and weekly schedule."""
+    retention = ProtectionRetentionPolicy(
+        retention_type=RetentionType.KEEP_VERSIONS,
+        versions=10,
+    )
+    schedule = ProtectionSchedule(
+        frequency=ScheduleFrequency.WEEKLY,
+        start_time=time(4, 30),
+        weekdays=(WeekDay.TUESDAY, WeekDay.SATURDAY),
+    )
+    plan = make_protection_plan(
+        plan_id="123e4567-e89b-12d3-a456-426614174002",
+        name="GWS Weekly Backup",
+        category=WorkloadCategory.GWS,
+        policy=ProtectionPlanPolicy(retention=retention, schedule=schedule),
+    )
+
+    req = _roundtrip(plan, {}, {}, "plan-2", {}, {})
+
+    assert isinstance(req, GWSPlanCreateRequest)
+    assert req.name == "GWS Weekly Backup"
     assert req.retention == retention
     assert req.schedule == schedule
 
@@ -831,7 +862,7 @@ def test_m365_rules_roundtrip_user_rule_and_collab() -> None:
     """_ser_m365_auto_backup_rules_block → _parse_m365_rule_entries restores the original
     namespace, plan ID, and group lists."""
     plan_uuid = "123e4567-e89b-12d3-a456-426614174001"
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     rule = M365AutoBackupRule(
         uid="123e4567-e89b-12d3-a456-426614174011",
         namespace="ns-apm-server-01",
@@ -885,3 +916,66 @@ def test_m365_rules_roundtrip_user_rule_and_collab() -> None:
     assert ce.group_exchange is None
     assert ce.mysite is None
     assert ce.teams is None
+
+
+# ── GWS auto-backup rules round-trip ──────────────────────────────────────────
+
+
+def test_gws_rules_roundtrip_user_rule_and_collab() -> None:
+    """_ser_gws_auto_backup_rules_block → _parse_gws_rule_entries restores the original
+    namespace, plan ID, group lists, and protected-account-type flags."""
+    plan_uuid = "123e4567-e89b-12d3-a456-426614174001"
+    domain = make_gws_domain_info()
+    rule = GWSAutoBackupRule(
+        uid="123e4567-e89b-12d3-a456-426614174011",
+        namespace="ns-apm-server-01",
+        domain=domain.domain,
+        plan_id=plan_uuid,
+        mail_group_ids=("123e4567-e89b-12d3-a456-426614174012",),
+        calendar_group_ids=(),
+        contact_group_ids=(),
+        drive_group_ids=(),
+    )
+    shared_drive = GWSSharedDriveSetting(
+        plan_id=plan_uuid, namespace="ns-apm-server-01", backup_user_id="",
+    )
+    result_obj = GWSAutoBackupRuleListResult(
+        rules=(rule,),
+        shared_drive_setting=shared_drive,
+        include_unlicensed_accounts=True,
+        include_archived_accounts=False,
+    )
+    block = ie._ser_gws_auto_backup_rules_block(
+        result_obj, {plan_uuid: "plan-1"}, {"ns-apm-server-01": "server-1"}, "domain-1",
+    )
+    assert block is not None
+
+    data = {"gws_auto_backup_rules": [block]}
+    bs = make_backup_server(namespace="ns-apm-server-01")
+    rule_entries, collab_entries = ie._parse_gws_rule_entries(
+        data,
+        backup_servers_by_ref={"server-1": bs},
+        gws_plans_by_name={"GWS Daily Backup": plan_uuid},
+        plan_name_by_ref={"plan-1": "GWS Daily Backup"},
+        gws_domains_by_ref={"domain-1": domain.domain},
+    )
+
+    assert len(rule_entries) == 1
+    re_ = rule_entries[0]
+    assert re_.parse_error is None
+    assert re_.domain == domain.domain
+    assert re_.resolved_namespace == "ns-apm-server-01"
+    assert re_.resolved_plan_id == plan_uuid
+    assert re_.mail_groups == ["123e4567-e89b-12d3-a456-426614174012"]
+    assert re_.calendar_groups == []
+    assert re_.contact_groups == []
+    assert re_.drive_groups == []
+
+    assert len(collab_entries) == 1
+    ce = collab_entries[0]
+    assert ce.shared_drive_parse_error is None
+    assert ce.shared_drive == GWSSharedDriveSetting(
+        plan_id=plan_uuid, namespace="ns-apm-server-01", backup_user_id="",
+    )
+    assert ce.include_unlicensed_accounts is True
+    assert ce.include_archived_accounts is False

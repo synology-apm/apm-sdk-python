@@ -350,8 +350,8 @@ async def test_list_all_workloads_paginates_two_pages_and_forwards_filters() -> 
     assert first.kwargs == {
         "workload_types": [MachineWorkloadType.VM],
         "is_retired": False,
-        "name_contains": "web",
-        "namespace": "ns-apm-server-01",
+        "keyword": "web",
+        "namespace": ["ns-apm-server-01"],
         "limit": 500,
         "offset": 0,
     }

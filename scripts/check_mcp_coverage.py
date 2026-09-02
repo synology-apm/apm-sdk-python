@@ -8,11 +8,13 @@ Pass 2 — manifest -> SDK: every sdk_path in the manifest must resolve to a rea
          SDK methods).
 
 Pass 3 — SDK -> manifest: every public async method reachable from APMClient
-         (walking collection properties) must appear in at least one manifest
-         entry (catches new SDK methods added without a coverage decision).
+         (walking collection properties, excluding session-lifecycle methods
+         connect()/disconnect()) must appear in at least one manifest entry
+         (catches new SDK methods added without a coverage decision).
 
 Pass 4 — manifest -> registered tools: every [[mapping]] mcp_tool must appear
-         in the tool names registered by create_server(mode='admin').
+         in tool_required_modes()'s tool names (every tool the server can
+         register, regardless of which mode would actually enable it).
 
 Pass 5 — registered tools -> manifest: every registered tool must have at
          least one [[mapping]] entry.

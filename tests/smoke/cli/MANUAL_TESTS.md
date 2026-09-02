@@ -10,8 +10,9 @@
   test (a Machine Workload, and/or one workload per M365 scope).
 - A valid Retirement Plan name or ID: `synology-apm-cli plan retirement list --verbose` (the
   `name` or `plan_id` column).
-- For M365 scopes, optionally a tenant ID: `synology-apm-cli saas list --verbose` (the
-  `tenant_id` column). `--tenant-id` may be omitted if there is only one M365 tenant.
+- For M365/GWS scopes, optionally a tenant ID or domain: `synology-apm-cli saas list` (the `ID`
+  column — the M365 tenant UUID or the GWS domain). `--tenant-id`/`--domain` may be omitted if
+  there is only one tenant/domain of that category.
 
 ## What to verify for every invocation
 
@@ -40,7 +41,7 @@ Verify: `synology-apm-cli <SUBCOMMAND> list --retired -o json` includes the work
 `"is_retired": true`.
 
 Substitute `<SUBCOMMAND>` and `<IDENTIFIER>` per scope (`--tenant-id` applies to M365 scopes
-only, and is optional there per the Prerequisites note above):
+only and `--domain` applies to GWS scopes only, each optional per the Prerequisites note above):
 
 | Scope | `<SUBCOMMAND>` | Identifier type | Example `<IDENTIFIER>` |
 |---|---|---|---|
@@ -51,3 +52,8 @@ only, and is optional there per the Prerequisites note above):
 | M365 group / shared mailbox | `m365 group` | Group email | `marketing@contoso.com` |
 | M365 SharePoint site | `m365 sharepoint` | Site name | `Marketing` |
 | M365 Teams team | `m365 teams` | Team name | `Engineering` |
+| GWS Mail | `gws mail` | Email | `alice@gwsdemo.example.com` |
+| GWS Drive | `gws drive` | Email | `alice@gwsdemo.example.com` |
+| GWS Contact | `gws contact` | Email | `alice@gwsdemo.example.com` |
+| GWS Calendar | `gws calendar` | Email | `alice@gwsdemo.example.com` |
+| GWS Shared Drive | `gws shared-drive` | Drive name | `Marketing Drive` |

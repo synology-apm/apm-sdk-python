@@ -123,11 +123,8 @@ class _S3VendorStorageAddRequest:
 class AmazonS3StorageAddRequest(_S3VendorStorageAddRequest):
     """Parameters for registering a new Amazon S3 remote storage device.
 
-    APM derives the endpoint and region from the bucket name and credentials.
-    access_key / secret_key are the AWS credentials; all fields follow the same semantics
-    as GenericS3StorageAddRequest, including raising RemoteStorageUnmanagedCatalogError
-    from add() when the bucket contains pre-existing backup catalogs and
-    unmanaged_retirement_plan is unset.
+    access_key / secret_key are the AWS credentials; see _S3VendorStorageAddRequest and
+    GenericS3StorageAddRequest for the shared endpoint-derivation and catalog-conflict contract.
     """
 
 
@@ -135,11 +132,8 @@ class AmazonS3StorageAddRequest(_S3VendorStorageAddRequest):
 class AmazonS3ChinaStorageAddRequest(_S3VendorStorageAddRequest):
     """Parameters for registering a new Amazon S3 China region remote storage device.
 
-    APM derives the endpoint and region from the bucket name and credentials.
-    access_key / secret_key are the AWS credentials; all fields follow the same semantics
-    as GenericS3StorageAddRequest, including raising RemoteStorageUnmanagedCatalogError
-    from add() when the bucket contains pre-existing backup catalogs and
-    unmanaged_retirement_plan is unset.
+    access_key / secret_key are the AWS credentials; see _S3VendorStorageAddRequest and
+    GenericS3StorageAddRequest for the shared endpoint-derivation and catalog-conflict contract.
     """
 
 
@@ -147,11 +141,8 @@ class AmazonS3ChinaStorageAddRequest(_S3VendorStorageAddRequest):
 class C2ObjectStorageAddRequest(_S3VendorStorageAddRequest):
     """Parameters for registering a new Synology C2 Object Storage remote storage device.
 
-    APM derives the endpoint and region from the bucket name and credentials.
-    access_key / secret_key are the C2 credentials; all fields follow the same semantics
-    as GenericS3StorageAddRequest, including raising RemoteStorageUnmanagedCatalogError
-    from add() when the bucket contains pre-existing backup catalogs and
-    unmanaged_retirement_plan is unset.
+    access_key / secret_key are the C2 credentials; see _S3VendorStorageAddRequest and
+    GenericS3StorageAddRequest for the shared endpoint-derivation and catalog-conflict contract.
     """
 
 
@@ -159,11 +150,8 @@ class C2ObjectStorageAddRequest(_S3VendorStorageAddRequest):
 class WasabiCloudStorageAddRequest(_S3VendorStorageAddRequest):
     """Parameters for registering a new Wasabi Cloud Storage remote storage device.
 
-    APM derives the endpoint and region from the bucket name and credentials.
-    access_key / secret_key are the Wasabi credentials; all fields follow the same semantics
-    as GenericS3StorageAddRequest, including raising RemoteStorageUnmanagedCatalogError
-    from add() when the bucket contains pre-existing backup catalogs and
-    unmanaged_retirement_plan is unset.
+    access_key / secret_key are the Wasabi credentials; see _S3VendorStorageAddRequest and
+    GenericS3StorageAddRequest for the shared endpoint-derivation and catalog-conflict contract.
     """
 
 

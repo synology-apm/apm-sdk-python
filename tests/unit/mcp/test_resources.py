@@ -18,9 +18,9 @@ from fastmcp import Client, FastMCP
 from synology_apm.sdk import SiteInfo, SiteStorageStats, WorkloadUsageSummary
 from tests.unit.mcp.conftest import (
     make_backup_server,
+    make_m365_tenant_info,
     make_protection_plan,
     make_retirement_plan,
-    make_saas_tenant,
     make_tiering_plan,
 )
 
@@ -101,15 +101,15 @@ class TestTieringPlansResource:
         assert parsed["items"][0]["name"] == "30-Day Tiering"
 
 
-class TestTenantsResource:
+class TestSaasApplicationsResource:
     @pytest.mark.asyncio
     async def test_returns_tenants(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
-        tenant = make_saas_tenant()
+        tenant = make_m365_tenant_info()
         mock_apm.saas.list.return_value = ([tenant], 1)
 
-        parsed = await _read(resource_server, "apm://tenants")
+        parsed = await _read(resource_server, "apm://saas-applications")
 
-        assert parsed["items"][0]["tenant_name"] == "Contoso"
+        assert parsed["items"][0]["name"] == "Contoso"
 
 
 class TestServerByIdResource:
@@ -128,14 +128,14 @@ class TestServerByIdResource:
 class TestResourceError:
     @pytest.mark.asyncio
     async def test_returns_error_json_on_exception(self, mock_apm: MagicMock, resource_server: FastMCP) -> None:
-        from mcp.shared.exceptions import McpError
+        from mcp.shared.exceptions import MCPError
 
         from synology_apm.sdk import ResourceNotFoundError
 
         mock_apm.backup_servers.get.side_effect = ResourceNotFoundError("not found", "server", "srv-001")
 
         async with Client(resource_server) as client:
-            with pytest.raises(McpError) as exc_info:
+            with pytest.raises(MCPError) as exc_info:
                 await client.read_resource("apm://server/srv-001")
 
         parsed = json.loads(str(exc_info.value))

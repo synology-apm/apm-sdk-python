@@ -591,8 +591,8 @@ async def test_list_with_machine_type_adds_workload_type_param() -> None:
     assert len(workloads) == 1
 
 
-async def test_list_with_name_contains_adds_keyword_param() -> None:
-    """list(name_contains=...) sends filter.keyword to API."""
+async def test_list_with_keyword_adds_keyword_param() -> None:
+    """list(keyword=...) sends filter.keyword to API."""
     async with connected_session() as (session, m):
 
         url_with_keyword = (
@@ -604,7 +604,7 @@ async def test_list_with_name_contains_adds_keyword_param() -> None:
         m.get(url_with_keyword, payload={"workloads": [SAMPLE_WORKLOAD], "total": 1})
 
         collection = MachineWorkloadCollection(session)
-        workloads, total = await collection.list(name_contains="CORP-PC")
+        workloads, total = await collection.list(keyword="CORP-PC")
         await session.disconnect()
 
     assert len(workloads) == 1
@@ -670,12 +670,30 @@ async def test_list_filter_by_namespace() -> None:
 
     with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = {"workloads": [SAMPLE_WORKLOAD], "total": 1}
-        workloads, total = await collection.list(namespace=NAMESPACE)
+        workloads, total = await collection.list(namespace=[NAMESPACE])
 
     params = dict(mock_get.call_args[1]["params"])
     assert params.get("filter.namespace") == NAMESPACE
     assert len(workloads) == 1
     assert workloads[0].namespace == NAMESPACE
+
+
+async def test_list_filter_by_multiple_namespaces() -> None:
+    """namespace accepts multiple values; each is sent as its own filter.namespace param
+    (OR logic), matching the same list-of-tuples multi-value pattern as workload_types/
+    plan/status/verify_status."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = MachineWorkloadCollection(session)
+
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"workloads": [], "total": 0}
+        await collection.list(namespace=["ns-001", "ns-002"])
+
+    params = mock_get.call_args[1]["params"]
+    namespace_values = [v for k, v in params if k == "filter.namespace"]
+    assert namespace_values == ["ns-001", "ns-002"]
 
 
 async def test_list_filter_by_hypervisor_id() -> None:

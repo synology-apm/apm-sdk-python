@@ -11,7 +11,7 @@ Cross-cutting behavior for the synology-apm-mcp workflow skills:
 - **daily-backup-report** — Backup status report for a time window
 - **catch-up-overdue-backups** — Find and trigger catch-up for overdue/failed workloads
 - **analyze-storage-capacity** — Capacity planning across servers and remote storage
-- **generate-billing-report** — Compute backup charges per plan, server, workload type, or tenant
+- **generate-billing-report** — Compute backup charges per plan, server, workload type, tenant, or domain
 - **analyze-restore-activities** — Summarize and investigate restore activity trends
 - **export-apm-config** — Snapshot of all APM configuration objects
 - **investigate-backup-failure** — Root cause analysis for backup failures
@@ -27,9 +27,9 @@ Read this once rather than re-deriving the same caveats in every skill.
 ## List vs. get field completeness
 
 `list_*` tools return lightweight, embedded references to related objects — not their full
-detail. For example, a workload from `list_machine_workloads`/`list_m365_workloads` only
-guarantees its `plan` sub-object has `plan_id`/`name`/`kind` (`kind` is `"protection"` or
-`"retirement"`); fields like `plan.policy.schedule` are populated **only** by the corresponding
+detail. For example, a workload from `list_machine_workloads`/`list_m365_workloads`/
+`list_gws_workloads` only guarantees its `plan` sub-object has `plan_id`/`name`/`kind` (`kind` is
+`"protection"` or `"retirement"`); fields like `plan.policy.schedule` are populated **only** by the corresponding
 `get_*` call (`get_protection_plan`, `get_backup_server`, etc.), not by any `list_*` call.
 
 **Rule of thumb**: don't call the matching `get_*` tool for every item in a list by default —
@@ -50,12 +50,14 @@ array holds each entry's detail text in its `message` field — there is no sepa
 
 - Every `list_*` tool accepts `limit`/`offset` and returns `{items, total}`. If `total` exceeds
   the number of items returned, keep paging with `offset` until you've collected everything.
-  Exception: `list_activity_logs`/`list_connection_logs`/`list_system_logs` return
-  `{items, total, truncated}` with `total` always `null` — use the `truncated` flag instead to
-  know whether more results exist beyond the current page.
-- For activity queries (`list_backup_activities`, `list_restore_activities`), pass
-  `history=true` to include completed activities in addition to active/queued ones — omit it
-  when you only want what's currently running or queued.
+  Exception: `list_activity_logs` returns `{items, total, truncated}` with `total` always
+  `null` — use the `truncated` flag instead to know whether more results exist beyond the
+  current page. `list_drive_logs`/`list_connection_logs`/`list_system_logs` report a real
+  `total` like every other `list_*` tool.
+- For activity queries (`list_backup_activities`, `list_restore_activities`), `history` is a
+  mode switch, not an additive filter: the default (`false`) returns only ongoing/queued
+  activities; `history=true` returns only completed ones instead — it does not return both
+  together.
 - `limit=500` is the usual choice for "capture everything in one page" queries; it's the max
   page size most `list_*` tools accept.
 
@@ -81,13 +83,12 @@ this MCP server. The only `name`-shaped parameters that do exist are business fi
 writing (a plan's display `name`, `vault_name`, `export_name`) — never confuse these with a way
 to identify an existing resource.
 
-To find a resource's id, call the matching `list_*` tool: `name_contains` narrows plans, backup
-servers, and machine workloads server-side; `keyword` narrows M365 workloads server-side;
-`list_remote_storages`/`list_hypervisors`/`list_saas_tenants` always return everything
-unfiltered (no keyword param exists because there's nothing to filter server-side) — scan the
-result yourself (for tenants, match on the `tenant_name` field). If more than one item matches,
-decide which one is correct from the returned fields, or ask the user — no tool will pick one
-for you.
+To find a resource's id, call the matching `list_*` tool: `keyword` narrows plans, backup
+servers, machine workloads, M365/GWS workloads, and SaaS applications server-side;
+`list_remote_storages`/`list_hypervisors` always return everything unfiltered (no keyword param
+exists because there's nothing to filter server-side) — scan the result yourself. If more than
+one item matches, decide which one is correct from the returned fields, or ask the user — no
+tool will pick one for you.
 
 ## Update semantics: every field, every time
 
@@ -98,10 +99,12 @@ partial-patch or keep-current-if-omitted behavior**, with exactly two exceptions
   password, because APM does not expose it for re-reading (there is no other way to "leave it
   unchanged").
 - `update_m365_auto_backup_rule`'s three group-id list fields (`exchange_group_ids`,
-  `onedrive_group_ids`, `chat_group_ids`) use tri-state semantics instead: omit the field (leave
-  it `None`) to keep that list unchanged, or pass `[]` explicitly to clear it. This is the
-  opposite convention from every other list/object field in this server — don't pass `[]` when
-  you mean "no change," and don't assume omitting it clears the list.
+  `onedrive_group_ids`, `chat_group_ids`) and `update_gws_auto_backup_rule`'s four group-id list
+  fields (`mail_group_ids`, `calendar_group_ids`, `contact_group_ids`, `drive_group_ids`) use
+  tri-state semantics instead: omit the field (leave it `None`) to keep that list unchanged, or
+  pass `[]` explicitly to clear it. This is the opposite convention from every other list/object
+  field in this server — don't pass `[]` when you mean "no change," and don't assume omitting it
+  clears the list.
 
 Every other field on every `update_*` tool must be supplied explicitly on every call — omitting
 a field is a schema error, not a way to leave it unchanged.
@@ -112,8 +115,9 @@ the user actually wants changed.
 
 ## Destructive action preview pattern
 
-Every `delete_*` tool, plus `retire_machine_workload`/`retire_m365_workload`, takes a
-`confirm: bool = False` parameter instead of committing immediately like `update_*` tools do:
+Every `delete_*` tool, plus `retire_machine_workload`/`retire_m365_workload`/
+`retire_gws_workload`, takes a `confirm: bool = False` parameter instead of committing
+immediately like `update_*` tools do:
 
 - Called with `confirm=false` (the default), the tool does not execute — it returns a JSON
   preview instead: `{"preview": true, "action", "target", "warning"}`.
@@ -128,11 +132,12 @@ irreversible happens.
 
 ## Complex parameter formats: protection plans
 
-`create_machine_protection_plan` / `update_machine_protection_plan` and
-`create_m365_protection_plan` / `update_m365_protection_plan` share an identical
-retention/schedule/Backup Copy parameter shape (M365 plans just omit the machine-only sections
-below). Get the exact spelling and cross-field requirements right on the first call — none of
-these are validated until the request reaches the tool.
+`create_machine_protection_plan` / `update_machine_protection_plan`,
+`create_m365_protection_plan` / `update_m365_protection_plan`, and
+`create_gws_protection_plan` / `update_gws_protection_plan` share an identical
+retention/schedule/Backup Copy parameter shape (M365/GWS plans just omit the machine-only
+sections below). Get the exact spelling and cross-field requirements right on the first call —
+none of these are validated until the request reaches the tool.
 
 **Retention (`retention_type`)** — the tool description already lists the five values and the
 `is_immutable`/`keep_days` coupling; the one thing it omits:
@@ -165,10 +170,12 @@ same call:
 serializer before passing it), overriding the default per-workload-type task set. Omit it
 entirely to accept the default 6-entry set with no per-type customization.
 
-If you pass it, it must be a JSON array containing **exactly one entry for each of these 6
-`(workload_type, os_type)` pairs — no more, no fewer** (a partial list to tweak just one pair is
-rejected, not merged with defaults): `(pc, windows)`, `(pc, mac)`, `(ps, windows)`,
-`(ps, linux)`, `(fs, none)`, `(vm, none)`. Valid `workload_type` values: `pc`, `ps`, `vm`, `fs`.
+If you pass it, it must be a JSON array containing **at least one entry for each of these 6
+`(workload_type, os_type)` pairs** (a partial list omitting a mandatory pair is rejected, not
+merged with defaults): `(pc, windows)`, `(pc, mac)`, `(ps, windows)`, `(ps, linux)`,
+`(fs, none)`, `(vm, none)`. `fs`/`vm` are capped at exactly one entry each (no scope
+customization); `pc`/`ps` may include additional entries beyond their mandatory pair to back up
+different scopes independently. Valid `workload_type` values: `pc`, `ps`, `vm`, `fs`.
 Valid `os_type` values: `windows`, `mac`, `linux`, `none` (`none` is required for `fs`/`vm`,
 which have no OS distinction). Each entry's fields, all optional with these defaults if omitted:
 `scope` (one of `entire_machine`, `system_volume`, `custom_volume`; omit for no scope

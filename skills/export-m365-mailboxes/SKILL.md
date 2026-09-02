@@ -11,7 +11,7 @@ Exchange user mailboxes or M365 Group mailboxes:
 See [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) for shared conventions this skill
 relies on (list vs. get field completeness, pagination, permission modes).
 
-1. Resolve the tenant: if the user doesn't give a `tenant_id`, call `list_saas_tenants` and
+1. Resolve the tenant: if the user doesn't give a `tenant_id`, call `list_saas_applications` and
    ask which tenant (or use the only one if there's exactly one).
 
 2. List the target mailboxes:

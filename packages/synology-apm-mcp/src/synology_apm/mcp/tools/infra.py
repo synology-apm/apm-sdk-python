@@ -67,7 +67,14 @@ def _build_storage_request(
     relink_encryption_key: str,
     trust_self_signed: bool,
     unmanaged_retirement_plan: RetirementPlan | None = None,
-) -> Any:
+) -> (
+    GenericS3StorageAddRequest
+    | APVStorageAddRequest
+    | AmazonS3StorageAddRequest
+    | AmazonS3ChinaStorageAddRequest
+    | C2ObjectStorageAddRequest
+    | WasabiCloudStorageAddRequest
+):
     common: dict[str, Any] = dict(
         access_key=access_key,
         secret_key=secret_key,
@@ -149,12 +156,12 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         return await get_tool(apm.get_site_info(), lambda x: x.to_dict())
 
     @registrar.tool(description=(
-        f"List backup servers. {LIST_RESULT_SUFFIX} Filter by name, status "
-        "(healthy/warning/critical/disconnected/syncing), or type (dp/nas)."
+        "List backup servers. Filter by name, status "
+        f"(healthy/warning/critical/disconnected/syncing), or type (dp/nas). {LIST_RESULT_SUFFIX}"
     ))
     async def list_backup_servers(
         ctx: Context,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         status: Annotated[list[ServerStatusLiteral], JSON_LIST_VALIDATOR] | None = None,
         server_type: Annotated[list[BackupServerTypeLiteral], JSON_LIST_VALIDATOR] | None = None,
         limit: int = 100,
@@ -163,7 +170,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]
         return await list_tool(
             apm.backup_servers.list(
-                name_contains=name_contains,
+                keyword=keyword,
                 status_filter=to_enum_list(ServerStatus, status),
                 type_filter=to_enum_list(BackupServerType, server_type),
                 limit=limit,
@@ -173,7 +180,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
             offset=offset,
         )
 
-    @registrar.tool(description="Get a single backup server by ID. Use list_backup_servers (optionally with name_contains) to find the ID.")
+    @registrar.tool(description="Get a single backup server by ID. Use list_backup_servers (optionally with keyword) to find the ID.")
     async def get_backup_server(
         ctx: Context,
         server_id: str,
@@ -227,7 +234,9 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         "a previously encrypted vault, pass its saved key as relink_encryption_key; leave it empty for a "
         "new vault. If the target already has pre-existing backup catalogs not managed by this APM, pass "
         "retirement_plan_id to assign them to a retirement plan; otherwise adding storage with such "
-        "catalogs fails. Returns the created storage and encryption key if encryption was enabled."
+        "catalogs fails. Returns the created storage and encryption key if encryption was enabled. "
+        "relink_warning in the result is non-None if catalog relinking failed — the storage is still "
+        "registered but its catalogs remain unlinked."
     ))
     async def add_remote_storage(
         ctx: Context,

@@ -56,13 +56,13 @@ SAMPLE_ACT = BackupActivity(
 
 
 def test_m365_exchange_version_list_direct_mode_table() -> None:
-    """m365 exchange version list --id --namespace should list versions (table)."""
+    """m365 exchange version list --workload-id --namespace should list versions (table)."""
     mock_apm = make_mock_apm()
     mock_apm.m365.workloads.list_versions.return_value = ([SAMPLE_VERSION], 1)
 
     result = invoke_cli(mock_apm, [
         "m365", "exchange", "version", "list",
-        "--id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
     ], env={"COLUMNS": "300"})
 
     assert result.exit_code == 0, result.output
@@ -76,7 +76,7 @@ def test_m365_exchange_version_list_passes_offset_to_sdk() -> None:
 
     result = invoke_cli(mock_apm, [
         "m365", "exchange", "version", "list",
-        "--id", WORKLOAD_ID, "--namespace", NAMESPACE, "--offset", "25",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE, "--offset", "25",
     ], env={"COLUMNS": "300"})
 
     assert result.exit_code == 0, result.output
@@ -91,7 +91,7 @@ def test_m365_exchange_version_list_json_output() -> None:
 
     result = invoke_cli(mock_apm, [
         "m365", "exchange", "version", "list",
-        "--id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
         "--output", "json",
     ])
 
@@ -108,7 +108,7 @@ def test_m365_exchange_version_list_csv_output() -> None:
 
     result = invoke_cli(mock_apm, [
         "m365", "exchange", "version", "list",
-        "--id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
         "--output", "csv",
     ])
 

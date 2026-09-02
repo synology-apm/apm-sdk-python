@@ -133,10 +133,10 @@ class MachineWorkloadCollection(_VersionMixin):
     async def list(
         self,
         workload_types: list[MachineWorkloadType] | None = None,
-        namespace: str | None = None,
+        namespace: list[str] | None = None,
         plan: list[ProtectionPlan | RetirementPlan] | None = None,
         is_retired: bool = False,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         hypervisor_id: str | None = None,
         status: list[WorkloadStatus] | None = None,
         verify_status: list[VerifyStatus] | None = None,
@@ -147,12 +147,13 @@ class MachineWorkloadCollection(_VersionMixin):
 
         Args:
             workload_types: Filter by one or more sub-types (PC / PS / VM / FS); None returns all sub-types.
-            namespace:    Return only workloads on a specific backup server (matches workload.namespace).
+            namespace:    Return only workloads on one or more backup servers (OR logic); matches
+                          workload.namespace. None returns workloads on any server.
             plan:         Restrict results to workloads assigned to one of the given plans (OR logic).
             is_retired:   Retirement filter:
                           True  → retired workloads only.
                           False → protected workloads only (default).
-            name_contains: Name keyword (partial match, case-insensitive).
+            keyword:      Name keyword (partial match, case-insensitive).
             hypervisor_id: Filter VM workloads by hypervisor inventory UUID. Only meaningful for VM workloads.
             status:        Filter by one or more backup statuses (OR logic); None returns all statuses.
                            WorkloadStatus.RETIRED is not accepted here — use is_retired=True instead.
@@ -181,11 +182,10 @@ class MachineWorkloadCollection(_VersionMixin):
             ("filter.isFilterBasedOnNonWorkloadType", "true"),
         ]
         param_pairs.extend(("filter.workloadType", wt.name) for wt in workload_types or ())
-        if name_contains:
-            param_pairs.append(("filter.keyword", name_contains))
+        if keyword:
+            param_pairs.append(("filter.keyword", keyword))
         param_pairs.append(("filter.protectStatus", _machine_protect_status(is_retired)))
-        if namespace:
-            param_pairs.append(("filter.namespace", namespace))
+        param_pairs.extend(("filter.namespace", ns) for ns in namespace or ())
         param_pairs.extend(("filter.planId", p.plan_id) for p in plan or ())
         if hypervisor_id:
             param_pairs.append(("filter.filterVm.inventoryId", hypervisor_id))

@@ -95,6 +95,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     register_workload_tools(
         registrar,
         name_prefix="machine",
+        variant="machine",
         collection_fn=lambda apm: apm.machine.workloads,
         serializer=lambda wl: wl.to_dict(),
     )

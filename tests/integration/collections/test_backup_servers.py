@@ -69,7 +69,7 @@ async def test_machine_workloads_namespace_filter_returns_matching_server(apm: A
     if not servers:
         pytest.skip("No backup servers available")
     server = servers[0]
-    workloads, _ = await apm.machine.workloads.list(namespace=server.namespace)
+    workloads, _ = await apm.machine.workloads.list(namespace=[server.namespace])
     assert isinstance(workloads, list)
     for wl in workloads:
         assert isinstance(wl, Workload)

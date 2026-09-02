@@ -20,6 +20,7 @@ from synology_apm.cli._options import (
     LIST_OUTPUT_OPTION,
     OFFSET_OPTION,
     PAGE_ALL_OPTION,
+    SEARCH_OPTION,
     SINCE_OPTION,
     UNTIL_OPTION,
 )
@@ -33,12 +34,19 @@ from synology_apm.cli._serializers import (
     system_log_to_csv_row,
     system_log_to_dict,
 )
-from synology_apm.cli._validate import parse_time_range, resolve_by_name_or_id, validate_name_or_id_args
+from synology_apm.cli._validate import (
+    APM_ACTIVITY_LOG_TYPE_ARGS,
+    LOG_LEVEL_ARGS,
+    parse_enum_list,
+    parse_enum_scalar,
+    parse_time_range,
+    resolve_by_name_or_id,
+    validate_name_or_id_args,
+)
 from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.cli.output import ListOutputFormat, cell, console, dispatch_paginated_list, new_table
 from synology_apm.sdk import (
     APMActivityLog,
-    APMActivityLogType,
     APMClient,
     BackupServer,
     BackupServerType,
@@ -54,6 +62,15 @@ app = typer.Typer(
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+
+_LEVEL_OPTION = typer.Option(
+    None, "--level",
+    help="Severity filter, repeatable: info / warning / error",
+)
+
+
+def _parse_level(level: list[str] | None) -> list[LogLevel] | None:
+    return parse_enum_list(level, LOG_LEVEL_ARGS, "level")
 
 _activity_app   = typer.Typer(name="activity",   help="Activity logs.",           no_args_is_help=True)
 _drive_app      = typer.Typer(name="drive",      help="Drive information logs.",  no_args_is_help=True)
@@ -113,6 +130,7 @@ async def _run_log_list(
     offset: int,
     page_all: bool,
     output: ListOutputFormat,
+    verbose: bool,
     spinner: str,
     list_fn: Callable[
         [APMClient, BackupServer, datetime | None, datetime | None, int, int],
@@ -128,6 +146,7 @@ async def _run_log_list(
     Validates the server argument, opens the session, pages via list_fn, and
     renders either the dispatched output format or the given table layout.
     Only DP (ActiveProtect Appliance) servers are supported; a NAS server exits 1.
+    verbose adds the resolved server's raw ID and namespace as trailing columns.
     """
     validate_name_or_id_args(ctx, name, server_id, exclusive_msg="<server> cannot be used with --id")
     since_dt, until_dt = parse_time_range(since, until)
@@ -148,10 +167,17 @@ async def _run_log_list(
     t = new_table(expand=True)
     for header, kwargs in columns:
         t.add_column(header, **kwargs)
+    if verbose:
+        t.add_column("Server ID", min_width=36, no_wrap=True)
+        t.add_column("Namespace", min_width=36, no_wrap=True)
+        server_cells = [cell(server.backup_server_id), cell(server.namespace)]
     for e in logs:
-        t.add_row(*row_fn(e))
+        row = row_fn(e)
+        if verbose:
+            row += server_cells
+        t.add_row(*row)
     console.print(t)
-    print_list_footer(console, len(logs), total)
+    print_list_footer(console, len(logs), total, offset)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -167,21 +193,19 @@ async def activity_list(
         None, "--id",
         help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)",
     ),
-    level: list[LogLevel] | None = typer.Option(
-        None, "--level",
-        help="Severity filter, repeatable: information / warning / error",
-    ),
-    log_type: APMActivityLogType | None = typer.Option(
+    level: list[str] | None = _LEVEL_OPTION,
+    log_type: str | None = typer.Option(
         None, "--type",
         help="Log type filter: protection / system / data_access",
     ),
     since: str | None = SINCE_OPTION,
     until: str | None = UNTIL_OPTION,
-    search: str | None = typer.Option(None, "--search", help="Keyword search"),
+    search: str | None = SEARCH_OPTION,
     offset: int = OFFSET_OPTION,
     limit: int = LIMIT_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
     """List activity logs for a backup server.
 
@@ -193,6 +217,9 @@ async def activity_list(
     Direct mode (server ID from synology-apm-cli infra server list --verbose):
       synology-apm-cli log activity list --id <server-id>
     """
+    level_enums = _parse_level(level)
+    log_type_enum = parse_enum_scalar(log_type, APM_ACTIVITY_LOG_TYPE_ARGS, "type")
+
     def _row(e: APMActivityLog) -> list[str]:
         return [
             cell(fmt_server_log_level(e.level), styled=True),
@@ -204,10 +231,10 @@ async def activity_list(
 
     await _run_log_list(
         ctx, name=name, server_id=server_id, since=since, until=until,
-        limit=limit, offset=offset, page_all=page_all, output=output,
+        limit=limit, offset=offset, page_all=page_all, output=output, verbose=verbose,
         spinner="Fetching activity logs...",
         list_fn=lambda apm, server, s, u, off, lim: apm.logs.list_activity(
-            server, levels=level or None, log_type=log_type,
+            server, levels=level_enums, log_type=log_type_enum,
             since=s, until=u, keyword=search, limit=lim, offset=off,
         ),
         to_dict=activity_log_to_dict,
@@ -236,18 +263,16 @@ async def drive_list(
         None, "--id",
         help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)",
     ),
-    level: list[LogLevel] | None = typer.Option(
-        None, "--level",
-        help="Severity filter, repeatable: information / warning / error",
-    ),
+    level: list[str] | None = _LEVEL_OPTION,
     since: str | None = SINCE_OPTION,
     until: str | None = UNTIL_OPTION,
-    search: str | None = typer.Option(None, "--search", help="Keyword search"),
+    search: str | None = SEARCH_OPTION,
     location: str | None = typer.Option(None, "--location", help="Drive location filter"),
     offset: int = OFFSET_OPTION,
     limit: int = LIMIT_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
     """List drive information logs for a backup server.
 
@@ -259,6 +284,8 @@ async def drive_list(
     Direct mode (server ID from synology-apm-cli infra server list --verbose):
       synology-apm-cli log drive list --id <server-id>
     """
+    level_enums = _parse_level(level)
+
     def _row(e: DriveLog) -> list[str]:
         return [
             cell(fmt_server_log_level(e.level), styled=True),
@@ -272,10 +299,10 @@ async def drive_list(
 
     await _run_log_list(
         ctx, name=name, server_id=server_id, since=since, until=until,
-        limit=limit, offset=offset, page_all=page_all, output=output,
+        limit=limit, offset=offset, page_all=page_all, output=output, verbose=verbose,
         spinner="Fetching drive logs...",
         list_fn=lambda apm, server, s, u, off, lim: apm.logs.list_drive(
-            server, levels=level or None, since=s, until=u,
+            server, levels=level_enums, since=s, until=u,
             keyword=search, location=location, limit=lim, offset=off,
         ),
         to_dict=drive_log_to_dict,
@@ -306,17 +333,15 @@ async def connection_list(
         None, "--id",
         help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)",
     ),
-    level: list[LogLevel] | None = typer.Option(
-        None, "--level",
-        help="Severity filter, repeatable: information / warning / error",
-    ),
+    level: list[str] | None = _LEVEL_OPTION,
     since: str | None = SINCE_OPTION,
     until: str | None = UNTIL_OPTION,
-    search: str | None = typer.Option(None, "--search", help="Keyword search"),
+    search: str | None = SEARCH_OPTION,
     offset: int = OFFSET_OPTION,
     limit: int = LIMIT_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
     """List connection logs for a backup server.
 
@@ -328,12 +353,13 @@ async def connection_list(
     Direct mode (server ID from synology-apm-cli infra server list --verbose):
       synology-apm-cli log connection list --id <server-id>
     """
+    level_enums = _parse_level(level)
     await _run_log_list(
         ctx, name=name, server_id=server_id, since=since, until=until,
-        limit=limit, offset=offset, page_all=page_all, output=output,
+        limit=limit, offset=offset, page_all=page_all, output=output, verbose=verbose,
         spinner="Fetching connection logs...",
         list_fn=lambda apm, server, s, u, off, lim: apm.logs.list_connection(
-            server, levels=level or None, since=s, until=u,
+            server, levels=level_enums, since=s, until=u,
             keyword=search, limit=lim, offset=off,
         ),
         to_dict=connection_log_to_dict,
@@ -356,17 +382,15 @@ async def system_list(
         None, "--id",
         help="Backup Server ID (direct mode; from synology-apm-cli infra server list --verbose)",
     ),
-    level: list[LogLevel] | None = typer.Option(
-        None, "--level",
-        help="Severity filter, repeatable: information / warning / error",
-    ),
+    level: list[str] | None = _LEVEL_OPTION,
     since: str | None = SINCE_OPTION,
     until: str | None = UNTIL_OPTION,
-    search: str | None = typer.Option(None, "--search", help="Keyword search"),
+    search: str | None = SEARCH_OPTION,
     offset: int = OFFSET_OPTION,
     limit: int = LIMIT_OPTION,
     page_all: bool = PAGE_ALL_OPTION,
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
     """List advanced system logs for a backup server.
 
@@ -378,12 +402,13 @@ async def system_list(
     Direct mode (server ID from synology-apm-cli infra server list --verbose):
       synology-apm-cli log system list --id <server-id>
     """
+    level_enums = _parse_level(level)
     await _run_log_list(
         ctx, name=name, server_id=server_id, since=since, until=until,
-        limit=limit, offset=offset, page_all=page_all, output=output,
+        limit=limit, offset=offset, page_all=page_all, output=output, verbose=verbose,
         spinner="Fetching system logs...",
         list_fn=lambda apm, server, s, u, off, lim: apm.logs.list_system(
-            server, levels=level or None, since=s, until=u,
+            server, levels=level_enums, since=s, until=u,
             keyword=search, limit=lim, offset=off,
         ),
         to_dict=system_log_to_dict,

@@ -12,11 +12,9 @@ keyword argument (`make_client(host=..., profile=...)`, etc.) takes priority, th
 `APM_HOST` / `APM_USERNAME` / `APM_PASSWORD` / `APM_NO_VERIFY_SSL` / `APM_PROFILE` environment
 variables, then a profile configured via `synology-apm-cli config set`
 (`~/.config/synology-apm/config.toml`) — and hand an async entry coroutine to `run_main()`.
-Never hardcode credentials.
-
-To use a `.env` file (see `.env.example` at the repository root), run scripts via
-`uv run --env-file .env python examples/<script>.py ...`; otherwise export real environment
-variables directly, or configure a profile.
+Credentials: see the root `CLAUDE.md`'s "APM Test Environment". Run scripts via `uv run
+--env-file .env python examples/<script>.py ...` to load `.env`; otherwise export real
+environment variables directly, or configure a profile.
 
 Every script also takes `add_profile_arg(parser)`'s standard `--profile` flag (same flag/help
 text as `synology-apm-cli`/`synology-apm-mcp`) and threads `args.profile` through its `run()`
@@ -24,32 +22,7 @@ coroutine into `make_client(profile=...)`, so `--profile lab` overrides `APM_PRO
 way it does for the CLI and MCP server. Add it to every new script, even if the script has no
 other reason to touch connection settings.
 
-```python
-import argparse
-import sys
-
-from _common import add_output_arg, add_profile_arg, make_client, run_main
-
-
-async def run(output_format: str, profile: str | None = None) -> int | None:
-    print("Collecting data...", file=sys.stderr)
-    async with make_client(profile=profile) as apm:
-        servers, total = await apm.backup_servers.list()
-    ...
-    return 0  # None also means success; run_main() maps APMError to exit code 1
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    add_output_arg(parser)
-    add_profile_arg(parser)
-    args = parser.parse_args()
-    run_main(run(args.output, profile=args.profile))
-
-
-if __name__ == "__main__":
-    main()
-```
+Start a new script from `examples/_template.py` rather than writing this shape from scratch.
 
 > **Note:** `APMClient` takes a scheme-less `host[:port]` — the SDK prepends `https://`
 > internally.
@@ -67,7 +40,7 @@ Example scripts must reuse `_common.py` instead of re-implementing boilerplate; 
 ## Finding SDK Entry Points and Types
 
 - For the access-path overview (`apm.machine.workloads`, `apm.activities.backup`, ...), see
-  the **Collection Map** in `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` —
+  the **Collection Map** in `packages/synology-apm-sdk/src/synology_apm/sdk/BEHAVIOR_REFERENCE.md` —
   the authoritative list.
 - For field names, method signatures, or enum values, look them up in the installed source
   rather than guessing — find the path, then use the Read tool on any `.py` file
@@ -134,8 +107,8 @@ script). Test layering:
   `tests/unit/examples/_fixtures.py`, then assert output formats (parse csv/json; match table
   label+value on the same line), exit codes, and per-item error resilience.
 - Build SDK model values with the `make_*` builders in `tests/unit/examples/_fixtures.py`
-  rather than hand-constructing dataclasses; test data follows the placeholder table in the
-  repository CLAUDE.md.
+  rather than hand-constructing dataclasses; test data follows the placeholder table in
+  `CONTRIBUTING.md`.
 - Tests must not hit the network, sleep for real, or read the developer's real
   `~/.config/synology-apm/config.toml` — mock `_common.resolve_connection` directly (see
   `test_common.py`'s `make_client` tests) rather than exercising the real config-file/keyring
@@ -164,7 +137,7 @@ mypy .
 ## Adding a New Script
 
 - Add it to the appropriate category table in `examples/README.md`.
-- Add its `tests/unit/examples/test_<module>.py` — `examples/` is included in the unit-test
-  coverage gate (`make test`).
+- Add its `tests/unit/examples/test_<module>.py` (see the root `CLAUDE.md`'s Post-change
+  Checklist note on the shared coverage floor — `examples/` is included in it).
 - Dependencies are limited to the public SDK API and the existing dev dependencies
   (`pyyaml`, `openpyxl`); do not introduce new third-party packages.

@@ -15,8 +15,11 @@ from synology_apm.cli._display import (
     _COPY_REASON_MESSAGES,
     _EXPORT_STATUS_DISPLAY,
     _FILE_SERVER_TYPE_DISPLAY,
+    _GWS_INFO_COL_LABELS,
+    _GWS_WORKLOAD_TYPE_DISPLAY,
     _HYPERVISOR_TYPE_DISPLAY,
     _LOG_LEVEL_DISPLAY,
+    _M365_INFO_COL_LABELS,
     _M365_WORKLOAD_TYPE_DISPLAY,
     _OS_TYPE_DISPLAY,
     _PLAN_CATEGORY_DISPLAY,
@@ -60,6 +63,7 @@ from synology_apm.sdk import (
     CopyReason,
     FileServerType,
     GFSRetention,
+    GWSWorkloadType,
     HypervisorType,
     LogLevel,
     M365ExportStatus,
@@ -176,6 +180,18 @@ def test_file_server_type_display_covers_all_enum_values() -> None:
 
 def test_m365_workload_type_display_covers_all_enum_values() -> None:
     assert set(M365WorkloadType) == set(_M365_WORKLOAD_TYPE_DISPLAY)
+
+
+def test_gws_workload_type_display_covers_all_enum_values() -> None:
+    assert set(GWSWorkloadType) == set(_GWS_WORKLOAD_TYPE_DISPLAY)
+
+
+def test_m365_info_col_labels_covers_all_enum_values() -> None:
+    assert set(M365WorkloadType) == set(_M365_INFO_COL_LABELS)
+
+
+def test_gws_info_col_labels_covers_all_enum_values() -> None:
+    assert set(GWSWorkloadType) == set(_GWS_INFO_COL_LABELS)
 
 
 def test_plan_category_display_covers_all_enum_values() -> None:

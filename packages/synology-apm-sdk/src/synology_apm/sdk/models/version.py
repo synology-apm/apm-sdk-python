@@ -49,7 +49,8 @@ class WorkloadVersion:
         changed_size_bytes: Amount of changed data in this version (bytes).
         portal_version_id:  Version identifier for M365 export and restore operations; empty when not applicable.
         snapshot_id:        Snapshot identifier for download operations; empty when not applicable.
-        verify_status:      Backup verification result for this version (PS/VM only); None for PC/FS.
+        verify_status:      Backup verification result for this version (PS/VM only); None for
+                            every other workload sub-type/category (PC/FS, M365, GWS).
         locations:          List of all physical storage locations.
         copy_status:        Backup copy status for this version; NOT_ENABLED when Backup Copy
                             is not configured; None when the raw status is missing or unrecognized.

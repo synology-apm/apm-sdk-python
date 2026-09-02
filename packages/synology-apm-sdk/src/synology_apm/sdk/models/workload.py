@@ -7,6 +7,7 @@ from typing import Any
 
 from ..enums import (
     FileServerType,
+    GWSWorkloadType,
     M365WorkloadType,
     MachineWorkloadType,
     VerifyStatus,
@@ -38,11 +39,13 @@ class Workload:
         protected_data_bytes:     Protected data size in bytes.
         status:                   Current backup status. RETIRED for workloads under a Retirement Plan.
         plan:                     The plan currently applied to this workload (protection or
-                                  retirement). Only plan_id, name, and category are guaranteed;
-                                  other fields are None unless the full plan was separately
-                                  fetched via the plans / retirement_plans collection.
+                                  retirement). Only plan_id and name are guaranteed; category
+                                  is additionally guaranteed only when the plan is a
+                                  ProtectionPlan (absent on RetirementPlan). Other fields are
+                                  None unless the full plan was separately fetched via the
+                                  plans / retirement_plans collection.
         backup_progress:          Backup progress percentage (0–100); set for PC/PS/VM when BACKING_UP, else None.
-        items_backed_up:          Number of items backed up; set for FS/M365 when BACKING_UP, None for PC/PS/VM.
+        items_backed_up:          Number of items backed up; set for FS/M365/GWS when BACKING_UP, None for PC/PS/VM.
         backup_server:            Backup server location info; None if unknown.
         backup_copy_destination:  Backup Copy destination location info; None if not configured.
         backup_copy_data_bytes:   Backup Copy storage space in bytes; 0 if no Backup Copy is configured.
@@ -182,6 +185,62 @@ class M365Workload(Workload):
     workload_type: M365WorkloadType
     tenant_id: str
     info: M365Info
+
+
+@dataclass(frozen=True)
+class GWSUserInfo:
+    """User information for a Mail / Drive / Contact / Calendar Workload."""
+    email: str
+
+    @property
+    def label(self) -> str:
+        """Standard identifier for the GWS user (email address)."""
+        return self.email
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, extra={"kind": "user"})
+
+
+@dataclass(frozen=True)
+class GWSSharedDriveInfo:
+    """Shared Drive information for a Shared Drive Workload."""
+    drive_id: str
+    drive_name: str
+
+    @property
+    def label(self) -> str:
+        """Standard identifier for the Shared Drive (drive name)."""
+        return self.drive_name
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, extra={"kind": "shared_drive"})
+
+
+GWSInfo = GWSUserInfo | GWSSharedDriveInfo
+
+
+@dataclass(frozen=True)
+class GWSWorkload(Workload):
+    """Google Workspace SaaS backup Workload (category=GWS).
+
+    Each GWSWorkload represents one service for one user or shared drive.
+    The category field is always WorkloadCategory.GWS.
+
+    Attributes:
+        workload_type: GWS service sub-type (MAIL / DRIVE / CONTACT / CALENDAR / SHARED_DRIVE).
+        domain:        Google Workspace domain.
+        info:          Resource info; type varies by workload_type.
+        backup_user:   Current backup user email; set for SHARED_DRIVE only, None otherwise.
+        is_anomaly:    Whether the workload is in an anomalous state requiring attention; set
+                       for SHARED_DRIVE only, False otherwise.
+    """
+    workload_type: GWSWorkloadType
+    domain: str
+    info: GWSInfo
+    backup_user: str | None = None
+    is_anomaly: bool = False
 
 
 @dataclass(frozen=True)

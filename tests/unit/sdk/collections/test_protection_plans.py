@@ -215,7 +215,7 @@ async def test_get_parses_schedule() -> None:
 
 
 async def test_get_by_name_resolves_via_list() -> None:
-    """get_by_name(name) performs server-side list(name_contains=name) search and returns directly without calling get()."""
+    """get_by_name(name) performs server-side list(keyword=name) search and returns directly without calling get()."""
     async with connected_session() as (session, m):
 
         keyword_url = f"{BASE_URL}/api/v1/plan/backup_plan?keyword=Daily+Backup&limit=100&offset=0&serviceType=DEVICE"

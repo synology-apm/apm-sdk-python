@@ -78,13 +78,13 @@ async def test_m365_plan_list_parses_schedule() -> None:
 
 
 async def test_m365_plan_list_name_filter_passes_keyword() -> None:
-    """list(name_contains=...) should append keyword param to the request."""
+    """list(keyword=...) should append keyword param to the request."""
     async with connected_session() as (session, m):
 
         filtered_url = f"{PLANS_URL}&keyword=Daily"
         m.get(filtered_url, payload={"plans": [SAMPLE_M365_PLAN]})
         collection = M365PlanCollection(session)
-        result, total = await collection.list(name_contains="Daily")
+        result, total = await collection.list(keyword="Daily")
         await session.disconnect()
 
     assert len(result) == 1

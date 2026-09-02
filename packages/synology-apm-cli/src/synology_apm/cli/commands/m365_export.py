@@ -1,6 +1,6 @@
 """M365 mailbox export commands — shared export infrastructure and app factory.
 
-Consumed by m365.py: import _TENANT_ID_OPTION, _M365_TYPE_MAP, _make_export_app.
+Consumed by m365.py: import _TENANT_ID_OPTION, _make_export_app.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from synology_apm.cli._async import run_async
 from synology_apm.cli._display import fmt_datetime, fmt_export_status, print_list_footer
 from synology_apm.cli._helpers import api_spinner, apm_session
 from synology_apm.cli._options import (
+    LIMIT_OPTION,
     LIST_OUTPUT_OPTION,
     OFFSET_OPTION,
     PAGE_ALL_OPTION,
@@ -29,7 +30,7 @@ from synology_apm.cli._serializers import (
 )
 from synology_apm.cli._validate import (
     WorkloadRef,
-    print_resolved_tenant,
+    print_resolved_saas_tenant,
     print_resolved_version,
     require_or_help,
     validate_resolve_args,
@@ -63,15 +64,6 @@ _TENANT_ID_OPTION = typer.Option(
 )
 
 _RETIRED_OPTION = typer.Option(False, "--retired", help="Search in retired workloads (search mode)")
-
-_M365_TYPE_MAP: dict[str, M365WorkloadType] = {
-    "exchange":   M365WorkloadType.EXCHANGE,
-    "onedrive":   M365WorkloadType.ONEDRIVE,
-    "chat":       M365WorkloadType.CHAT,
-    "group":      M365WorkloadType.GROUP,
-    "sharepoint": M365WorkloadType.SHAREPOINT,
-    "teams":      M365WorkloadType.TEAMS,
-}
 
 
 def _auto_download_filename(wl_name: str, archive_mailbox: bool, *, suffix: str = "") -> str:
@@ -216,6 +208,7 @@ async def _start_export_and_resolve_url(
     filename: str | None,
     no_wait: bool,
     yes: bool,
+    quiet: bool = False,
 ) -> ExportDownloadTarget:
     """Auto-start mode: start a new export, wait until downloadable, return (url, dest_path)."""
     # --archive-mailbox is hidden (not real) for group exports; force it off here too, since
@@ -262,18 +255,20 @@ async def _start_export_and_resolve_url(
                     f"  Run [bold]{cmd_prefix} list {identifier}[/bold]"
                     f" to get the Activity ID"
                 )
-            console.print(
-                f"[green]✓[/green] Export started for [bold]{wl.name}[/bold]"
-                f" ({effective_mailbox_label})\n"
-                f"{activity_hint}\n"
-                f"  Re-run with [bold]--id <activity-id>[/bold] to download."
-            )
+            if not quiet:
+                console.print(
+                    f"[green]✓[/green] Export started for [bold]{wl.name}[/bold]"
+                    f" ({effective_mailbox_label})\n"
+                    f"{activity_hint}\n"
+                    f"  Re-run with [bold]--id <activity-id>[/bold] to download."
+                )
             raise typer.Exit(0)
 
-        console.print(
-            f"Export started for [bold]{wl.name}[/bold] ({effective_mailbox_label})\n"
-            f"Waiting for APM to finish exporting...  [dim](Ctrl+C to interrupt)[/dim]"
-        )
+        if not quiet:
+            console.print(
+                f"Export started for [bold]{wl.name}[/bold] ({effective_mailbox_label})\n"
+                f"Waiting for APM to finish exporting...  [dim](Ctrl+C to interrupt)[/dim]"
+            )
         await _wait_until_downloadable(col, start_result, identifier, cmd_prefix)
 
     url = await col.get_download_url_by_ready_result(start_result)
@@ -303,8 +298,15 @@ async def _resolve_existing_export_url(
     return ExportDownloadTarget(url, dest_path)
 
 
-async def _download_with_progress(apm: APMClient, url: str, dest_path: str) -> None:
-    """Stream the export file to dest_path with a transient progress bar on stderr."""
+async def _download_with_progress(apm: APMClient, url: str, dest_path: str, *, quiet: bool = False) -> None:
+    """Stream the export file to dest_path with a transient progress bar on stderr.
+
+    The progress bar is skipped entirely when quiet=True.
+    """
+    if quiet:
+        await apm.download_file(url, dest_path)
+        return
+
     from rich.console import Console as _Console
     from rich.progress import BarColumn, DownloadColumn, Progress, TimeRemainingColumn, TransferSpeedColumn
 
@@ -346,7 +348,7 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
     ) -> M365Workload:
         """Resolve the workload via get() (--workload-id/--namespace) or get_by_name() (name)."""
         wl = await ref.resolve_m365(apm, tenant_id, wl_type, is_retired=is_retired)
-        print_resolved_tenant(tenant_id, wl.tenant_id)
+        print_resolved_saas_tenant(tenant_id, wl.tenant_id)
         return wl
 
     # ── export list ───────────────────────────────────────────────────────
@@ -360,7 +362,7 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
         namespace: str | None = typer.Option(None, "--namespace", "-n", help="Backup server namespace (direct mode)"),
         tenant_id: str | None = _TENANT_ID_OPTION,
         retired: bool = _RETIRED_OPTION,
-        limit: int = typer.Option(50, "--limit", help="Maximum records to show"),
+        limit: int = LIMIT_OPTION,
         offset: int = OFFSET_OPTION,
         page_all: bool = PAGE_ALL_OPTION,
         output: ListOutputFormat = LIST_OUTPUT_OPTION,
@@ -426,11 +428,12 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
         namespace: str | None = typer.Option(None, "--namespace", "-n", help="Backup server namespace (direct mode)"),
         tenant_id: str | None = _TENANT_ID_OPTION,
         retired: bool = _RETIRED_OPTION,
+        yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
         quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
     ) -> None:
         ref = validate_resolve_args(ctx, name, workload_id, namespace, id_flag="--workload-id")
         activity_id = require_or_help(ctx, activity_id)
-        async with apm_session(ctx) as apm:
+        async with apm_session(ctx, abortable=True) as apm:
             wl = await _get_workload(apm, ref, tenant_id, is_retired=retired)
             col = apm.m365.group_export if is_group else apm.m365.exchange_export
             activities, _ = await col.list(wl, limit=500)
@@ -438,6 +441,18 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
             if activity is None:
                 err_console.print(f"[red]✗[/red] Activity '{activity_id}' not found.")
                 raise typer.Exit(EXIT_ERROR)
+
+            # Mirrors _cancel_activity()'s confirm-unless-yes prompt in _actions.py — kept
+            # separate rather than shared because this list() call is workload-scoped
+            # (col.list(wl, ...)) and the confirm detail fields differ (Source, not
+            # Workload/Progress); keep both in sync if the confirm UX changes.
+            if not yes:
+                err_console.print("[yellow]⚠[/yellow] Confirm cancel export task?")
+                err_console.print(f"  Activity: {activity_id}")
+                err_console.print(f"  Source:   {activity.source_name}")
+                err_console.print(f"  Started:  {fmt_datetime(activity.started_at)}")
+                typer.confirm("\n  Confirm?", abort=True)
+
             await col.cancel(activity)
 
         if not quiet:
@@ -489,6 +504,7 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
         tenant_id: str | None = _TENANT_ID_OPTION,
         retired: bool = _RETIRED_OPTION,
         yes: bool = typer.Option(False, "--yes", "-y", help="Skip overwrite confirmation prompt"),
+        quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
     ) -> None:
         ref = validate_resolve_args(ctx, name, workload_id, namespace, id_flag="--workload-id")
 
@@ -511,13 +527,14 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
                         filename=filename,
                         no_wait=no_wait,
                         yes=yes,
+                        quiet=quiet,
                     )
                 else:
                     url, dest_path = await _resolve_existing_export_url(
                         col, wl, activity_id=activity_id, filename=filename, yes=yes,
                     )
 
-                await _download_with_progress(apm, url, dest_path)
+                await _download_with_progress(apm, url, dest_path, quiet=quiet)
 
         except OSError as exc:
             # The SDK stages the download in a .part file and only moves it into
@@ -528,6 +545,7 @@ def _make_export_app(type_name: str, search_arg_help: str) -> typer.Typer:
             raise typer.Exit(EXIT_ERROR) from exc
 
         assert dest_path is not None
-        console.print(f"[green]✓[/green] Saved to [bold]{dest_path}[/bold]")
+        if not quiet:
+            console.print(f"[green]✓[/green] Saved to [bold]{dest_path}[/bold]")
 
     return export_app

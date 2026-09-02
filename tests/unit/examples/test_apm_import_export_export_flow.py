@@ -21,6 +21,7 @@ import yaml
 
 from synology_apm.sdk import (
     APMError,
+    GWSAutoBackupRuleListResult,
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
     MachineWorkloadType,
@@ -34,11 +35,12 @@ from tests.unit.examples._fixtures import (
     make_backup_server,
     make_fake_apm,
     make_file_server_config,
+    make_gws_domain_info,
     make_location_info,
+    make_m365_tenant_info,
     make_machine_workload,
     make_protection_plan,
     make_remote_storage,
-    make_saas_tenant,
     patch_make_client,
 )
 
@@ -69,6 +71,15 @@ def _empty_rules_result() -> M365AutoBackupRuleListResult:
     )
 
 
+def _empty_gws_rules_result() -> GWSAutoBackupRuleListResult:
+    return GWSAutoBackupRuleListResult(
+        rules=(),
+        shared_drive_setting=None,
+        include_unlicensed_accounts=False,
+        include_archived_accounts=False,
+    )
+
+
 # ── _fetch_protection_details ─────────────────────────────────────────────────
 
 
@@ -80,7 +91,7 @@ async def test_fetch_protection_details_machine_dispatch() -> None:
     stub = make_protection_plan(plan_id=_PLAN_A, name="Daily Backup")
 
     result = await ie._fetch_protection_details(
-        apm, [stub], asyncio.Semaphore(2), is_machine=True
+        apm, [stub], asyncio.Semaphore(2), apm.machine.plans.get
     )
 
     assert result == [detailed]
@@ -95,7 +106,7 @@ async def test_fetch_protection_details_m365_dispatch() -> None:
     stub = make_protection_plan(plan_id=_PLAN_A)
 
     result = await ie._fetch_protection_details(
-        apm, [stub], asyncio.Semaphore(2), is_machine=False
+        apm, [stub], asyncio.Semaphore(2), apm.m365.plans.get
     )
 
     assert result == [detailed]
@@ -115,7 +126,7 @@ async def test_fetch_protection_details_drops_failed_plan_and_warns(
     ]
 
     result = await ie._fetch_protection_details(
-        apm, stubs, asyncio.Semaphore(2), is_machine=True
+        apm, stubs, asyncio.Semaphore(2), apm.machine.plans.get
     )
 
     assert result == [ok_plan]
@@ -133,6 +144,8 @@ def _wire_export_apm(
     fs_workloads: list[Any] | None = None,
     rules_result: M365AutoBackupRuleListResult | None = None,
     rules_error: APMError | None = None,
+    include_gws_domain: bool = False,
+    gws_rules_result: GWSAutoBackupRuleListResult | None = None,
 ) -> MagicMock:
     """Fake APM with one backup server, one remote storage, and one SaaS tenant."""
     apm = make_fake_apm()
@@ -149,12 +162,19 @@ def _wire_export_apm(
     apm.machine.workloads.list = AsyncMock(
         return_value=(fs_workloads or [], len(fs_workloads or []))
     )
-    apm.saas.list = AsyncMock(return_value=([make_saas_tenant(tenant_id=_TENANT_A)], 1))
+    saas_items: list[Any] = [make_m365_tenant_info(tenant_id=_TENANT_A)]
+    if include_gws_domain:
+        saas_items.append(make_gws_domain_info())
+    apm.saas.list = AsyncMock(return_value=(saas_items, len(saas_items)))
     if rules_error is not None:
         apm.m365.auto_backup_rules.list = AsyncMock(side_effect=rules_error)
     else:
         apm.m365.auto_backup_rules.list = AsyncMock(
             return_value=rules_result if rules_result is not None else _empty_rules_result()
+        )
+    if include_gws_domain:
+        apm.gws.auto_backup_rules.list = AsyncMock(
+            return_value=gws_rules_result if gws_rules_result is not None else _empty_gws_rules_result()
         )
     return apm
 
@@ -198,6 +218,34 @@ async def test_run_export_writes_yaml_with_ref_keys(
     assert data["file_servers"][0]["plan_ref"] == "plan-1"
     assert data["saas_tenants"][0]["ref_key"] == "tenant-1"
     assert data["saas_tenants"][0]["tenant_id"] == _TENANT_A
+
+
+async def test_run_export_writes_gws_domains_and_auto_backup_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exported YAML carries a gws_domains ref entry and a gws_auto_backup_rules
+    block for a domain with configured protected-account-type settings."""
+    gws_result = GWSAutoBackupRuleListResult(
+        rules=(),
+        shared_drive_setting=None,
+        include_unlicensed_accounts=True,
+        include_archived_accounts=False,
+    )
+    apm = _wire_export_apm(include_gws_domain=True, gws_rules_result=gws_result)
+    patch_make_client(monkeypatch, ie, apm)
+    out = tmp_path / "export.yaml"
+
+    ret = await ie.run_export(str(out), concurrency=2)
+
+    assert ret == 0
+    data = yaml.safe_load(out.read_text(encoding="utf-8"))
+    assert data["gws_domains"][0]["ref_key"] == "domain-1"
+    assert data["gws_domains"][0]["domain"] == "gwsdemo.example.com"
+    assert data["gws_auto_backup_rules"][0]["domain_ref"] == "domain-1"
+    assert data["gws_auto_backup_rules"][0]["protected_account_types"] == {
+        "include_unlicensed_accounts": True,
+        "include_archived_accounts": False,
+    }
 
 
 async def test_run_export_assigns_unique_plan_refs_for_duplicate_names(

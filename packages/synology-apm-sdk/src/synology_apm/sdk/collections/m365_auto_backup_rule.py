@@ -10,6 +10,7 @@ from ..models.m365_auto_backup_rule import (
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
 )
+from ._shared import _is_terminating
 
 
 def _parse_collab_setting(raw: dict[str, Any]) -> M365CollabServiceSetting:
@@ -17,15 +18,6 @@ def _parse_collab_setting(raw: dict[str, Any]) -> M365CollabServiceSetting:
         plan_id=raw.get("planId") or "",
         namespace=raw.get("namespace") or "",
     )
-
-
-def _is_terminating(raw: dict[str, Any]) -> bool:
-    # A rule set for deletion keeps a non-empty deletionTimestamp for up to ~2 minutes while a
-    # server-side finalizer runs (see list()'s docstring for how this is filtered).
-    rule_obj: dict[str, Any] = raw.get("autoBackupRule") or {}
-    metadata: dict[str, Any] = rule_obj.get("metadata") or {}
-    ts = metadata.get("deletionTimestamp") or "0"
-    return ts not in ("", "0")
 
 
 def _parse_rule(raw: dict[str, Any]) -> M365AutoBackupRule:

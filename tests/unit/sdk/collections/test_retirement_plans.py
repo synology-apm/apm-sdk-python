@@ -84,14 +84,14 @@ async def test_list_returns_empty_when_no_plans() -> None:
     assert result == []
 
 
-async def test_list_with_name_contains_sends_keyword_param() -> None:
-    """list(name_contains=...) should append keyword= to the request."""
+async def test_list_with_keyword_sends_keyword_param() -> None:
+    """list(keyword=...) should append keyword= to the request."""
     keyword_url = f"{BASE_URL}/api/v1/plan/archive_plan?offset=0&limit=500&keyword=Keep"
     async with connected_session() as (session, m):
 
         m.get(keyword_url, payload={"plans": [SAMPLE_PLAN_RAW], "total": 1})
         col = RetirementPlanCollection(session)
-        result, total = await col.list(name_contains="Keep")
+        result, total = await col.list(keyword="Keep")
         await session.disconnect()
 
     assert len(result) == 1

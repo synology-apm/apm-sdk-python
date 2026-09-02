@@ -23,19 +23,21 @@ from synology_apm.sdk import (
     APMClient,
     APMError,
     BackupServer,
+    GWSDomainInfo,
+    GWSWorkload,
+    GWSWorkloadType,
     KeyringUnavailableError,
+    M365TenantInfo,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
     MachineWorkloadType,
-    SaasTenant,
-    WorkloadCategory,
     resolve_connection,
 )
 
 T = TypeVar("T")
 
-Category = str  # "machine" | "m365" | "all"
+Category = str  # "machine" | "m365" | "gws" | "all"
 
 
 # ── Credentials / entry point ───────────────────────────────────────────────
@@ -190,15 +192,25 @@ M365_TYPE_LABELS: dict[M365WorkloadType, str] = {
     M365WorkloadType.GROUP:      "Group",
 }
 
+GWS_TYPE_LABELS: dict[GWSWorkloadType, str] = {
+    GWSWorkloadType.MAIL:         "Mail",
+    GWSWorkloadType.CALENDAR:     "Calendar",
+    GWSWorkloadType.CONTACT:      "Contact",
+    GWSWorkloadType.DRIVE:        "Drive",
+    GWSWorkloadType.SHARED_DRIVE: "Shared Drive",
+}
 
-def workload_type_label(wl: MachineWorkload | M365Workload) -> str:
-    """Display label for a workload's type (e.g. 'VM', 'Exchange')."""
+
+def workload_type_label(wl: MachineWorkload | M365Workload | GWSWorkload) -> str:
+    """Display label for a workload's type (e.g. 'VM', 'Exchange', 'Shared Drive')."""
     if isinstance(wl, M365Workload):
         return M365_TYPE_LABELS.get(wl.workload_type, wl.workload_type.value)
+    if isinstance(wl, GWSWorkload):
+        return GWS_TYPE_LABELS.get(wl.workload_type, wl.workload_type.value)
     return wl.workload_type.value.upper()
 
 
-WORKLOAD_TYPE_ORDER: tuple[MachineWorkloadType | M365WorkloadType, ...] = (
+WORKLOAD_TYPE_ORDER: tuple[MachineWorkloadType | M365WorkloadType | GWSWorkloadType, ...] = (
     MachineWorkloadType.VM,
     MachineWorkloadType.PS,
     MachineWorkloadType.PC,
@@ -209,12 +221,21 @@ WORKLOAD_TYPE_ORDER: tuple[MachineWorkloadType | M365WorkloadType, ...] = (
     M365WorkloadType.TEAMS,
     M365WorkloadType.CHAT,
     M365WorkloadType.GROUP,
+    GWSWorkloadType.MAIL,
+    GWSWorkloadType.CALENDAR,
+    GWSWorkloadType.CONTACT,
+    GWSWorkloadType.DRIVE,
+    GWSWorkloadType.SHARED_DRIVE,
 )
 
 
-def category_label(wl: MachineWorkload | M365Workload) -> str:
-    """'M365' or 'Machine' for the workload's domain."""
-    return "M365" if isinstance(wl, M365Workload) else "Machine"
+def category_label(wl: MachineWorkload | M365Workload | GWSWorkload) -> str:
+    """'M365', 'GWS', or 'Machine' for the workload's domain."""
+    if isinstance(wl, M365Workload):
+        return "M365"
+    if isinstance(wl, GWSWorkload):
+        return "GWS"
+    return "Machine"
 
 
 # ── Pagination ──────────────────────────────────────────────────────────────
@@ -244,12 +265,20 @@ async def paginate(
     return items, total
 
 
-async def list_m365_tenants(apm: APMClient, *, page: int = 500) -> list[SaasTenant]:
-    """All SaaS tenants in the M365 category."""
+async def list_m365_tenants(apm: APMClient, *, page: int = 500) -> list[M365TenantInfo]:
+    """All SaaS applications in the M365 category."""
     tenants, _ = await paginate(
         lambda limit, offset: apm.saas.list(limit=limit, offset=offset), page=page
     )
-    return [t for t in tenants if t.category == WorkloadCategory.M365]
+    return [t for t in tenants if isinstance(t, M365TenantInfo)]
+
+
+async def list_gws_domains(apm: APMClient, *, page: int = 500) -> list[GWSDomainInfo]:
+    """All SaaS applications in the GWS category."""
+    domains, _ = await paginate(
+        lambda limit, offset: apm.saas.list(limit=limit, offset=offset), page=page
+    )
+    return [d for d in domains if isinstance(d, GWSDomainInfo)]
 
 
 async def collect_backup_servers(apm: APMClient, *, page: int = 500) -> list[BackupServer]:
@@ -280,7 +309,7 @@ async def collect_m365_workloads(
     *,
     is_retired: bool,
     page: int = 500,
-    tenants: list[SaasTenant] | None = None,
+    tenants: list[M365TenantInfo] | None = None,
 ) -> tuple[list[M365Workload], int]:
     """All M365 workloads of the given service types across every M365 tenant.
 
@@ -293,7 +322,7 @@ async def collect_m365_workloads(
     total = 0
 
     def _list_call(
-        tenant: SaasTenant, service: M365WorkloadType
+        tenant: M365TenantInfo, service: M365WorkloadType
     ) -> Callable[[int, int], Awaitable[tuple[list[M365Workload], int | None]]]:
         async def _call(limit: int, offset: int) -> tuple[list[M365Workload], int | None]:
             return await apm.m365.workloads.list(
@@ -311,6 +340,43 @@ async def collect_m365_workloads(
     return results, total
 
 
+async def collect_gws_workloads(
+    apm: APMClient,
+    services: list[GWSWorkloadType],
+    *,
+    is_retired: bool,
+    page: int = 500,
+    domains: list[GWSDomainInfo] | None = None,
+) -> tuple[list[GWSWorkload], int]:
+    """All GWS workloads of the given service types across every GWS domain.
+
+    Pass *domains* (from list_gws_domains) to reuse an already-fetched domain
+    list and avoid an extra lookup; otherwise the domains are fetched here.
+    """
+    if domains is None:
+        domains = await list_gws_domains(apm, page=page)
+    results: list[GWSWorkload] = []
+    total = 0
+
+    def _list_call(
+        domain: GWSDomainInfo, service: GWSWorkloadType
+    ) -> Callable[[int, int], Awaitable[tuple[list[GWSWorkload], int | None]]]:
+        async def _call(limit: int, offset: int) -> tuple[list[GWSWorkload], int | None]:
+            return await apm.gws.workloads.list(
+                domain=domain.domain, workload_type=service,
+                is_retired=is_retired, limit=limit, offset=offset,
+            )
+        return _call
+
+    for domain in domains:
+        for service in services:
+            items, sub_total = await paginate(_list_call(domain, service), page=page)
+            assert sub_total is not None  # GWSWorkloadCollection.list() always reports a real total
+            results.extend(items)
+            total += sub_total
+    return results, total
+
+
 async def collect_workloads(
     apm: APMClient,
     category: Category,
@@ -318,13 +384,14 @@ async def collect_workloads(
     *,
     is_retired: bool,
     page: int = 500,
-) -> tuple[list[MachineWorkload | M365Workload], int]:
-    """Collect machine and/or M365 workloads for *category*.
+    gws_services: list[GWSWorkloadType] | None = None,
+) -> tuple[list[MachineWorkload | M365Workload | GWSWorkload], int]:
+    """Collect machine and/or M365 and/or GWS workloads for *category*.
 
-    *m365_services* of None means all M365 service types. Returns (workloads, total)
-    where total is the sum of server-reported totals.
+    *m365_services*/*gws_services* of None means all service types for that category.
+    Returns (workloads, total) where total is the sum of server-reported totals.
     """
-    workloads: list[MachineWorkload | M365Workload] = []
+    workloads: list[MachineWorkload | M365Workload | GWSWorkload] = []
     total = 0
     if category in ("machine", "all"):
         machine, machine_total = await collect_machine_workloads(
@@ -339,26 +406,35 @@ async def collect_workloads(
         )
         workloads.extend(m365)
         total += m365_total
+    if category in ("gws", "all"):
+        gws_types = gws_services if gws_services is not None else list(GWSWorkloadType)
+        gws, gws_total = await collect_gws_workloads(
+            apm, gws_types, is_retired=is_retired, page=page
+        )
+        workloads.extend(gws)
+        total += gws_total
     return workloads, total
 
 
 # ── Shared argparse options ─────────────────────────────────────────────────
 
 _M365_SERVICE_CHOICES = ["exchange", "onedrive", "chat", "sharepoint", "teams", "group"]
+_GWS_WORKLOAD_TYPE_CHOICES = ["mail", "calendar", "contact", "drive", "shared_drive"]
 
 
 def add_category_args(
     parser: argparse.ArgumentParser, *, verb: str, default: str | None = None
 ) -> None:
-    """Add --category and --m365-service. *verb* describes the action (e.g. 'export').
+    """Add --category, --m365-service, and --gws-workload-type. *verb* describes the
+    action (e.g. 'export').
 
     Pass *default* to make --category optional with a fallback value (e.g. ``"all"``);
-    omit it (or pass None) to keep --category required.
+    omit it (or pass None) to keep --category required. "all" means "machine + m365 + gws".
     """
     parser.add_argument(
-        "--category", choices=["machine", "m365", "all"],
+        "--category", choices=["machine", "m365", "gws", "all"],
         default=default, required=default is None,
-        help=f"Workload category to {verb}",
+        help=f"Workload category to {verb} (all = machine + m365 + gws)",
     )
     parser.add_argument(
         "--m365-service", dest="m365_service", action="append",
@@ -367,6 +443,15 @@ def add_category_args(
             "M365 service type: exchange, onedrive, chat, sharepoint, teams, group. "
             "Repeat to include multiple (e.g. --m365-service exchange --m365-service onedrive). "
             "Required when --category is m365; optional (defaults to all) when --category is all."
+        ),
+    )
+    parser.add_argument(
+        "--gws-workload-type", dest="gws_workload_type", action="append",
+        choices=_GWS_WORKLOAD_TYPE_CHOICES, metavar="TYPE",
+        help=(
+            "GWS workload type: mail, calendar, contact, drive, shared_drive. "
+            "Repeat to include multiple (e.g. --gws-workload-type mail --gws-workload-type drive). "
+            "Required when --category is gws; optional (defaults to all) when --category is all."
         ),
     )
 
@@ -394,9 +479,20 @@ def resolve_m365_services(
     """Validate --category/--m365-service and return the requested types (None = all)."""
     if args.category == "m365" and not args.m365_service:
         parser.error("--m365-service is required when --category is m365")
-    if args.category == "machine" and args.m365_service:
-        parser.error("--m365-service is not valid with --category machine")
+    if args.category in ("machine", "gws") and args.m365_service:
+        parser.error(f"--m365-service is not valid with --category {args.category}")
     return [M365WorkloadType(s) for s in args.m365_service] if args.m365_service else None
+
+
+def resolve_gws_workload_types(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> list[GWSWorkloadType] | None:
+    """Validate --category/--gws-workload-type and return the requested types (None = all)."""
+    if args.category == "gws" and not args.gws_workload_type:
+        parser.error("--gws-workload-type is required when --category is gws")
+    if args.category in ("machine", "m365") and args.gws_workload_type:
+        parser.error(f"--gws-workload-type is not valid with --category {args.category}")
+    return [GWSWorkloadType(s) for s in args.gws_workload_type] if args.gws_workload_type else None
 
 
 # ── Concurrent-download primitives (progress + interrupt) ────────────────────

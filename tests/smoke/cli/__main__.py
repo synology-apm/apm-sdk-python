@@ -14,12 +14,12 @@ from .._driver import build_argparser
 from ._cli_runner import CliRunner, load_cli_env
 from ._context import M365_SCOPES, SmokeContext
 from ._report import make_report_dir, write_index
-from .phases import _activity, _config, _infra, _log, _machine, _plan, _saas_m365
+from .phases import _activity, _config, _gws, _infra, _log, _machine, _plan, _saas_m365
 
 # Dependency order: plan populates protection/retirement plan data used by machine's
 # change-plan round trips; machine populates workload/plan data used by m365 and activity;
 # infra populates the DP server list used by log.
-_ORDER = ("config", "infra", "plan", "machine", "m365", "activity", "log")
+_ORDER = ("config", "infra", "plan", "machine", "m365", "gws", "activity", "log")
 
 _PHASES = {
     "config": _config,
@@ -27,6 +27,7 @@ _PHASES = {
     "machine": _machine,
     "m365": _saas_m365,
     "saas": _saas_m365,
+    "gws": _gws,
     "activity": _activity,
     "plan": _plan,
     "log": _log,

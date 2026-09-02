@@ -17,7 +17,7 @@ from synology_apm.sdk.models.protection_plan import (
     ProtectionRetentionPolicy,
 )
 from synology_apm.sdk.models.retirement_plan import RetirementPlan, RetirementRetentionPolicy
-from synology_apm.sdk.models.saas import SaasTenant
+from synology_apm.sdk.models.saas import M365TenantInfo
 from synology_apm.sdk.models.workload import M365UserInfo, M365Workload
 
 TENANT_ID = "m365-tenant-uuid-001"
@@ -28,10 +28,10 @@ WORKLOAD_UID = "m365-wl-uid-001"
 
 NAMESPACE = "ns-m365-001"
 
-SAMPLE_TENANT = SaasTenant(
+SAMPLE_TENANT = M365TenantInfo(
     tenant_id=TENANT_ID,
-    tenant_name="Contoso",
-    tenant_email="admin@contoso.com",
+    name="Contoso",
+    domain="contoso.onmicrosoft.com",
     category=WorkloadCategory.M365,
     protected_data_bytes=0,
 )
@@ -78,7 +78,7 @@ SAMPLE_RETIREMENT_PLAN = RetirementPlan(
 )
 
 
-def make_mock_apm(workloads: list[M365Workload] | None = None, tenant: SaasTenant | None = None) -> AsyncMock:
+def make_mock_apm(workloads: list[M365Workload] | None = None, tenant: M365TenantInfo | None = None) -> AsyncMock:
     """Build a mock APMClient with pre-configured return values."""
     mock_apm = AsyncMock()
     mock_apm.saas.list.return_value = ([SAMPLE_TENANT], 5)

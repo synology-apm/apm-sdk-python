@@ -12,6 +12,7 @@ from synology_apm.sdk._http import WebAPISession
 from synology_apm.sdk.collections.protection_plans import MachinePlanCollection
 from synology_apm.sdk.enums import RetentionType, ScheduleFrequency, WorkloadCategory
 from synology_apm.sdk.models.protection_plan import (
+    GWSPlanCreateRequest,
     M365PlanCreateRequest,
     MachinePlanCreateRequest,
     ProtectionPlan,
@@ -83,6 +84,24 @@ def _make_machine_request() -> MachinePlanCreateRequest:
 def _make_m365_request() -> M365PlanCreateRequest:
     return M365PlanCreateRequest(
         name="M365 Daily",
+        retention=ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=30),
+        schedule=ProtectionSchedule(frequency=ScheduleFrequency.DAILY, start_time=time(9, 0)),
+    )
+
+
+def _assert_sample_gws_plan(plan: ProtectionPlan) -> None:
+    assert plan.plan_id == PLAN_ID
+    assert plan.name == "GWS Daily"
+    assert plan.category == WorkloadCategory.GWS
+    assert plan.workload_count == 2
+    assert plan.policy is not None
+    assert plan.policy.retention.retention_type == RetentionType.KEEP_DAYS
+    assert plan.policy.retention.days == 30
+
+
+def _make_gws_request() -> GWSPlanCreateRequest:
+    return GWSPlanCreateRequest(
+        name="GWS Daily",
         retention=ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=30),
         schedule=ProtectionSchedule(frequency=ScheduleFrequency.DAILY, start_time=time(9, 0)),
     )

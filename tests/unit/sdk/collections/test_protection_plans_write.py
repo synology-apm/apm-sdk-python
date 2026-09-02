@@ -8,7 +8,7 @@ import pytest
 from yarl import URL
 
 from synology_apm.sdk._http import WebAPISession
-from synology_apm.sdk.collections.protection_plans import M365PlanCollection, MachinePlanCollection
+from synology_apm.sdk.collections.protection_plans import GWSPlanCollection, M365PlanCollection, MachinePlanCollection
 from synology_apm.sdk.enums import (
     MachineOsType,
     MachineTaskScope,
@@ -30,8 +30,10 @@ from tests.unit.sdk.collections._plan_fixtures import (
     PLAN_CREATE_URL,
     PLAN_ID,
     SAMPLE_PLAN_WITH_SCHEDULE,
+    _assert_sample_gws_plan,
     _assert_sample_m365_plan,
     _assert_sample_machine_plan,
+    _make_gws_request,
     _make_m365_request,
     _make_machine_request,
 )
@@ -384,6 +386,88 @@ async def test_m365_delete_sends_delete_request() -> None:
     async with connected_session() as (session, m):
         m.delete(delete_url, payload={})
         col = _make_m365_collections(session)
+        await col.delete(PLAN_ID)
+        await session.disconnect()
+
+    assert ("DELETE", URL(delete_url)) in m.requests
+
+
+# ── GWSPlanCollection.create() / update() / delete() ─────────────────────────
+
+SAMPLE_GWS_PLAN_RAW: dict[str, Any] = {
+    "id": PLAN_ID,
+    "spec": {
+        "name": "GWS Daily",
+        "serviceType": "GW",
+        "retention": {"keepDays": 30},
+        "backupCopy": {"enabled": False, "destination": ""},
+    },
+    "protectedWorkloadCount": 2,
+    "unprotectedWorkloadCount": 0,
+}
+
+
+def _make_gws_collections(session: WebAPISession) -> GWSPlanCollection:
+    return GWSPlanCollection(session)
+
+
+async def test_gws_create_posts_body_and_returns_plan() -> None:
+    """GWSPlanCollection.create() should POST with serviceType=GW and return the created plan."""
+    async with connected_session() as (session, m):
+        m.post(PLAN_CREATE_URL, payload={"id": PLAN_ID})
+        m.get(f"{BASE_URL}/api/v1/plan/backup_plan/{PLAN_ID}", payload=SAMPLE_GWS_PLAN_RAW)
+        col = _make_gws_collections(session)
+        plan = await col.create(_make_gws_request())
+        await session.disconnect()
+
+    post_key = ("POST", URL(PLAN_CREATE_URL))
+    body = request_json(m, post_key)
+    assert body["plan"]["serviceType"] == "GW"
+    assert body["plan"]["name"] == "GWS Daily"
+    assert body["plan"]["configGw"]["schedule"]["runHour"] == 9
+    assert body["plan"]["configGw"]["enableLabelBackup"] is True
+    assert body["plan"]["retention"]["keepDays"] == 30
+    _assert_sample_gws_plan(plan)
+
+
+async def test_gws_create_duplicate_name_raises() -> None:
+    """GWSPlanCollection.create() should raise PlanNameConflictError on errorCode 4013."""
+    error_body: dict[str, Any] = {"error": {"code": 500, "details": [{"errorCode": 4013}]}}
+    async with connected_session() as (session, m):
+        m.post(PLAN_CREATE_URL, status=500, payload=error_body)
+        col = _make_gws_collections(session)
+        with pytest.raises(PlanNameConflictError) as exc_info:
+            await col.create(_make_gws_request())
+        await session.disconnect()
+
+    assert_resource_error(exc_info, resource_type="ProtectionPlan", resource_id="GWS Daily")
+
+
+async def test_gws_update_puts_body_and_returns_plan() -> None:
+    """GWSPlanCollection.update() should PUT and return the updated plan."""
+    update_url = f"{BASE_URL}/api/v1/plan/backup_plan/{PLAN_ID}"
+    async with connected_session() as (session, m):
+        m.put(update_url, payload={})
+        m.get(update_url, payload=SAMPLE_GWS_PLAN_RAW)
+        col = _make_gws_collections(session)
+        plan = await col.update(PLAN_ID, _make_gws_request())
+        await session.disconnect()
+
+    put_key = ("PUT", URL(update_url))
+    body = request_json(m, put_key)
+    assert body["plan"]["name"] == "GWS Daily"
+    assert body["plan"]["serviceType"] == "GW"
+    assert body["plan"]["retention"]["keepDays"] == 30
+    assert body["plan"]["configGw"]["schedule"]["runHour"] == 9
+    _assert_sample_gws_plan(plan)
+
+
+async def test_gws_delete_sends_delete_request() -> None:
+    """GWSPlanCollection.delete() should send DELETE to the correct URL."""
+    delete_url = f"{BASE_URL}/api/v1/plan/backup_plan/{PLAN_ID}"
+    async with connected_session() as (session, m):
+        m.delete(delete_url, payload={})
+        col = _make_gws_collections(session)
         await col.delete(PLAN_ID)
         await session.disconnect()
 

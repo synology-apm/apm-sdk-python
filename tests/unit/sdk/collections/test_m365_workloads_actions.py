@@ -367,7 +367,7 @@ DELETE_URL = f"{BASE_URL}/api/v1/workload/m365_workload/batch"
 
 
 async def test_delete_sends_correct_request() -> None:
-    """delete() sends DELETE to m365_workload/batch with tenantId, isFromUnmanagedWorkload=False, nsUidPairs."""
+    """delete() sends DELETE to m365_workload/batch with tenantId, primKey, isFromUnmanagedWorkload=False, nsUidPairs."""
     payload = {
         "success": True,
         "errors": [],
@@ -384,6 +384,7 @@ async def test_delete_sends_correct_request() -> None:
     del_key = ("DELETE", URL(DELETE_URL))
     body = request_json(m, del_key)
     assert body["tenantId"] == TENANT_ID
+    assert body["primKey"] == TENANT_ID
     assert body["isFromUnmanagedWorkload"] is False
     assert body["nsUidPairs"] == [{"namespace": NAMESPACE, "uid": WORKLOAD_UID}]
 

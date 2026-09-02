@@ -73,7 +73,7 @@ from synology_apm.sdk.models.protection_plan import (
 )
 from synology_apm.sdk.models.remote_storage import RemoteStorage, RemoteStorageAddResult
 from synology_apm.sdk.models.retirement_plan import RetirementPlan, RetirementRetentionPolicy
-from synology_apm.sdk.models.saas import SaasTenant
+from synology_apm.sdk.models.saas import GWSDomainInfo, M365TenantInfo
 from synology_apm.sdk.models.system import SiteInfo, SiteStorageStats, WorkloadTypeStat, WorkloadUsageSummary
 from synology_apm.sdk.models.tiering_plan import TieringPlan, TieringStatus
 from synology_apm.sdk.models.version import VersionLocation, WorkloadVersion
@@ -295,13 +295,23 @@ def make_remote_storage(**kwargs: Any) -> RemoteStorage:
     return RemoteStorage(**defaults)
 
 
-def make_saas_tenant(**kwargs: Any) -> SaasTenant:
+def make_m365_tenant_info(**kwargs: Any) -> M365TenantInfo:
     defaults: dict[str, Any] = dict(
-        tenant_id="tenant-001", tenant_name="Contoso", tenant_email="admin@contoso.com",
+        tenant_id="tenant-001", name="Contoso", domain="contoso.onmicrosoft.com",
         category=WorkloadCategory.M365, protected_data_bytes=5_000_000_000,
     )
     defaults.update(kwargs)
-    return SaasTenant(**defaults)
+    return M365TenantInfo(**defaults)
+
+
+def make_gws_domain_info(**kwargs: Any) -> GWSDomainInfo:
+    defaults: dict[str, Any] = dict(
+        domain="gwsdemo.example.com", name="gwsdemo.example.com",
+        domain_admin="evelyn.test@gwsdemo.example.com",
+        category=WorkloadCategory.GWS, protected_data_bytes=5_000_000_000,
+    )
+    defaults.update(kwargs)
+    return GWSDomainInfo(**defaults)
 
 
 class TestLocationInfoToDict:
@@ -412,12 +422,23 @@ def test_site_storage_stats_reduction_ratio_zero_when_logical_bytes_zero() -> No
     assert stats.backup_data_reduction_ratio == 0.0
 
 
-class TestSaasTenantToDict:
+class TestM365TenantInfoToDict:
     def test_fields(self) -> None:
-        tenant = make_saas_tenant()
+        tenant = make_m365_tenant_info()
         d = tenant.to_dict()
         assert d["tenant_id"] == "tenant-001"
+        assert d["name"] == "Contoso"
+        assert d["domain"] == "contoso.onmicrosoft.com"
         assert d["category"] == "m365"
+
+
+class TestGWSDomainInfoToDict:
+    def test_fields(self) -> None:
+        domain_info = make_gws_domain_info()
+        d = domain_info.to_dict()
+        assert d["domain"] == "gwsdemo.example.com"
+        assert d["domain_admin"] == "evelyn.test@gwsdemo.example.com"
+        assert d["category"] == "gws"
 
 
 class TestWorkloadVersionToDict:

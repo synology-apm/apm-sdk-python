@@ -115,8 +115,8 @@ async def _list_all_workloads(
         lambda limit, offset: apm.machine.workloads.list(
             workload_types=workload_types,
             is_retired=False,
-            name_contains=keyword,
-            namespace=namespace,
+            keyword=keyword,
+            namespace=[namespace] if namespace else None,
             limit=limit,
             offset=offset,
         ),

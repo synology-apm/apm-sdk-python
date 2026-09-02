@@ -8,21 +8,21 @@ from unittest.mock import AsyncMock
 import pytest
 
 from synology_apm.sdk.enums import WorkloadCategory
-from synology_apm.sdk.models.saas import SaasTenant
+from synology_apm.sdk.models.saas import GWSDomainInfo, M365TenantInfo
 from tests.unit.cli.conftest import invoke_cli
 
-SAMPLE_M365_TENANT = SaasTenant(
+SAMPLE_M365_TENANT = M365TenantInfo(
     tenant_id="m365-tenant-uuid-001",
-    tenant_name="Contoso",
-    tenant_email="admin@contoso.com",
+    name="Contoso",
+    domain="contoso.onmicrosoft.com",
     category=WorkloadCategory.M365,
     protected_data_bytes=1073741824,
 )
 
-SAMPLE_GWS_TENANT = SaasTenant(
-    tenant_id="gw-domain-001",
-    tenant_name="Corp GWS",
-    tenant_email="corp.example.com",
+SAMPLE_GWS_DOMAIN = GWSDomainInfo(
+    domain="gwsdemo.example.com",
+    name="gwsdemo.example.com",
+    domain_admin="evelyn.test@gwsdemo.example.com",
     category=WorkloadCategory.GWS,
     protected_data_bytes=536870912,
 )
@@ -33,13 +33,13 @@ SAMPLE_GWS_TENANT = SaasTenant(
 
 def test_saas_list_table_shows_tenants(mock_apm: AsyncMock) -> None:
     """saas list (table) should show tenant name, provider and ID."""
-    mock_apm.saas.list.return_value = ([SAMPLE_M365_TENANT, SAMPLE_GWS_TENANT], 5)
+    mock_apm.saas.list.return_value = ([SAMPLE_M365_TENANT, SAMPLE_GWS_DOMAIN], 5)
 
     result = invoke_cli(mock_apm, ["saas", "list"])
 
     assert result.exit_code == 0, result.output
     assert "Contoso" in result.output
-    assert "Corp GWS" in result.output
+    assert "gwsdemo.example.com" in result.output
     assert "M365" in result.output or "m365" in result.output
 
 
@@ -53,7 +53,7 @@ def test_saas_list_json_output(mock_apm: AsyncMock) -> None:
     data = json.loads(result.output)
     assert isinstance(data, list)
     assert data[0]["tenant_id"] == "m365-tenant-uuid-001"
-    assert data[0]["tenant_name"] == "Contoso"
+    assert data[0]["name"] == "Contoso"
     assert data[0]["category"] == "m365"
 
 
@@ -95,7 +95,46 @@ def test_saas_list_passes_limit_to_sdk(mock_apm: AsyncMock) -> None:
 
     invoke_cli(mock_apm, ["saas", "list", "--limit", "10"])
 
-    mock_apm.saas.list.assert_called_once_with(limit=10, offset=0)
+    mock_apm.saas.list.assert_called_once_with(keyword=None, limit=10, offset=0)
+
+
+def test_saas_list_search_passes_keyword_to_sdk(mock_apm: AsyncMock) -> None:
+    """saas list --search contoso should call saas.list(keyword="contoso")."""
+    mock_apm.saas.list.return_value = ([], 5)
+
+    invoke_cli(mock_apm, ["saas", "list", "--search", "contoso"])
+
+    mock_apm.saas.list.assert_called_once_with(keyword="contoso", limit=25, offset=0)
+
+
+def test_saas_list_search_short_flag(mock_apm: AsyncMock) -> None:
+    """saas list -s contoso should behave the same as --search."""
+    mock_apm.saas.list.return_value = ([], 5)
+
+    invoke_cli(mock_apm, ["saas", "list", "-s", "contoso"])
+
+    mock_apm.saas.list.assert_called_once_with(keyword="contoso", limit=25, offset=0)
+
+
+def test_saas_list_verbose_shows_domain_admin(mock_apm: AsyncMock) -> None:
+    """saas list -v should add a Domain Admin column, populated for GWS and blank for M365."""
+    mock_apm.saas.list.return_value = ([SAMPLE_M365_TENANT, SAMPLE_GWS_DOMAIN], 2)
+
+    result = invoke_cli(mock_apm, ["saas", "list", "-v"], env={"COLUMNS": "300"})
+
+    assert result.exit_code == 0, result.output
+    assert "Domain Admin" in result.output
+    assert "evelyn.test@gwsdemo.example.com" in result.output
+
+
+def test_saas_list_no_verbose_hides_domain_admin(mock_apm: AsyncMock) -> None:
+    """saas list without -v should not show the Domain Admin column."""
+    mock_apm.saas.list.return_value = ([SAMPLE_GWS_DOMAIN], 1)
+
+    result = invoke_cli(mock_apm, ["saas", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert "Domain Admin" not in result.output
 
 
 def test_saas_list_sdk_error_exits_1(mock_apm: AsyncMock) -> None:
@@ -103,7 +142,7 @@ def test_saas_list_sdk_error_exits_1(mock_apm: AsyncMock) -> None:
     from synology_apm.sdk.exceptions import ResourceNotFoundError
 
     mock_apm.saas.list.side_effect = ResourceNotFoundError(
-        "not found", resource_type="SaasTenant", resource_id="x"
+        "not found", resource_type="M365TenantInfo", resource_id="x"
     )
 
     result = invoke_cli(mock_apm, ["saas", "list"])
@@ -116,10 +155,10 @@ def test_saas_list_sdk_error_exits_1(mock_apm: AsyncMock) -> None:
 def test_saas_list_page_all_combines_pages(mock_apm: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
     """saas list --page-all --limit 1 should fetch every page and render one combined table."""
     monkeypatch.setattr("synology_apm.cli.output._PAGE_FETCH_DELAY_SECONDS", 0)
-    second_tenant = dataclasses.replace(SAMPLE_GWS_TENANT, tenant_id="gw-domain-002", tenant_name="Second GWS")
+    second_domain = dataclasses.replace(SAMPLE_GWS_DOMAIN, domain="gwsdemo2.example.com", name="gwsdemo2.example.com")
     mock_apm.saas.list.side_effect = [
         ([SAMPLE_M365_TENANT], 2),
-        ([second_tenant], 2),
+        ([second_domain], 2),
     ]
 
     result = invoke_cli(mock_apm, [
@@ -128,7 +167,7 @@ def test_saas_list_page_all_combines_pages(mock_apm: AsyncMock, monkeypatch: pyt
 
     assert result.exit_code == 0, result.output
     assert "Contoso" in result.output
-    assert "Second GWS" in result.output
+    assert "gwsdemo2.example.com" in result.output
     assert "Showing 2 of 2" in result.output
     assert mock_apm.saas.list.call_args_list[0].kwargs["offset"] == 0
     assert mock_apm.saas.list.call_args_list[1].kwargs["offset"] == 1

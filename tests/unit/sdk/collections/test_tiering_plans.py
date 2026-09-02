@@ -133,15 +133,15 @@ async def test_list_deduplicates_destination_fetches() -> None:
     assert len(m.requests[fetch_key]) == 1
 
 
-async def test_list_with_name_contains_sends_keyword() -> None:
-    """list(name_contains=...) should append keyword= to the request."""
+async def test_list_with_keyword_sends_keyword() -> None:
+    """list(keyword=...) should append keyword= to the request."""
     keyword_url = f"{BASE_URL}/api/v1/plan/tiering_plan?offset=0&limit=500&keyword=tiering"
     async with connected_session() as (session, m):
 
         m.get(keyword_url, payload={"plans": [SAMPLE_PLAN_RAW], "total": 1})
         m.get(DEST_URL, payload=SAMPLE_DEST_RAW)
         col = TieringPlanCollection(session)
-        result, _ = await col.list(name_contains="tiering")
+        result, _ = await col.list(keyword="tiering")
         await session.disconnect()
 
     assert len(result) == 1

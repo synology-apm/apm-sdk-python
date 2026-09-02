@@ -43,7 +43,8 @@ def write_index(
             " are never captured in `api_trace.jsonl`.",
         ],
         manual_note=(
-            "Irreversible commands (`machine retire`, `m365 <scope> retire`) are excluded from"
-            " this run — see [MANUAL_TESTS.md](../../MANUAL_TESTS.md) for the manual checklist."
+            "Irreversible commands (`machine retire`, `m365 <scope> retire`, `gws <scope> retire`)"
+            " are excluded from this run — see [MANUAL_TESTS.md](../../MANUAL_TESTS.md) for the"
+            " manual checklist."
         ),
     )

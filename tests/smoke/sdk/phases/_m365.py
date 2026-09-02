@@ -24,6 +24,7 @@ from synology_apm.sdk import (
     M365GroupInfo,
     M365SiteInfo,
     M365TeamInfo,
+    M365TenantInfo,
     M365UserInfo,
     M365Workload,
     M365WorkloadType,
@@ -68,7 +69,7 @@ async def run(ctx: SmokeContext) -> None:
 
     saas_result = await ctx.call(DOMAIN, "m365.saas.list", lambda: apm.saas.list(limit=500))
     tenants, _total = saas_result if saas_result is not None else ([], 0)
-    m365_tenant = next((t for t in tenants if t.category == WorkloadCategory.M365), None)
+    m365_tenant = next((t for t in tenants if isinstance(t, M365TenantInfo)), None)
 
     ctx.data["m365_tenant"] = m365_tenant
 
@@ -84,7 +85,7 @@ async def run(ctx: SmokeContext) -> None:
     )
 
     await ctx.call_expect_not_found(DOMAIN, "m365.saas", "get_m365_tenant",
-        lambda: apm.saas.get_m365_tenant(_ZERO_UUID), "SaasTenant", _ZERO_UUID)
+        lambda: apm.saas.get_m365_tenant(_ZERO_UUID), "M365TenantInfo", _ZERO_UUID)
 
     ctx.data["m365_workloads"] = {}
     ctx.data["m365_retired_workloads"] = {}

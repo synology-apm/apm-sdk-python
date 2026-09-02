@@ -65,7 +65,7 @@ def test_m365_exchange_get_namespace_without_id_exits_1() -> None:
     assert "--namespace" in result.output or "requires" in result.output
 
 def test_m365_exchange_list_no_m365_tenant_exits_1() -> None:
-    """_resolve_tenant should exit 1 when no M365 tenant is present."""
+    """_resolve_saas_tenant_id should exit 1 when no M365 tenant is present."""
     mock_apm = make_mock_apm()
     mock_apm.saas.list.return_value = ([], 0)
 

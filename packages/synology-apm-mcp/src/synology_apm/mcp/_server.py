@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from synology_apm.mcp import resources
 from synology_apm.mcp._registrar import ToolRegistrar
-from synology_apm.mcp.tools import activity, infra, log, m365, machine, plans
+from synology_apm.mcp.tools import activity, gws, infra, log, m365, machine, plans
 from synology_apm.sdk import APMClient, APMError, ResolvedConnection
 
 
@@ -38,6 +38,7 @@ def _register_tools(registrar: ToolRegistrar) -> None:
     infra.register(registrar)
     machine.register(registrar)
     m365.register(registrar)
+    gws.register(registrar)
     plans.register(registrar)
     activity.register(registrar)
     log.register(registrar)

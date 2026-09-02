@@ -27,14 +27,16 @@ from storage_usage_report import (
     run,
 )
 
-from synology_apm.sdk import M365WorkloadType, MachineWorkloadType
+from synology_apm.sdk import GWSWorkloadType, M365WorkloadType, MachineWorkloadType
 from tests.unit.examples._fixtures import (
     make_backup_server,
     make_fake_apm,
+    make_gws_domain_info,
+    make_gws_workload,
+    make_m365_tenant_info,
     make_m365_workload,
     make_machine_workload,
     make_remote_storage,
-    make_saas_tenant,
     patch_make_client,
 )
 
@@ -535,8 +537,9 @@ async def test_scan_workload_usage_buckets_by_type_and_retired_state() -> None:
     """Protected vs retired bytes split per type; rows follow the canonical type order
     and types without workloads are omitted."""
     apm = make_fake_apm()
-    tenant = make_saas_tenant()
-    apm.saas.list.return_value = ([tenant], 1)
+    tenant = make_m365_tenant_info()
+    domain = make_gws_domain_info()
+    apm.saas.list.return_value = ([tenant, domain], 2)
 
     vm_protected = make_machine_workload(
         workload_type=MachineWorkloadType.VM,
@@ -563,6 +566,13 @@ async def test_scan_workload_usage_buckets_by_type_and_retired_state() -> None:
         backup_copy_data_bytes=1,
         is_retired=False,
     )
+    mail_protected = make_gws_workload(
+        workload_type=GWSWorkloadType.MAIL,
+        domain=domain.domain,
+        protected_data_bytes=9,
+        backup_copy_data_bytes=2,
+        is_retired=False,
+    )
 
     def _machine_list(*, is_retired: bool, limit: int, offset: int) -> tuple[list[Any], int]:
         items = [vm_retired] if is_retired else [vm_protected, pc_protected]
@@ -576,13 +586,22 @@ async def test_scan_workload_usage_buckets_by_type_and_retired_state() -> None:
             return ([exchange_protected], 1)
         return ([], 0)
 
+    def _gws_list(
+        *, domain: str, workload_type: GWSWorkloadType, is_retired: bool,
+        limit: int, offset: int,
+    ) -> tuple[list[Any], int]:
+        if workload_type is GWSWorkloadType.MAIL and not is_retired and offset == 0:
+            return ([mail_protected], 1)
+        return ([], 0)
+
     apm.machine.workloads.list.side_effect = _machine_list
     apm.m365.workloads.list.side_effect = _m365_list
+    apm.gws.workloads.list.side_effect = _gws_list
 
     rows = await _scan_workload_usage(apm)
 
-    # Canonical order is VM before PC before Exchange; unused types are omitted.
-    assert [r.type_label for r in rows] == ["VM", "PC", "Exchange"]
+    # Canonical order is VM before PC before Exchange before Mail; unused types are omitted.
+    assert [r.type_label for r in rows] == ["VM", "PC", "Exchange", "Mail"]
     vm_row = rows[0]
     assert vm_row.protected_bytes == 100
     assert vm_row.retired_bytes == 40
@@ -594,6 +613,9 @@ async def test_scan_workload_usage_buckets_by_type_and_retired_state() -> None:
     exchange_row = rows[2]
     assert exchange_row.protected_bytes == 5
     assert exchange_row.protected_copy_bytes == 1
+    mail_row = rows[3]
+    assert mail_row.protected_bytes == 9
+    assert mail_row.protected_copy_bytes == 2
 
 
 # ── _scan_server_usage / _scan_remote_storage_usage ───────────────────────────

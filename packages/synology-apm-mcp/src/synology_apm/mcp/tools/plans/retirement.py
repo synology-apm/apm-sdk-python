@@ -18,18 +18,18 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     @registrar.tool(description=f"List retirement plans. Filter by name. {LIST_RESULT_SUFFIX}")
     async def list_retirement_plans(
         ctx: Context,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await list_tool(
-            apm.retirement_plans.list(name_contains=name_contains, limit=limit, offset=offset),
+            apm.retirement_plans.list(keyword=keyword, limit=limit, offset=offset),
             lambda x: x.to_dict(),
             offset=offset,
         )
 
-    @registrar.tool(description="Get a single retirement plan by ID. Use list_retirement_plans (optionally with name_contains) to find the ID.")
+    @registrar.tool(description="Get a single retirement plan by ID. Use list_retirement_plans (optionally with keyword) to find the ID.")
     async def get_retirement_plan(
         ctx: Context,
         plan_id: str,

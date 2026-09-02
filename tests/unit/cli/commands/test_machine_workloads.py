@@ -139,13 +139,12 @@ def test_machine_all_list_json_output() -> None:
 
 
 @pytest.mark.parametrize("args,kwarg_name,expected_value", [
-    (["--namespace", "ns-001"], "namespace", "ns-001"),
     (
         ["--hypervisor", "978eabd4-e332-459f-a8e0-35a0aa312118"],
         "hypervisor_id",
         "978eabd4-e332-459f-a8e0-35a0aa312118",
     ),
-], ids=["namespace", "hypervisor"])
+], ids=["hypervisor"])
 def test_machine_list_string_filter(args: list[str], kwarg_name: str, expected_value: object) -> None:
     """machine list string filter options should pass their value through to the SDK."""
     mock_apm = make_mock_client()
@@ -153,6 +152,21 @@ def test_machine_list_string_filter(args: list[str], kwarg_name: str, expected_v
     assert result.exit_code == 0, result.output
     call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
     assert call_kwargs[kwarg_name] == expected_value
+
+
+@pytest.mark.parametrize("namespace_flags,expected_value", [
+    (["--namespace", "ns-001"], ["ns-001"]),
+    (["--namespace", "ns-001", "--namespace", "ns-002"], ["ns-001", "ns-002"]),
+    ([], None),
+])
+def test_machine_list_namespace_filter_is_repeatable(namespace_flags: list[str], expected_value: list[str] | None) -> None:
+    """machine list --namespace is repeatable (OR-filter), matching activity list --namespace's
+    existing arity — regression test for the SDK's namespace: str -> list[str] promotion."""
+    mock_apm = make_mock_client()
+    result = invoke_cli(mock_apm, ["machine", "list", *namespace_flags])
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.machine.workloads.list.call_args.kwargs
+    assert call_kwargs["namespace"] == expected_value
 
 
 def test_machine_list_plan_filter_resolves_by_name() -> None:

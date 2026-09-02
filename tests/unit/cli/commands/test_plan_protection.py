@@ -171,12 +171,13 @@ def test_protection_list_all_shows_both_categories() -> None:
     assert result.exit_code == 0, result.output
     assert "Daily Backup" in result.output
     assert "Daily Backup (M365)" in result.output
-    mock_apm.plans.list.assert_called_once_with(category=None, name_contains=None, limit=25, offset=0)
+    mock_apm.plans.list.assert_called_once_with(category=None, keyword=None, limit=25, offset=0)
 
 
 @pytest.mark.parametrize("cli_category,sdk_category", [
     ("machine", WorkloadCategory.MACHINE),
     ("m365", WorkloadCategory.M365),
+    ("gws", WorkloadCategory.GWS),
 ])
 def test_protection_list_category_filter(
     cli_category: str, sdk_category: WorkloadCategory
@@ -188,7 +189,7 @@ def test_protection_list_category_filter(
 
     assert result.exit_code == 0, result.output
     mock_apm.plans.list.assert_called_once_with(
-        category=sdk_category, name_contains=None, limit=25, offset=0
+        category=sdk_category, keyword=None, limit=25, offset=0
     )
 
 

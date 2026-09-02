@@ -82,6 +82,18 @@ def test_m365_exchange_export_list_calls_exchange_export_collection() -> None:
     mock_apm.m365.exchange_export.list.assert_called_once()
     mock_apm.m365.group_export.list.assert_not_called()
 
+
+def test_m365_exchange_export_list_default_limit_is_25() -> None:
+    """export list's --limit default should be 25, matching the shared LIMIT_OPTION."""
+    mock_apm = make_mock_apm_with_export(group=False)
+
+    invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "list",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+    ])
+
+    assert mock_apm.m365.exchange_export.list.call_args.kwargs["limit"] == 25
+
 def test_m365_exchange_export_cancel_calls_exchange_export_collection() -> None:
     """apm m365 exchange export cancel should look up activity and call exchange_export.cancel()."""
     mock_apm = make_mock_apm_with_export(group=False)
@@ -90,7 +102,7 @@ def test_m365_exchange_export_cancel_calls_exchange_export_collection() -> None:
     result = invoke_cli(mock_apm, [
         "m365", "exchange", "export", "cancel",
         "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
-        "--id", "act-uuid-001",
+        "--id", "act-uuid-001", "--yes",
     ])
 
     assert result.exit_code == 0, result.output
@@ -100,8 +112,23 @@ def test_m365_exchange_export_cancel_calls_exchange_export_collection() -> None:
     assert call_arg.activity_id == "act-uuid-001"
     mock_apm.m365.group_export.cancel.assert_not_called()
 
+def test_m365_exchange_export_cancel_requires_confirmation_and_aborts_on_no() -> None:
+    """apm m365 exchange export cancel without --yes should prompt, and abort cleanly on 'n'."""
+    mock_apm = make_mock_apm_with_export(group=False)
+    mock_apm.m365.exchange_export.cancel.return_value = None
+
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "cancel",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
+        "--id", "act-uuid-001",
+    ], input="n\n")
+
+    assert result.exit_code == 4, result.output  # EXIT_CANCEL
+    assert "Confirm cancel export task?" in result.output
+    mock_apm.m365.exchange_export.cancel.assert_not_called()
+
 def test_m365_exchange_export_cancel_quiet_mode() -> None:
-    """apm m365 exchange export cancel --quiet should cancel and produce no success output."""
+    """apm m365 exchange export cancel --quiet --yes should cancel and produce no success output."""
     mock_apm = make_mock_apm_with_export(group=False)
     mock_apm.m365.exchange_export.cancel.return_value = None
 
@@ -109,7 +136,7 @@ def test_m365_exchange_export_cancel_quiet_mode() -> None:
         "m365", "exchange", "export", "cancel",
         "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE,
         "--tenant-id", TENANT_ID,
-        "--id", "act-uuid-001", "--quiet",
+        "--id", "act-uuid-001", "--yes", "--quiet",
     ])
 
     assert result.exit_code == 0, result.output
@@ -137,7 +164,7 @@ def test_m365_group_export_cancel_calls_group_export_collection() -> None:
     result = invoke_cli(mock_apm, [
         "m365", "group", "export", "cancel",
         "--workload-id", GROUP_WL_ID, "--namespace", GROUP_NAMESPACE,
-        "--id", "act-uuid-001",
+        "--id", "act-uuid-001", "--yes",
     ])
 
     assert result.exit_code == 0, result.output
@@ -276,7 +303,7 @@ def test_m365_exchange_export_cancel_search_mode_resolves_by_name() -> None:
 
     result = invoke_cli(mock_apm, [
         "m365", "exchange", "export", "cancel",
-        "alice@contoso.com", "-t", TENANT_ID, "--id", "act-uuid-001",
+        "alice@contoso.com", "-t", TENANT_ID, "--id", "act-uuid-001", "--yes",
     ])
 
     assert result.exit_code == 0, result.output
@@ -651,6 +678,25 @@ def test_m365_exchange_export_download_reports_progress(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Saved to" in result.output
+
+def test_m365_exchange_export_download_quiet_suppresses_output(tmp_path: Path) -> None:
+    """export download --quiet should download without printing the 'Saved to' line."""
+    mock_apm = make_mock_apm_with_export(group=False)
+    mock_apm.m365.exchange_export.get_download_url_by_activity.return_value = "https://apm.example/dl/token"
+    mock_apm.download_file = AsyncMock(return_value=None)
+
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "export", "download",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE, "--tenant-id", TENANT_ID,
+        "--id", "act-uuid-001", "--filename", str(tmp_path / "out.pst"), "--quiet",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == ""
+    mock_apm.download_file.assert_called_once()
+    # quiet mode skips the progress bar entirely: no on_progress callback passed at all
+    assert "on_progress" not in mock_apm.download_file.call_args.kwargs
+    assert len(mock_apm.download_file.call_args.args) == 2
 
 def test_m365_exchange_export_download_oserror_leaves_part_cleanup_to_sdk(tmp_path: Path) -> None:
     """On download failure the CLI must not touch the filesystem itself.

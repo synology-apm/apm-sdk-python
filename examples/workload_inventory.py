@@ -10,6 +10,7 @@ Usage:
     python workload_inventory.py --category machine --retired --no-versions
     python workload_inventory.py --category m365 --m365-service exchange
     python workload_inventory.py --category m365 --m365-service exchange --m365-service onedrive
+    python workload_inventory.py --category gws --gws-workload-type mail
     python workload_inventory.py --category all
     python workload_inventory.py --category all --m365-service sharepoint -o csv
 
@@ -31,17 +32,27 @@ from _common import (
     add_category_args,
     add_output_arg,
     add_profile_arg,
+    collect_gws_workloads,
     collect_m365_workloads,
     collect_machine_workloads,
     fmt_dt,
+    list_gws_domains,
     list_m365_tenants,
     make_client,
+    resolve_gws_workload_types,
     resolve_m365_services,
     run_main,
     workload_type_label,
 )
 
-from synology_apm.sdk import APMClient, M365Workload, M365WorkloadType, MachineWorkload
+from synology_apm.sdk import (
+    APMClient,
+    GWSWorkload,
+    GWSWorkloadType,
+    M365Workload,
+    M365WorkloadType,
+    MachineWorkload,
+)
 
 _DEFAULT_CONCURRENCY = 10
 
@@ -60,12 +71,14 @@ def _print_table(headers: list[str], rows: list[list[str | int | None]]) -> None
 
 async def _get_version_count(
     apm: APMClient,
-    wl: MachineWorkload | M365Workload,
+    wl: MachineWorkload | M365Workload | GWSWorkload,
     sem: asyncio.Semaphore,
 ) -> int:
     async with sem:
         if isinstance(wl, M365Workload):
             _, total = await apm.m365.workloads.list_versions(wl, limit=1)
+        elif isinstance(wl, GWSWorkload):
+            _, total = await apm.gws.workloads.list_versions(wl, limit=1)
         else:
             _, total = await apm.machine.workloads.list_versions(wl, limit=1)
         assert total is not None  # list_versions() always reports a real total
@@ -73,21 +86,21 @@ async def _get_version_count(
 
 
 def _build_inventory(
-    workloads: list[MachineWorkload | M365Workload],
+    workloads: list[MachineWorkload | M365Workload | GWSWorkload],
     version_counts: list[int | None],
-    tenant_names: dict[str, str],
+    tenant_or_domain_names: dict[str, str],
     category: str,
     include_versions: bool,
 ) -> tuple[list[str], list[list[str | int | None]]]:
     include_category_col = category == "all"
-    include_tenant_col   = category in ("m365", "all")
+    include_tenant_col   = category in ("m365", "gws", "all")
 
     headers: list[str] = ["name"]
     if include_category_col:
         headers.append("category")
     headers.append("type")
     if include_tenant_col:
-        headers.append("tenant")
+        headers.append("tenant_or_domain")
     headers.extend(["plan_name", "backup_server", "last_backup_at", "backup_status"])
     if include_versions:
         headers.append("version_count")
@@ -95,10 +108,13 @@ def _build_inventory(
     rows: list[list[str | int | None]] = []
     for wl, vc in zip(workloads, version_counts, strict=True):
         if isinstance(wl, M365Workload):
-            cat_label  = "M365"
-            tenant_col = tenant_names.get(wl.tenant_id, wl.tenant_id)
+            cat_label = "M365"
+            tenant_col = tenant_or_domain_names.get(wl.tenant_id, wl.tenant_id)
+        elif isinstance(wl, GWSWorkload):
+            cat_label = "GWS"
+            tenant_col = tenant_or_domain_names.get(wl.domain, wl.domain)
         else:
-            cat_label  = "Machine"
+            cat_label = "Machine"
             tenant_col = ""
         server = wl.backup_server.name if wl.backup_server else ""
         status = wl.status.value
@@ -122,13 +138,14 @@ async def run(
     concurrency: int,
     category: str,
     m365_services: list[M365WorkloadType] | None,
+    gws_services: list[GWSWorkloadType] | None,
     output_format: str,
     profile: str | None = None,
 ) -> None:
     print("Fetching workloads...", file=sys.stderr)
     async with make_client(profile=profile) as apm:
-        workloads: list[MachineWorkload | M365Workload] = []
-        tenant_names: dict[str, str] = {}  # tenant_id → display name (M365 only)
+        workloads: list[MachineWorkload | M365Workload | GWSWorkload] = []
+        tenant_or_domain_names: dict[str, str] = {}  # tenant_id/domain → display name (M365/GWS only)
 
         if category in ("machine", "all"):
             machine, _ = await collect_machine_workloads(apm, is_retired=retired_only)
@@ -137,9 +154,16 @@ async def run(
         if category in ("m365", "all"):
             services = m365_services if m365_services is not None else list(M365WorkloadType)
             tenants = await list_m365_tenants(apm)
-            tenant_names = {t.tenant_id: t.tenant_name for t in tenants}
+            tenant_or_domain_names.update({t.tenant_id: t.name for t in tenants})
             m365, _ = await collect_m365_workloads(apm, services, is_retired=retired_only, tenants=tenants)
             workloads.extend(m365)
+
+        if category in ("gws", "all"):
+            gws_types = gws_services if gws_services is not None else list(GWSWorkloadType)
+            domains = await list_gws_domains(apm)
+            tenant_or_domain_names.update({d.domain: d.name for d in domains})
+            gws, _ = await collect_gws_workloads(apm, gws_types, is_retired=retired_only, domains=domains)
+            workloads.extend(gws)
 
         # Fetch version counts in parallel, bounded by semaphore.
         version_counts: list[int | None]
@@ -153,7 +177,7 @@ async def run(
             version_counts = [None] * len(workloads)
 
     # Build rows and render.
-    headers, rows = _build_inventory(workloads, version_counts, tenant_names, category, include_versions)
+    headers, rows = _build_inventory(workloads, version_counts, tenant_or_domain_names, category, include_versions)
 
     if output_format == "csv":
         writer = csv.writer(sys.stdout)
@@ -189,6 +213,7 @@ def main() -> None:
     args = parser.parse_args()
 
     m365_services = resolve_m365_services(parser, args)
+    gws_services = resolve_gws_workload_types(parser, args)
 
     run_main(run(
         retired_only=args.retired_only,
@@ -196,6 +221,7 @@ def main() -> None:
         concurrency=args.concurrency,
         category=args.category,
         m365_services=m365_services,
+        gws_services=gws_services,
         output_format=args.output,
         profile=args.profile,
     ))

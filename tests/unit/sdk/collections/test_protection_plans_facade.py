@@ -94,11 +94,11 @@ async def test_plans_list_m365_category() -> None:
     assert plans[0].category == WorkloadCategory.M365
 
 
-async def test_plans_list_no_category_passes_both_service_types() -> None:
-    """plans.list() without category passes both serviceType values."""
+async def test_plans_list_no_category_passes_all_service_types() -> None:
+    """plans.list() without category passes all serviceType values."""
     plans_url = (
         f"{BASE_URL}/api/v1/plan/backup_plan"
-        "?limit=500&offset=0&serviceType=DEVICE&serviceType=M365"
+        "?limit=500&offset=0&serviceType=DEVICE&serviceType=GW&serviceType=M365"
     )
     async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
@@ -121,7 +121,7 @@ async def test_plans_get_by_name_returns_m365_plan_via_cross_category_search() -
     """plans.get_by_name(name) uses a single cross-category API call and returns exact match."""
     keyword_url = (
         f"{BASE_URL}/api/v1/plan/backup_plan"
-        "?keyword=M365+Daily&limit=100&offset=0&serviceType=DEVICE&serviceType=M365"
+        "?keyword=M365+Daily&limit=100&offset=0&serviceType=DEVICE&serviceType=GW&serviceType=M365"
     )
     async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
@@ -139,7 +139,7 @@ async def test_plans_get_by_name_raises_not_found_when_no_match() -> None:
     """plans.get_by_name(name) raises ResourceNotFoundError when no matching plan exists."""
     keyword_url = (
         f"{BASE_URL}/api/v1/plan/backup_plan"
-        "?keyword=Non-Existent&limit=100&offset=0&serviceType=DEVICE&serviceType=M365"
+        "?keyword=Non-Existent&limit=100&offset=0&serviceType=DEVICE&serviceType=GW&serviceType=M365"
     )
     async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
@@ -158,7 +158,7 @@ async def test_plans_get_by_name_match_is_case_insensitive() -> None:
     """plans.get_by_name(name) matches plan names case-insensitively."""
     keyword_url = (
         f"{BASE_URL}/api/v1/plan/backup_plan"
-        "?keyword=daily+machine+backup&limit=100&offset=0&serviceType=DEVICE&serviceType=M365"
+        "?keyword=daily+machine+backup&limit=100&offset=0&serviceType=DEVICE&serviceType=GW&serviceType=M365"
     )
     async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
@@ -445,11 +445,11 @@ async def test_plans_list_appliance_server_list_error_propagates() -> None:
                 await apm.machine.plans.list()
 
 
-async def test_plans_list_name_contains_passes_keyword_param() -> None:
-    """list(name_contains=...) passes the keyword parameter to the API."""
+async def test_plans_list_keyword_passes_keyword_param() -> None:
+    """list(keyword=...) passes the keyword parameter to the API."""
     plans_url = (
         f"{BASE_URL}/api/v1/plan/backup_plan"
-        "?keyword=Daily&limit=500&offset=0&serviceType=DEVICE&serviceType=M365"
+        "?keyword=Daily&limit=500&offset=0&serviceType=DEVICE&serviceType=GW&serviceType=M365"
     )
     async with aiointercept(mock_external_urls=True) as m:
         m.get(LOGIN_URL, payload=LOGIN_OK)
@@ -457,7 +457,7 @@ async def test_plans_list_name_contains_passes_keyword_param() -> None:
         m.get(plans_url, payload={"plans": [SAMPLE_MACHINE_PLAN], "total": 1})
         m.get(f"{BASE_URL}/api/v1/preference/logout", payload=LOGOUT_OK)
         async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:
-            plans, total = await apm.plans.list(name_contains="Daily")
+            plans, total = await apm.plans.list(keyword="Daily")
 
     assert total == 1
     assert plans[0].name == "Daily Machine Backup"

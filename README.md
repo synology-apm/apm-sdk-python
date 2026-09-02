@@ -16,11 +16,17 @@ Pick whichever matches the install method you use below — you don't need both:
 - `pip` — usually bundled with your Python installation; see the [installation instructions](https://pip.pypa.io/en/stable/installation/) if you need to install it separately
 - Python 3.11 or later (provisioned automatically when using `uv`/`uvx`; required on your own interpreter for a plain `pip install`)
 
+## Compatibility
+
+This SDK release supports multiple APM versions — see the SDK design contract's
+["APM Version Compatibility"](packages/synology-apm-sdk/src/synology_apm/sdk/README.md#apm-version-compatibility)
+section for the supported versions and how cross-version differences are handled.
+
 ---
 
 ## AI Agent Integration (MCP Server)
 
-`synology-apm-mcp` exposes APM operations — backups, restores, protection plans, M365 workloads, infrastructure, activities, and logs — as [Model Context Protocol](https://modelcontextprotocol.io/) tools for AI agents such as Claude Desktop and ChatGPT Desktop, plus workflow skills that teach agents domain goals (daily backup reports, storage capacity analysis, failure investigation, and more).
+`synology-apm-mcp` exposes APM operations — backups, restores, protection plans, M365 and GWS workloads, infrastructure, activities, and logs — as [Model Context Protocol](https://modelcontextprotocol.io/) tools for AI agents such as Claude Desktop and ChatGPT Desktop, plus workflow skills that teach agents domain goals (daily backup reports, storage capacity analysis, failure investigation, and more).
 
 ### Install the MCP Server
 
@@ -77,18 +83,10 @@ pip install synology-apm-sdk   # any other environment
 
 See [`packages/synology-apm-sdk/README.md`](packages/synology-apm-sdk/README.md) for the Quick Start, full data model, and usage examples.
 
-### Repository Structure
-
-This repo is a [uv](https://docs.astral.sh/uv/) workspace that publishes **three** PyPI packages from shared source:
-
-| Path | Description |
-|------|-------------|
-| `packages/synology-apm-sdk/` | The `synology-apm-sdk` PyPI package (`synology_apm.sdk` import) |
-| `packages/synology-apm-cli/` | The `synology-apm-cli` PyPI package (`synology_apm.cli` import; depends on `synology-apm-sdk`) |
-| `packages/synology-apm-mcp/` | The `synology-apm-mcp` PyPI package — MCP server for AI agent integration (depends on `synology-apm-sdk`) |
-| `skills/` | Workflow skills for the MCP server — teach AI agents how to accomplish domain goals using MCP tools |
-| `examples/` | Example automation scripts built on `synology_apm.sdk` |
-| `docs/` | Sphinx API reference source — published to [GitHub Pages](https://synology-apm.github.io/apm-sdk-python/) (see [API Reference](#api-reference)) |
+This repo is a [uv](https://docs.astral.sh/uv/) workspace publishing three PyPI packages
+(`synology-apm-sdk`, `synology-apm-cli`, `synology-apm-mcp`) from shared source, plus `skills/`
+(MCP workflow skills), `examples/`, and `docs/` (Sphinx source) — see [`CLAUDE.md`](CLAUDE.md)
+for the dev workflow.
 
 ### Install From Source (Contributing)
 
@@ -103,7 +101,9 @@ uv sync
 uv run synology-apm-cli config set  # set up default credentials
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the development guide: testing standards, code conventions, and common commands (tests, linting, type checking, docs, skills generation).
+See [`CLAUDE.md`](CLAUDE.md) for the development guide (code conventions, Post-change Checklist)
+and [`CONTRIBUTING.md`](CONTRIBUTING.md) for example-data conventions; see the `Makefile` for
+available commands (tests, linting, type checking, docs, skills generation).
 
 ### API Reference
 
@@ -126,10 +126,11 @@ Then open `docs/_build/html/index.html` in your browser.
 
 | Document | Description |
 |----------|-------------|
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Example-data conventions (canonical placeholder values for docstrings, examples, and test fixtures) |
 | [`APM_PRODUCT_OVERVIEW.md`](APM_PRODUCT_OVERVIEW.md) | APM product/domain knowledge: workload categories, protection plans, backup copy, and other core concepts |
 | [`packages/synology-apm-cli/README.md`](packages/synology-apm-cli/README.md) | CLI command reference — authentication, output formats, full command list |
 | [`packages/synology-apm-mcp/README.md`](packages/synology-apm-mcp/README.md) | MCP server guide — Claude Desktop / ChatGPT Desktop setup, operation modes, available tools and workflow skills |
 | [`packages/synology-apm-sdk/README.md`](packages/synology-apm-sdk/README.md) | SDK developer guide — quick start and usage examples for every module |
 | [API Reference](https://synology-apm.github.io/apm-sdk-python/) | Full SDK API reference — every public class, method, and type signature (Sphinx, hosted on GitHub Pages) |
 | [`examples/README.md`](examples/README.md) | Example automation scripts (inventory, reports, bulk import/export, …) |
-| [`CLAUDE.md`](CLAUDE.md) | Development guide — testing standards, conventions, and common commands |
+| [`CLAUDE.md`](CLAUDE.md) | Development guide — code conventions and the Post-change Checklist |

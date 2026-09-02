@@ -60,13 +60,13 @@ def test_m365_exchange_list_table_shows_tenant_header() -> None:
 
     assert result.exit_code == 0, result.output
     assert "Contoso" in result.output
-    assert "admin@contoso.com" in result.output
+    assert "contoso.onmicrosoft.com" in result.output
     mock_apm.saas.get_m365_tenant.assert_awaited_once_with(TENANT_ID)
 
 
-def test_m365_exchange_list_table_shows_dash_for_empty_tenant_email() -> None:
-    """Tenant header shows '-' for the domain when tenant_email is empty."""
-    partial_tenant = dataclasses.replace(SAMPLE_TENANT, tenant_email="")
+def test_m365_exchange_list_table_shows_dash_for_empty_domain() -> None:
+    """Tenant header shows '-' for the domain when domain is empty."""
+    partial_tenant = dataclasses.replace(SAMPLE_TENANT, domain="")
     mock_apm = make_mock_apm(tenant=partial_tenant)
 
     result = invoke_cli(mock_apm, ["m365", "exchange", "list", "-t", TENANT_ID])
@@ -157,13 +157,26 @@ def test_m365_exchange_list_retired_flag() -> None:
 
 @pytest.mark.parametrize("subcommand", ["exchange", "onedrive"])
 def test_m365_list_namespace_filter(subcommand: str) -> None:
-    """m365 <subcommand> list --namespace <ns> should pass namespace to the SDK."""
+    """m365 <subcommand> list --namespace <ns> should pass namespace to the SDK as a list."""
     mock_apm = make_mock_apm()
 
     invoke_cli(mock_apm, ["m365", subcommand, "list", "-t", TENANT_ID, "--namespace", NAMESPACE])
 
     call_kwargs = mock_apm.m365.workloads.list.call_args.kwargs
-    assert call_kwargs["namespace"] == NAMESPACE
+    assert call_kwargs["namespace"] == [NAMESPACE]
+
+def test_m365_list_namespace_filter_is_repeatable() -> None:
+    """m365 exchange list --namespace is repeatable (OR-filter), matching the SDK's
+    namespace: str -> list[str] promotion."""
+    mock_apm = make_mock_apm()
+
+    invoke_cli(mock_apm, [
+        "m365", "exchange", "list", "-t", TENANT_ID,
+        "--namespace", "ns-001", "--namespace", "ns-002",
+    ])
+
+    call_kwargs = mock_apm.m365.workloads.list.call_args.kwargs
+    assert call_kwargs["namespace"] == ["ns-001", "ns-002"]
 
 def test_m365_exchange_list_plan_filter_resolves_by_name() -> None:
     """m365 exchange list --plan <name> resolves against Protection Plans and passes plan= to the SDK."""

@@ -480,13 +480,13 @@ class ProtectionPlan:
         backup_copy_status:            Current backup copy status; None when Backup Copy is not configured.
         run_schedule_by_controller_time: Whether schedules run on the APM controller's clock rather
                                        than each backup server's local clock.
-        vm_config:                     VM workload settings; None for M365 plans or for list() results.
-        pc_config:                     PC workload settings; None for M365 plans or for list() results.
-        ps_config:                     Physical server settings; None for M365 plans or for list() results.
+        vm_config:                     VM workload settings; None for M365/GWS plans or for list() results.
+        pc_config:                     PC workload settings; None for M365/GWS plans or for list() results.
+        ps_config:                     Physical server settings; None for M365/GWS plans or for list() results.
         db_config:                     Database backup settings; None when DB backup is disabled
                                        or for list() results.
         backup_window:                 Allowed backup time window; None for list() results.
-        tasks:                         Per-workload-type task entries; None for M365 plans or for list() results.
+        tasks:                         Per-workload-type task entries; None for M365/GWS plans or for list() results.
     """
     plan_id: str
     name: str
@@ -635,6 +635,38 @@ class MachinePlanCreateRequest:
 @dataclass(frozen=True)
 class M365PlanCreateRequest:
     """Parameters for creating an M365 Protection Plan.
+
+    Attributes:
+        name:                           Plan display name.
+        retention:                      Version retention policy.
+        schedule:                       Backup schedule.
+        description:                    Plan description.
+        is_immutable:                   Enable immutable backups (requires KEEP_DAYS retention).
+        backup_copy:                    Backup Copy configuration; None disables copy.
+        run_schedule_by_controller_time: Use APM controller's clock for scheduling.
+
+    Raises:
+        ValueError: schedule frequency cannot be AFTER_BACKUP.
+        ValueError: WEEKLY schedule requires at least one weekday.
+        ValueError: WEEKLY Backup Copy schedule requires at least one weekday.
+        ValueError: Immutable plans require KEEP_DAYS retention.
+    """
+    name: str
+    retention: ProtectionRetentionPolicy
+    schedule: ProtectionSchedule
+    description: str = ""
+    is_immutable: bool = False
+    backup_copy: BackupCopyConfig | None = None
+    run_schedule_by_controller_time: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_plan_schedule_and_retention(self.schedule, self.retention, self.is_immutable)
+        _validate_backup_copy(self.backup_copy)
+
+
+@dataclass(frozen=True)
+class GWSPlanCreateRequest:
+    """Parameters for creating a GWS Protection Plan.
 
     Attributes:
         name:                           Plan display name.

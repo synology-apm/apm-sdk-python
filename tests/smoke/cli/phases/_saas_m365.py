@@ -84,7 +84,7 @@ def _run_scope(ctx: SmokeContext, scope: str) -> None:
     )
     _, direct_ver_json = ctx.run_both(
         DOMAIN, f"m365.{scope}.version.list[direct]",
-        ["m365", scope, "version", "list", "--id", workload_id, "--namespace", namespace],
+        ["m365", scope, "version", "list", "--workload-id", workload_id, "--namespace", namespace],
     )
 
     search_versions = parse_json(search_ver_json) or []

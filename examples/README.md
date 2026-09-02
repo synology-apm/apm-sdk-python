@@ -17,21 +17,18 @@ Some scripts need two more packages: `pyyaml` (YAML config import/export) and `o
 pip install pyyaml openpyxl
 ```
 
-**Create a `.env` file** with your APM credentials — copy `.env.example` at the repository
-root and fill in the values (`APM_HOST` / `APM_USERNAME` / `APM_PASSWORD` /
-`APM_NO_VERIFY_SSL`). Load it via `uv run`'s built-in `--env-file` support when running a
-script (run from the repository root, so the relative `.env` path resolves):
+**Set up a `.env` file** per the root `CLAUDE.md`'s "APM Test Environment" section, then load it via
+`uv run`'s built-in `--env-file` support when running a script (run from the repository root,
+so the relative `.env` path resolves):
 
 ```bash
 uv run --env-file .env python examples/workload_inventory.py --category machine
 ```
 
-Alternatively, if you've already configured a profile with `synology-apm-cli config set`
-(`~/.config/synology-apm/config.toml`), the scripts fall back to it automatically when no
-`.env`/environment variables are set — no separate setup needed for examples. A script's own
-`--profile` flag selects which configured profile to fall back to (see `examples/CLAUDE.md`'s
-Script Skeleton section for the full env-var/profile priority order if you're adapting a
-script).
+Alternatively, if you've already configured a profile with `synology-apm-cli config set`, the
+scripts fall back to it automatically when no `.env`/environment variables are set — no
+separate setup needed for examples. See `examples/CLAUDE.md`'s Script Skeleton section for the
+full env-var/profile priority order.
 
 ## Running an Example
 
@@ -58,9 +55,9 @@ where supported) to `stdout`, so `uv run --env-file .env python examples/<name>.
 
 | Example | Description |
 |---------|-------------|
-| [workload_inventory.py](workload_inventory.py) | Print a table/CSV/JSON inventory (name, type, backup server, last backup date, backup status, version count) for Machine and/or M365 workloads |
-| [backup_activity_report.py](backup_activity_report.py) | Print a categorized daily backup result summary (succeeded / failed / in-progress / no activity) for Machine and/or M365 workloads |
-| [restore_activity_report.py](restore_activity_report.py) | Print a categorized daily restore result summary (succeeded / failed / in-progress) across Machine and M365 workloads |
+| [workload_inventory.py](workload_inventory.py) | Print a table/CSV/JSON inventory (name, type, backup server, last backup date, backup status, version count) for Machine, M365, and/or GWS workloads |
+| [backup_activity_report.py](backup_activity_report.py) | Print a categorized daily backup result summary (succeeded / failed / in-progress / no activity) for Machine, M365, and/or GWS workloads |
+| [restore_activity_report.py](restore_activity_report.py) | Print a categorized daily restore result summary (succeeded / failed / in-progress) across Machine, M365, and GWS workloads |
 | [storage_usage_report.py](storage_usage_report.py) | Print a three-section storage usage report: workload usage, backup server usage, and remote storage usage |
 | [billing_report.py](billing_report.py) | Print a billing report across three independent dimensions — groups, backup servers, and APM plans — with rates from a YAML pricing config (generate a starter with `--dump-config-template`); supports `--details` per-workload-type breakdowns and multi-sheet XLSX output |
 
@@ -75,7 +72,7 @@ where supported) to `stdout`, so `uv run --env-file .env python examples/<name>.
 
 | Example | Description |
 |---------|-------------|
-| [apm_import_export.py](apm_import_export.py) | Export and import Protection Plans, Retirement Plans, Tiering Plans, and File Server workloads via YAML; supports `--on-conflict skip\|overwrite` for updates |
+| [apm_import_export.py](apm_import_export.py) | Export and import Protection Plans, Retirement Plans, Tiering Plans, File Server workloads, and M365/GWS auto-backup rules via YAML; supports `--on-conflict skip\|overwrite` for updates |
 | [export_m365_mailbox.py](export_m365_mailbox.py) | Bulk-export M365 Exchange mailboxes or M365 Group mailboxes to PST files, with CSV-based resume support |
 
 ## Developing New Examples

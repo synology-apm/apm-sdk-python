@@ -209,6 +209,24 @@ def test_activity_list_json() -> None:
     assert data[0]["type"] == "protection"
 
 
+def test_activity_list_verbose_shows_server_id_and_namespace() -> None:
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        mock_gc.return_value = _fake_client(activity_logs=[SAMPLE_ACTIVITY])
+        result = runner.invoke(app, ["log", "activity", "list", "--id", SERVER_ID, "-v"], env={"COLUMNS": "300"})
+    assert result.exit_code == 0, result.output
+    assert "Server ID" in result.output
+    assert "Namespace" in result.output
+    assert SERVER_ID in result.output
+
+
+def test_activity_list_no_verbose_hides_server_id_column() -> None:
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        mock_gc.return_value = _fake_client(activity_logs=[SAMPLE_ACTIVITY])
+        result = runner.invoke(app, ["log", "activity", "list", "--id", SERVER_ID])
+    assert result.exit_code == 0, result.output
+    assert "Server ID" not in result.output
+
+
 def test_activity_list_csv() -> None:
     with patch("synology_apm.cli._helpers.get_client") as mock_gc:
         mock_gc.return_value = _fake_client(activity_logs=[SAMPLE_ACTIVITY])
@@ -262,6 +280,32 @@ def test_activity_list_passes_filter(
     assert call_kwargs[kwarg_key] == expected_value
 
 
+@pytest.mark.parametrize("option_flag,invalid_value", [
+    ("--level", "critical"),
+    ("--type", "bogus"),
+], ids=["level", "type"])
+def test_activity_list_invalid_filter_value_exits_1(option_flag: str, invalid_value: str) -> None:
+    """log activity list with an invalid --level/--type value should exit 1 with a
+    styled error, not Click's native UsageError (exit 2) — regression test for the
+    native-Enum-binding -> parse_enum_list()/parse_enum_scalar() migration."""
+    result = runner.invoke(app, ["log", "activity", "list", "--id", SERVER_ID, option_flag, invalid_value])
+    assert result.exit_code == 1, result.output
+    assert "Unsupported" in result.output
+
+
+def test_activity_list_type_stays_scalar_last_value_wins() -> None:
+    """--type stays scalar (a genuine SDK/API constraint, not a CLI restriction) — passing
+    it twice is not treated as OR-filter accumulation; Typer's standard scalar-option
+    behavior applies (last occurrence wins), unlike every repeatable --level/--status."""
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        mock_gc.return_value = _fake_client(activity_logs=[SAMPLE_ACTIVITY])
+        result = runner.invoke(app, [
+            "log", "activity", "list", "--id", SERVER_ID,
+            "--type", "protection", "--type", "system",
+        ])
+    assert result.exit_code == 0, result.output
+
+
 def test_activity_list_passes_search_and_offset() -> None:
     with patch("synology_apm.cli._helpers.get_client") as mock_gc:
         ctx_holder = {}
@@ -311,6 +355,60 @@ def test_drive_list_table() -> None:
     assert "Showing 1 of 1" in result.output
 
 
+@pytest.mark.parametrize(
+    "list_args,mock_attr,sample,mocked_total,expect_offset_range",
+    [
+        (["log", "drive", "list"], "list_drive", SAMPLE_DRIVE, 100, True),
+        (["log", "activity", "list"], "list_activity", SAMPLE_ACTIVITY, None, False),
+    ],
+    ids=["reliable_total_shows_offset_range", "unreliable_total_ignores_offset"],
+)
+def test_log_list_footer_offset_display(
+    list_args: list[str],
+    mock_attr: str,
+    sample: DriveLog | APMActivityLog,
+    mocked_total: int | None,
+    expect_offset_range: bool,
+) -> None:
+    """Regression test for the shared _run_log_list(): the footer must reflect the real
+    --offset (log.py previously omitted the offset argument to print_list_footer, so it
+    always showed as 0). The two cases contrast the shared function's actual behavior
+    fork rather than repeating the same one across drive/connection/system, which all
+    share this exact code path: activity logs always report total=None, so the offset
+    range must never appear there regardless of --offset — that's print_list_footer's
+    own contract (see test_helpers.py), not a second bug."""
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        ctx_holder: dict[str, AsyncMock] = {}
+
+        @asynccontextmanager
+        async def _ctx(*_a: object, **_kw: object) -> AsyncIterator[AsyncMock]:
+            mock_apm = AsyncMock()
+            mock_apm.backup_servers.get = AsyncMock(return_value=SAMPLE_SERVER)
+            setattr(mock_apm.logs, mock_attr, AsyncMock(return_value=([sample], mocked_total)))
+            ctx_holder["apm"] = mock_apm
+            yield mock_apm
+
+        mock_gc.return_value = _ctx()
+        result = runner.invoke(app, [*list_args, "--id", SERVER_ID, "--offset", "50"])
+
+    assert result.exit_code == 0
+    assert ("–" in result.output) is expect_offset_range
+    if expect_offset_range:
+        assert "Showing 51–51 of 100" in result.output
+    else:
+        assert "Showing 1" in result.output
+
+
+def test_drive_list_verbose_shows_server_id_and_namespace() -> None:
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        mock_gc.return_value = _fake_client(drive_logs=[SAMPLE_DRIVE])
+        result = runner.invoke(app, ["log", "drive", "list", "--id", SERVER_ID, "-v"], env={"COLUMNS": "300"})
+    assert result.exit_code == 0, result.output
+    assert "Server ID" in result.output
+    assert "Namespace" in result.output
+    assert SERVER_ID in result.output
+
+
 def test_drive_list_json() -> None:
     with patch("synology_apm.cli._helpers.get_client") as mock_gc:
         mock_gc.return_value = _fake_client(drive_logs=[SAMPLE_DRIVE])
@@ -342,6 +440,16 @@ def test_connection_list_table() -> None:
     assert "Showing 1" in result.output
 
 
+def test_connection_list_verbose_shows_server_id_and_namespace() -> None:
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        mock_gc.return_value = _fake_client(connection_logs=[SAMPLE_CONNECTION])
+        result = runner.invoke(app, ["log", "connection", "list", "--id", SERVER_ID, "-v"], env={"COLUMNS": "300"})
+    assert result.exit_code == 0, result.output
+    assert "Server ID" in result.output
+    assert "Namespace" in result.output
+    assert SERVER_ID in result.output
+
+
 def test_connection_list_json() -> None:
     with patch("synology_apm.cli._helpers.get_client") as mock_gc:
         mock_gc.return_value = _fake_client(connection_logs=[SAMPLE_CONNECTION])
@@ -370,6 +478,16 @@ def test_system_list_table() -> None:
     assert "SYSTEM" in result.output
     assert "link up" in result.output
     assert "Showing 1" in result.output
+
+
+def test_system_list_verbose_shows_server_id_and_namespace() -> None:
+    with patch("synology_apm.cli._helpers.get_client") as mock_gc:
+        mock_gc.return_value = _fake_client(system_logs=[SAMPLE_SYSTEM])
+        result = runner.invoke(app, ["log", "system", "list", "--id", SERVER_ID, "-v"], env={"COLUMNS": "300"})
+    assert result.exit_code == 0, result.output
+    assert "Server ID" in result.output
+    assert "Namespace" in result.output
+    assert SERVER_ID in result.output
 
 
 def test_system_list_json() -> None:
@@ -583,3 +701,22 @@ def test_log_list_rejects_nas_server(cmd_path: list[str]) -> None:
         result = runner.invoke(app, [*cmd_path, "nas-server-01"])
     assert result.exit_code == 1
     assert "NAS server" in result.output
+
+
+# ── invalid --level rejection (drive / connection / system) ──────────────────
+# activity's rejection is covered by test_activity_list_invalid_filter_value_exits_1
+# above; drive/connection/system share the same _parse_level() call but had no test of
+# their own, so a regression isolated to one subcommand's wiring would slip through.
+
+@pytest.mark.parametrize("cmd_path", [
+    ["log", "drive", "list"],
+    ["log", "connection", "list"],
+    ["log", "system", "list"],
+], ids=["drive", "connection", "system"])
+def test_log_list_invalid_level_exits_1(cmd_path: list[str]) -> None:
+    """Invalid --level should exit 1 with a styled error, not Click's native UsageError
+    (exit 2) — regression test for the native-Enum-binding -> parse_enum_list() migration,
+    matching test_activity_list_invalid_filter_value_exits_1 for the activity kind."""
+    result = runner.invoke(app, [*cmd_path, "--id", SERVER_ID, "--level", "critical"])
+    assert result.exit_code == 1, result.output
+    assert "Unsupported" in result.output

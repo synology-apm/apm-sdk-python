@@ -22,13 +22,21 @@ from backup_catchup import (
     run,
 )
 
-from synology_apm.sdk import APMError, BackupActivityStatus, M365WorkloadType, WorkloadStatus
+from synology_apm.sdk import (
+    APMError,
+    BackupActivityStatus,
+    GWSWorkloadType,
+    M365WorkloadType,
+    WorkloadStatus,
+)
 from tests.unit.examples._fixtures import (
     make_backup_activity,
     make_fake_apm,
+    make_gws_domain_info,
+    make_gws_workload,
+    make_m365_tenant_info,
     make_m365_workload,
     make_machine_workload,
-    make_saas_tenant,
     patch_make_client,
 )
 
@@ -348,7 +356,7 @@ async def test_run_no_stale_workloads_returns_0(
     apm.machine.workloads.list.return_value = ([fresh], 1)
     patch_make_client(monkeypatch, backup_catchup, apm)
 
-    rc = await run(1, False, True, 0, False, "machine", None, "table")
+    rc = await run(1, False, True, 0, False, "machine", None, None, "table")
 
     assert rc == 0
     assert "No workloads" in capsys.readouterr().err
@@ -363,7 +371,7 @@ async def test_run_dry_run_lists_candidates_without_triggering(
     apm.machine.workloads.backup_now = AsyncMock()
     patch_make_client(monkeypatch, backup_catchup, apm)
 
-    rc = await run(1, True, False, 0, False, "machine", None, "table")
+    rc = await run(1, True, False, 0, False, "machine", None, None, "table")
 
     assert rc == 0
     err = capsys.readouterr().err
@@ -382,7 +390,7 @@ async def test_run_declined_confirmation_cancels_without_triggering(
     patch_make_client(monkeypatch, backup_catchup, apm)
     monkeypatch.setattr(backup_catchup, "prompt_yes_no", AsyncMock(return_value=False))
 
-    rc = await run(1, False, False, 0, False, "machine", None, "table")
+    rc = await run(1, False, False, 0, False, "machine", None, None, "table")
 
     assert rc == 0
     assert "Cancelled." in capsys.readouterr().err
@@ -402,7 +410,7 @@ async def test_run_success_flow_csv_and_exit_code_0(
     patch_make_client(monkeypatch, backup_catchup, apm)
     _patch_no_poll_wait(monkeypatch)
 
-    rc = await run(1, False, True, 600, False, "machine", None, "csv")
+    rc = await run(1, False, True, 600, False, "machine", None, None, "csv")
 
     assert rc == 0
     apm.machine.workloads.backup_now.assert_called_once_with(stale)
@@ -424,7 +432,7 @@ async def test_run_all_category_csv_includes_category_column(
     patch_make_client(monkeypatch, backup_catchup, apm)
     _patch_no_poll_wait(monkeypatch)
 
-    rc = await run(1, False, True, 600, False, "all", None, "csv")
+    rc = await run(1, False, True, 600, False, "all", None, None, "csv")
 
     assert rc == 0
     rows = list(csv.reader(io.StringIO(capsys.readouterr().out)))
@@ -436,7 +444,7 @@ async def test_run_m365_workload_dispatches_to_m365_backup_now(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     apm = make_fake_apm()
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     stale = make_m365_workload(
         name="alice@contoso.com",
         tenant_id=tenant.tenant_id,
@@ -453,10 +461,38 @@ async def test_run_m365_workload_dispatches_to_m365_backup_now(
     patch_make_client(monkeypatch, backup_catchup, apm)
     _patch_no_poll_wait(monkeypatch)
 
-    rc = await run(1, False, True, 600, False, "m365", [M365WorkloadType.EXCHANGE], "table")
+    rc = await run(1, False, True, 600, False, "m365", [M365WorkloadType.EXCHANGE], None, "table")
 
     assert rc == 0
     apm.m365.workloads.backup_now.assert_called_once_with(stale)
+    apm.machine.workloads.backup_now.assert_not_called()
+
+
+async def test_run_gws_workload_dispatches_to_gws_backup_now(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    apm = make_fake_apm()
+    domain = make_gws_domain_info()
+    stale = make_gws_workload(
+        name="alice@gwsdemo.example.com",
+        domain=domain.domain,
+        last_backup_at=None,
+        status=WorkloadStatus.NO_BACKUPS,
+    )
+    apm.saas.list.return_value = ([domain], 1)
+    apm.gws.workloads.list.return_value = ([stale], 1)
+    apm.gws.workloads.backup_now = AsyncMock()
+    apm.machine.workloads.backup_now = AsyncMock()
+    apm.activities.backup.list.return_value = (
+        [make_backup_activity(status=BackupActivityStatus.SUCCESS)], 1
+    )
+    patch_make_client(monkeypatch, backup_catchup, apm)
+    _patch_no_poll_wait(monkeypatch)
+
+    rc = await run(1, False, True, 600, False, "gws", None, [GWSWorkloadType.MAIL], "table")
+
+    assert rc == 0
+    apm.gws.workloads.backup_now.assert_called_once_with(stale)
     apm.machine.workloads.backup_now.assert_not_called()
 
 
@@ -471,7 +507,7 @@ async def test_run_trigger_error_does_not_abort_batch(
     apm.machine.workloads.backup_now = AsyncMock(side_effect=[APMError("boom"), None])
     patch_make_client(monkeypatch, backup_catchup, apm)
 
-    rc = await run(1, False, True, 0, False, "machine", None, "json")
+    rc = await run(1, False, True, 0, False, "machine", None, None, "json")
 
     assert rc == 1  # the surviving workload times out with timeout_sec=0
     assert apm.machine.workloads.backup_now.call_count == 2
@@ -493,7 +529,7 @@ async def test_run_all_triggers_failed_returns_0(
     apm.machine.workloads.backup_now = AsyncMock(side_effect=APMError("boom"))
     patch_make_client(monkeypatch, backup_catchup, apm)
 
-    rc = await run(1, False, True, 0, False, "machine", None, "table")
+    rc = await run(1, False, True, 0, False, "machine", None, None, "table")
 
     assert rc == 0
     assert "All triggers failed." in capsys.readouterr().err
@@ -507,7 +543,7 @@ async def test_run_json_output_maps_timeout_to_timed_out_and_exits_1(
     apm.machine.workloads.backup_now = AsyncMock()
     patch_make_client(monkeypatch, backup_catchup, apm)
 
-    rc = await run(1, False, True, 0, False, "machine", None, "json")
+    rc = await run(1, False, True, 0, False, "machine", None, None, "json")
 
     assert rc == 1
     data = json.loads(capsys.readouterr().out)
@@ -529,7 +565,7 @@ async def test_run_failed_backup_table_output_and_exit_code_1(
     patch_make_client(monkeypatch, backup_catchup, apm)
     _patch_no_poll_wait(monkeypatch)
 
-    rc = await run(1, False, True, 600, False, "machine", None, "table")
+    rc = await run(1, False, True, 600, False, "machine", None, None, "table")
 
     assert rc == 1
     out_lines = capsys.readouterr().out.splitlines()
@@ -561,7 +597,22 @@ def test_main_parses_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> Non
 
     backup_catchup.main()
 
-    run_mock.assert_called_once_with(3, True, True, 600, True, "machine", None, "json", profile="lab")
+    run_mock.assert_called_once_with(3, True, True, 600, True, "machine", None, None, "json", profile="lab")
+    run_main_mock.assert_called_once_with(run_mock.return_value)
+
+
+def test_main_parses_gws_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_mock, run_main_mock = _patch_entry_points(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "backup_catchup.py",
+        "--category", "gws", "--gws-workload-type", "mail",
+    ])
+
+    backup_catchup.main()
+
+    run_mock.assert_called_once_with(
+        1, False, False, 1800, False, "gws", None, [GWSWorkloadType.MAIL], "table", profile=None
+    )
     run_main_mock.assert_called_once_with(run_mock.return_value)
 
 
@@ -571,4 +622,4 @@ def test_main_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     backup_catchup.main()
 
-    run_mock.assert_called_once_with(1, False, False, 1800, False, "machine", None, "table", profile=None)
+    run_mock.assert_called_once_with(1, False, False, 1800, False, "machine", None, None, "table", profile=None)

@@ -95,7 +95,7 @@ async def _fetch_s3_cert_and_region(
         "accessKey": access_key,
         "secretKey": secret_key,
     })
-    cert = raw.get("cert") or ""
+    cert = (raw.get("certificate") or {}).get("cert") or ""
     region = raw.get("region") or ""
     return cert, region
 

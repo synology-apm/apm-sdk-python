@@ -19,6 +19,7 @@ import typer
 
 from synology_apm.cli._async import run_async
 from synology_apm.cli._display import (
+    _M365_INFO_COL_LABELS,
     _M365_WORKLOAD_TYPE_DISPLAY,
     fmt_backup_copy,
     fmt_backup_server,
@@ -35,6 +36,7 @@ from synology_apm.cli._options import (
     OFFSET_OPTION,
     OUTPUT_OPTION,
     PAGE_ALL_OPTION,
+    SEARCH_OPTION,
     SINCE_OPTION,
     UNTIL_OPTION,
     VERSION_LIMIT_OPTION,
@@ -44,13 +46,16 @@ from synology_apm.cli._serializers import (
     m365_workload_to_dict,
 )
 from synology_apm.cli._validate import (
+    M365_TYPE_ARGS as _TYPE_MAP,
+)
+from synology_apm.cli._validate import (
     WORKLOAD_STATUS_ARGS,
     WorkloadRef,
     _resolve_plans,
-    _resolve_tenant,
+    _resolve_saas_tenant_id,
     parse_enum_list,
     parse_time_range,
-    print_resolved_tenant,
+    print_resolved_saas_tenant,
     require_or_help,
     validate_resolve_args,
     validate_version_lock_args,
@@ -64,9 +69,6 @@ from synology_apm.cli.commands._actions import (
     _do_version_get,
     _do_version_list,
     _do_version_lock_unlock,
-)
-from synology_apm.cli.commands.m365_export import (
-    _M365_TYPE_MAP as _TYPE_MAP,
 )
 from synology_apm.cli.commands.m365_export import (
     _TENANT_ID_OPTION,
@@ -83,9 +85,9 @@ from synology_apm.cli.output import (
 )
 from synology_apm.sdk import (
     APMClient,
+    M365TenantInfo,
     M365Workload,
     M365WorkloadType,
-    SaasTenant,
 )
 
 app = typer.Typer(
@@ -118,24 +120,15 @@ _TYPE_EXAMPLE: dict[str, str] = {
     "onedrive":   '"alice@contoso.com"',
     "chat":       '"alice@contoso.com"',
     "group":      '"marketing@contoso.com"',
-    "sharepoint": '"HR Site"',
+    "sharepoint": '"Marketing"',
     "teams":      '"Engineering"',
-}
-
-_INFO_COL_LABELS: dict[M365WorkloadType, str] = {
-    M365WorkloadType.EXCHANGE:   "UPN",
-    M365WorkloadType.ONEDRIVE:   "UPN",
-    M365WorkloadType.CHAT:       "UPN",
-    M365WorkloadType.GROUP:      "Email",
-    M365WorkloadType.SHAREPOINT: "URL",
-    M365WorkloadType.TEAMS:      "URL",
 }
 
 
 def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     """Build a Typer sub-app for the given M365 service sub-type, with list/get/backup/cancel/retire commands."""
     label = _TYPE_LABELS[type_name]
-    info_col = _INFO_COL_LABELS[type_val]
+    info_col = _M365_INFO_COL_LABELS[type_val]
     search_arg_help = _TYPE_SEARCH_ARG[type_name]
     example = _TYPE_EXAMPLE[type_name]
 
@@ -149,7 +142,7 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
     ) -> M365Workload:
         """Resolve the workload via get() (--id/--namespace) or get_by_name() (name)."""
         wl = await ref.resolve_m365(apm, tenant_id, type_val, is_retired=is_retired)
-        print_resolved_tenant(tenant_id, wl.tenant_id)
+        print_resolved_saas_tenant(tenant_id, wl.tenant_id)
         return wl
 
     # ── list ──────────────────────────────────────────────────────────────
@@ -162,11 +155,11 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         retired: bool = typer.Option(
             False, "--retired", help="Show only retired workloads (default: show protected only)"
         ),
-        search: str | None = typer.Option(None, "--search", help="Keyword search"),
-        namespace: str | None = typer.Option(
+        search: str | None = SEARCH_OPTION,
+        namespace: list[str] | None = typer.Option(
             None, "--namespace", "-n",
             help=(
-                "Show only workloads on the specified backup server "
+                "Show only workloads on the given backup server(s), repeatable "
                 "(get namespace from synology-apm-cli infra server list --verbose)"
             ),
         ),
@@ -191,13 +184,10 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
     ) -> None:
         """List M365 Workloads of this type."""
-        status_enums = parse_enum_list(
-            status, WORKLOAD_STATUS_ARGS, "status",
-            "queuing / backing_up / success / failed / partial / canceled / no_backups / deleting",
-        )
+        status_enums = parse_enum_list(status, WORKLOAD_STATUS_ARGS, "status")
         async with apm_session(ctx) as apm:
-            tid = await _resolve_tenant(apm, tenant_id)
-            print_resolved_tenant(tenant_id, tid)
+            tid = await _resolve_saas_tenant_id(apm, tenant_id)
+            print_resolved_saas_tenant(tenant_id, tid)
             resolved_plans = await _resolve_plans(apm, plan, is_retired=retired)
             with api_spinner("Fetching workloads..."):
                 list_coro = dispatch_paginated_list(
@@ -337,8 +327,8 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         ref = validate_resolve_args(ctx, name, workload_id, namespace)
         plan = require_or_help(ctx, plan)
         async with apm_session(ctx, abortable=True) as apm:
-            tid = await _resolve_tenant(apm, tenant_id)
-            print_resolved_tenant(tenant_id, tid)
+            tid = await _resolve_saas_tenant_id(apm, tenant_id)
+            print_resolved_saas_tenant(tenant_id, tid)
             await _do_retire(
                 lambda: ref.resolve_m365(apm, tid, type_val, is_retired=False),
                 lambda: apm.m365.workloads.get_by_name(
@@ -377,10 +367,7 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         retired: bool = typer.Option(False, "--retired", help="Search in retired workloads (search mode)"),
         plan: str | None = typer.Option(
             None, "--plan",
-            help=(
-                "Plan name or ID (required). Resolved against Protection Plans if the workload is "
-                "active, or Retirement Plans if it is already retired."
-            ),
+            help="Plan name or ID (required); see the command description for how the plan type is resolved.",
         ),
         yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
         quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
@@ -409,13 +396,13 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         f"  synology-apm-cli m365 {type_name} version list {example}\n"
         f"  synology-apm-cli m365 {type_name} version list {example} --retired\n\n"
         f"\b\nDirect mode (--tenant-id not required):\n"
-        f"  synology-apm-cli m365 {type_name} version list --id <workload-id> --namespace <ns>"
+        f"  synology-apm-cli m365 {type_name} version list --workload-id <workload-id> --namespace <ns>"
     ))
     @run_async
     async def _version_list(
         ctx: typer.Context,
         name: str | None = typer.Argument(None, help=search_arg_help),
-        workload_id: str | None = typer.Option(None, "--id", help="Workload ID (direct mode)"),
+        workload_id: str | None = typer.Option(None, "--workload-id", help="Workload ID (direct mode)"),
         namespace: str | None = typer.Option(None, "--namespace", "-n", help="Backup server namespace (direct mode)"),
         tenant_id: str | None = _TENANT_ID_OPTION,
         retired: bool = typer.Option(False, "--retired", help="Search in retired workloads (search mode)"),
@@ -427,7 +414,7 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         output: ListOutputFormat = LIST_OUTPUT_OPTION,
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
     ) -> None:
-        ref = validate_resolve_args(ctx, name, workload_id, namespace)
+        ref = validate_resolve_args(ctx, name, workload_id, namespace, id_flag="--workload-id")
         since_dt, until_dt = parse_time_range(since, until)
         async with apm_session(ctx) as apm:
             await _do_version_list(
@@ -550,11 +537,11 @@ for _type_name, _type_val in _TYPE_MAP.items():
 
 # ── Formatting helpers ────────────────────────────────────────────────────
 
-def _print_tenant_header(tenant: SaasTenant | None) -> None:
+def _print_tenant_header(tenant: M365TenantInfo | None) -> None:
     if tenant is None:
         return
-    name = tenant.tenant_name or "-"
-    domain = tenant.tenant_email or "-"
+    name = tenant.name or "-"
+    domain = tenant.domain or "-"
     console.print(f"Tenant: [bold]{name}[/bold] ({domain})")
     console.print()
 
@@ -600,7 +587,7 @@ def _print_workload_table(
 
 
 def _print_workload_detail(wl: M365Workload) -> None:
-    info_col = _INFO_COL_LABELS.get(wl.workload_type, "Info")
+    info_col = _M365_INFO_COL_LABELS.get(wl.workload_type, "Info")
     info_label = wl.info.label if wl.info else "-"
     type_display = _M365_WORKLOAD_TYPE_DISPLAY.get(wl.workload_type, wl.workload_type.value)
     print_workload_detail(

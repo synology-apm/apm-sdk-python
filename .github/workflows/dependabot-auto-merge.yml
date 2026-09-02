@@ -1,6 +1,6 @@
 # Auto-merges Dependabot security-update PRs once the required `test` status check
-# (from ci.yml) passes. Relies on repo Settings prerequisites documented in CLAUDE.md's
-# "GitHub Actions Security Conventions" section (Dependabot security updates enabled,
+# (from ci.yml) passes. Relies on repo Settings prerequisites documented in
+# .github/CLAUDE.md's "Dependabot Auto-Merge" section (Dependabot security updates enabled,
 # auto-merge allowed, branch protection requiring the `test` check on main).
 #
 # Gating on the PR author alone is sufficient because this repo has no dependabot.yml:

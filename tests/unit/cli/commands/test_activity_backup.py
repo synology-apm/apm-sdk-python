@@ -12,6 +12,7 @@ from synology_apm.sdk.enums import (
     ActivityWorkloadType,
     BackupActivityStatus,
     BackupScope,
+    GWSWorkloadType,
     LogLevel,
     M365WorkloadType,
     MachineWorkloadType,
@@ -170,7 +171,8 @@ def test_activity_backup_list_string_filter(mock_apm: AsyncMock, args: list[str]
     "--status",
     "--machine-type",
     "--m365-type",
-], ids=["status", "machine-type", "m365-type"])
+    "--gws-type",
+], ids=["status", "machine-type", "m365-type", "gws-type"])
 def test_activity_backup_list_invalid_filter_value(mock_apm: AsyncMock, option_flag: str) -> None:
     """activity backup list with an invalid filter option value should exit with code 1."""
     result = invoke_cli(mock_apm, [
@@ -179,22 +181,31 @@ def test_activity_backup_list_invalid_filter_value(mock_apm: AsyncMock, option_f
     assert result.exit_code == 1
 
 
-@pytest.mark.parametrize("args,expected_machine_types,expected_m365_types", [
+@pytest.mark.parametrize("args,expected_machine_types,expected_m365_types,expected_gws_types", [
     (
         ["--machine-type", "vm", "--machine-type", "fs"],
         [MachineWorkloadType.VM, MachineWorkloadType.FS],
+        None,
         None,
     ),
     (
         ["--m365-type", "exchange", "--m365-type", "teams"],
         None,
         [M365WorkloadType.EXCHANGE, M365WorkloadType.TEAMS],
+        None,
+    ),
+    (
+        ["--gws-type", "mail", "--gws-type", "shared_drive"],
+        None,
+        None,
+        [GWSWorkloadType.MAIL, GWSWorkloadType.SHARED_DRIVE],
     ),
 ])
 def test_activity_backup_list_workload_type_filter(
     args: list[str],
     expected_machine_types: list[MachineWorkloadType] | None,
     expected_m365_types: list[M365WorkloadType] | None,
+    expected_gws_types: list[GWSWorkloadType] | None,
 ) -> None:
     mock_apm = AsyncMock()
     mock_apm.activities.backup.list.return_value = ([], 0)
@@ -203,6 +214,7 @@ def test_activity_backup_list_workload_type_filter(
     call_kwargs = mock_apm.activities.backup.list.call_args.kwargs
     assert call_kwargs["machine_types"] == expected_machine_types
     assert call_kwargs["m365_types"] == expected_m365_types
+    assert call_kwargs["gws_types"] == expected_gws_types
 
 
 def test_activity_list_verbose_shows_transferred(mock_apm: AsyncMock) -> None:

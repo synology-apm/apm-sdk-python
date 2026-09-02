@@ -1,6 +1,6 @@
 ---
 name: workload-inventory
-description: "Inventory all protected workloads (Machine + M365) by type, status, and plan coverage. Use when the user asks for a workload count, full inventory, or summary of what's being backed up."
+description: "Inventory all protected workloads (Machine + M365 + GWS) by type, status, and plan coverage. Use when the user asks for a workload count, full inventory, or summary of what's being backed up."
 ---
 
 # Workload Inventory
@@ -17,9 +17,11 @@ relies on (list vs. get field completeness, pagination, permission modes).
    for the retired-count summary in step 6) — `is_retired` has no "all" option, so this always
    takes two passes.
 
-2. Read `apm://tenants` to get all M365 tenants, then call `list_m365_workloads` for each
-   tenant × workload type combination to collect all M365 workloads. Repeat each call with
-   `is_retired=true` to also collect retired M365 workloads.
+2. Read `apm://saas-applications` to get all M365 tenants and GWS domains (filter to
+   `category="m365"`/`category="gws"` respectively), then call `list_m365_workloads` for each
+   tenant × workload type and `list_gws_workloads` for each domain × workload type to collect
+   all M365/GWS workloads. Repeat each call with `is_retired=true` to also collect retired
+   workloads.
 
 3. Read `apm://plans/protection` to cross-reference workload counts per plan.
 
@@ -28,25 +30,25 @@ relies on (list vs. get field completeness, pagination, permission modes).
    - `status`: success, failed, partial, queuing, backing_up, canceled, no_backups, deleting, retired
    - `is_retired`: active vs retired
 
-5. Group M365 workloads by:
-   - `workload_type`: exchange, onedrive, chat, sharepoint, teams, group
-   - Tenant name
-   - `status`
+5. Group M365 workloads by `workload_type` (exchange, onedrive, chat, sharepoint, teams, group),
+   tenant name, and `status`; group GWS workloads by `workload_type` (mail, calendar, contact,
+   drive, shared_drive), domain, and `status`.
 
 6. Present:
    - Machine workloads: count by type, count by status, % with successful last backup
-   - M365 workloads: count by tenant, count by type
+   - M365/GWS workloads: count by tenant/domain, count by type
    - Plans: which plans cover the most workloads, any workloads without a plan
    - Retired workloads: count (exclude from main summary unless user asks)
 
-7. If the user asks for a specific workload, use `list_machine_workloads`/`list_m365_workloads`
-   with `name_contains`/`keyword` to find its id and namespace, then `get_machine_workload` /
-   `get_m365_workload` (M365 also needs `workload_type` — required, there's no fallback if
-   omitted) for full detail.
+7. If the user asks for a specific workload, use
+   `list_machine_workloads`/`list_m365_workloads`/`list_gws_workloads` with
+   `keyword` to find its id and namespace, then `get_machine_workload` /
+   `get_m365_workload` / `get_gws_workload` (M365/GWS also need `workload_type` — required,
+   there's no fallback if omitted) for full detail.
 
 8. If the request is scoped to a specific status (e.g. "show all failed backups", "which
    workloads still need verification") rather than a full inventory, skip steps 1-2's full
    listing and instead call `list_machine_workloads(status=["failed"])` /
-   `list_m365_workloads(status=["failed"])` directly (add `verify_status=[...]` for a Machine
-   verification-status query) — the client-side grouping in steps 4-5 is only needed for the
-   "everything, broken down by status" overview case.
+   `list_m365_workloads(status=["failed"])` / `list_gws_workloads(status=["failed"])` directly
+   (add `verify_status=[...]` for a Machine verification-status query) — the client-side
+   grouping in steps 4-5 is only needed for the "everything, broken down by status" overview case.

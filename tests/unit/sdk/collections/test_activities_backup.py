@@ -16,6 +16,7 @@ from synology_apm.sdk.collections.activities import BackupActivityCollection
 from synology_apm.sdk.enums import (
     ActivityWorkloadType,
     BackupActivityStatus,
+    GWSWorkloadType,
     M365WorkloadType,
     MachineWorkloadType,
     VerifyStatus,
@@ -125,6 +126,31 @@ SAMPLE_M365_ACTIVITY_RUNNING: dict[str, Any] = {
         },
         "status": {
             "executionId": "M365_1",
+            "backupStatus": "BACKUPING",
+            "startTime": "1776734685",
+            "endTime": "0",
+            "durationTime": "-1",
+            "transferredDataSize": "0",
+            "progress": 0,
+            "processedSuccessCount": 5,
+            "processedWarningCount": 2,
+            "processedErrorCount": 1,
+        },
+    }
+}
+
+SAMPLE_GWS_ACTIVITY_RUNNING: dict[str, Any] = {
+    "activity": {
+        "uid": "act-gws-001",
+        "namespace": "9053e422-4154-4abc-b03a-6e3d8e17b2d5",
+        "spec": {
+            "workloadType": "APPLICATION_GW",
+            "workloadName": "alice@gwsdemo.example.com",
+            "workload": {"uid": "gws-uid-001"},
+            "planName": "GWS Daily",
+        },
+        "status": {
+            "executionId": "GWS_1",
             "backupStatus": "BACKUPING",
             "startTime": "1776734685",
             "endTime": "0",
@@ -350,6 +376,23 @@ async def test_list_m365_types_sends_saas_service_type_params() -> None:
     assert acts[0].category == WorkloadCategory.M365
 
 
+async def test_list_gws_types_sends_saas_service_type_params() -> None:
+    """gws_types=[MAIL, SHARED_DRIVE] should pass saasServiceType to the API (not categoryService)."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = BackupActivityCollection(session)
+    with patch.object(
+        session, "get", AsyncMock(return_value={"activities": [SAMPLE_GWS_ACTIVITY_RUNNING]})
+    ) as mock_get:
+        acts, total = await collection.list(gws_types=[GWSWorkloadType.MAIL, GWSWorkloadType.SHARED_DRIVE])
+
+    saas_values = {v for k, v in mock_get.call_args_list[0][1]["params"] if k == "saasServiceType"}
+    assert saas_values == {"GW_MAIL", "GW_TEAM_DRIVE"}
+    assert len(acts) == 1
+    assert acts[0].category == WorkloadCategory.GWS
+
+
 async def test_list_history_mode_queries_history_endpoint() -> None:
     """list(history=True) should query the HISTORY endpoint and return completed activities."""
     async with connected_session() as (session, m):
@@ -502,6 +545,21 @@ async def test_m365_activity_has_processed_counts() -> None:
         await session.disconnect()
 
     act = acts[0]
+    assert act.processed_success_count == 5
+    assert act.processed_warning_count == 2
+    assert act.processed_error_count == 1
+    assert act.items_processed == 8
+
+
+async def test_gws_activity_has_processed_counts() -> None:
+    """GWS activity should parse processedSuccessCount / WarningCount / ErrorCount."""
+    async with connected_session() as (session, m):
+        m.get(RECENT_URL, payload={"activities": [SAMPLE_GWS_ACTIVITY_RUNNING]})
+        acts, total = await BackupActivityCollection(session).list()
+        await session.disconnect()
+
+    act = acts[0]
+    assert act.category == WorkloadCategory.GWS
     assert act.processed_success_count == 5
     assert act.processed_warning_count == 2
     assert act.processed_error_count == 1

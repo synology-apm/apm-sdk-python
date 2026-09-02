@@ -2,7 +2,8 @@
 
 Domain-specific differences (workload resolution, presence of a type label, the
 ``resource_type`` string passed to ``InvalidOperationError``) are absorbed via callables
-passed in by each call site in ``commands/machine.py`` and ``commands/m365.py``.
+passed in by each call site in ``commands/machine.py``, ``commands/m365.py``, and
+``commands/gws.py``.
 """
 from __future__ import annotations
 

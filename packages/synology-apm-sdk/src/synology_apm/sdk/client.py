@@ -7,6 +7,7 @@ from types import TracebackType
 from ._http import WebAPISession
 from .collections.activities import ActivityCollection
 from .collections.backup_servers import BackupServerCollection
+from .collections.gws import GWSCollection
 from .collections.hypervisors import HypervisorCollection
 from .collections.logs import LogCollection
 from .collections.m365 import M365Collection
@@ -63,6 +64,7 @@ class APMClient:
         self._my_server: _BackupServer | None = None
         self._machine = MachineCollection(self._session)
         self._m365 = M365Collection(self._session)
+        self._gws = GWSCollection(self._session)
         self._saas = SaasCollection(self._session)
         self._activities = ActivityCollection(self._session)
         self._backup_servers = BackupServerCollection(self._session)
@@ -161,10 +163,20 @@ class APMClient:
         return self._m365
 
     @property
-    def saas(self) -> SaasCollection:
-        """Access SaasCollection, which lists all connected SaaS tenants (M365 + GWS).
+    def gws(self) -> GWSCollection:
+        """Access GWSCollection, which manages Google Workspace SaaS backup resources.
 
-        apm.saas.list() → list[SaasTenant]
+        apm.gws.workloads         → GWSWorkloadCollection
+        apm.gws.plans             → GWSPlanCollection
+        apm.gws.auto_backup_rules → GWSAutoBackupRuleCollection
+        """
+        return self._gws
+
+    @property
+    def saas(self) -> SaasCollection:
+        """Access SaasCollection, which lists all connected SaaS applications (M365 + GWS).
+
+        apm.saas.list() → list[M365TenantInfo | GWSDomainInfo]
         """
         return self._saas
 

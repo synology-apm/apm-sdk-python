@@ -5,6 +5,8 @@ from .client import APMClient
 from .collections._shared import ListResult
 from .collections.activities import ActivityCollection, BackupActivityCollection, RestoreActivityCollection
 from .collections.backup_servers import BackupServerCollection
+from .collections.gws import GWSCollection, GWSWorkloadCollection
+from .collections.gws_auto_backup_rule import GWSAutoBackupRuleCollection
 from .collections.hypervisors import HypervisorCollection
 from .collections.logs import LogCollection
 from .collections.m365 import M365Collection, M365WorkloadCollection
@@ -15,7 +17,12 @@ from .collections.m365_mail_export import (
     M365ExportStartResult,
 )
 from .collections.machine import MachineCollection, MachineWorkloadCollection
-from .collections.protection_plans import M365PlanCollection, MachinePlanCollection, ProtectionPlanCollection
+from .collections.protection_plans import (
+    GWSPlanCollection,
+    M365PlanCollection,
+    MachinePlanCollection,
+    ProtectionPlanCollection,
+)
 from .collections.remote_storages import RemoteStorageCollection
 from .collections.retirement_plans import RetirementPlanCollection
 from .collections.saas import SaasCollection
@@ -43,6 +50,7 @@ from .enums import (
     CopyReason,
     DbActionOnError,
     FileServerType,
+    GWSWorkloadType,
     HypervisorType,
     LogLevel,
     M365ExportStatus,
@@ -92,6 +100,7 @@ from .exceptions import (
 )
 from .models.activity import Activity, ActivityLogEntry, BackupActivity, M365ExportActivity, RestoreActivity
 from .models.backup_server import BackupServer
+from .models.gws_auto_backup_rule import GWSAutoBackupRule, GWSAutoBackupRuleListResult, GWSSharedDriveSetting
 from .models.hypervisor import Hypervisor
 from .models.location import LocationInfo
 from .models.log import APMActivityLog, ConnectionLog, DriveLog, SystemLog
@@ -101,6 +110,7 @@ from .models.protection_plan import (
     BackupCopyPolicy,
     EventTriggerConfig,
     GFSRetention,
+    GWSPlanCreateRequest,
     M365PlanCreateRequest,
     MachineBackupWindow,
     MachineDbConfig,
@@ -128,7 +138,7 @@ from .models.remote_storage import (
     WasabiCloudStorageAddRequest,
 )
 from .models.retirement_plan import RetirementPlan, RetirementPlanCreateRequest, RetirementRetentionPolicy
-from .models.saas import SaasTenant
+from .models.saas import GWSDomainInfo, M365TenantInfo, SaasApplication
 from .models.system import SiteInfo, SiteStorageStats, WorkloadTypeStat, WorkloadUsageSummary
 from .models.tiering_plan import TieringPlan, TieringPlanCreateRequest, TieringStatus
 from .models.version import VersionLocation, WorkloadVersion
@@ -137,6 +147,10 @@ from .models.workload import (
     FileServerConfig,
     FileServerPathSelector,
     FileServerUpdateRequest,
+    GWSInfo,
+    GWSSharedDriveInfo,
+    GWSUserInfo,
+    GWSWorkload,
     M365GroupInfo,
     M365Info,
     M365SiteInfo,
@@ -194,6 +208,20 @@ __all__ = [
     "FileServerType",
     "FileServerUpdateRequest",
     "GFSRetention",
+    "GWSAutoBackupRule",
+    "GWSAutoBackupRuleCollection",
+    "GWSAutoBackupRuleListResult",
+    "GWSCollection",
+    "GWSDomainInfo",
+    "GWSInfo",
+    "GWSPlanCollection",
+    "GWSPlanCreateRequest",
+    "GWSSharedDriveInfo",
+    "GWSSharedDriveSetting",
+    "GWSUserInfo",
+    "GWSWorkload",
+    "GWSWorkloadCollection",
+    "GWSWorkloadType",
     "GenericS3StorageAddRequest",
     "GroupExportCollection",
     "Hypervisor",
@@ -220,6 +248,7 @@ __all__ = [
     "M365PlanCreateRequest",
     "M365SiteInfo",
     "M365TeamInfo",
+    "M365TenantInfo",
     "M365UserInfo",
     "M365Workload",
     "M365WorkloadCollection",
@@ -277,8 +306,8 @@ __all__ = [
     "RetirementPlanCollection",
     "RetirementPlanCreateRequest",
     "RetirementRetentionPolicy",
+    "SaasApplication",
     "SaasCollection",
-    "SaasTenant",
     "save_config",
     "ScheduleFrequency",
     "ServerStatus",

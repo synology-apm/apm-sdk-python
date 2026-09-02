@@ -12,34 +12,36 @@ See [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) for shared convention
 relies on — especially its **Destructive action preview pattern** section, which the retire and
 delete steps below depend on.
 
-1. Find the workload's id with `list_machine_workloads`/`list_m365_workloads`
-   (`name_contains`/`keyword`), then confirm you have the right one with
-   `get_machine_workload`/`get_m365_workload` before doing anything destructive.
+1. Find the workload's id with `list_machine_workloads`/`list_m365_workloads`/
+   `list_gws_workloads` (`keyword`), then confirm you have the right one with
+   `get_machine_workload`/`get_m365_workload`/`get_gws_workload` before doing anything
+   destructive.
 
 ## Reassigning to a different plan
 
 2. Resolve the target plan's id with `list_protection_plans` or `list_retirement_plans`
-   (`name_contains`). Confirm the target plan's name with the user, then call
-   `change_machine_workload_plan`/`change_m365_workload_plan` with the workload id and the
-   resolved `plan_id`. Requires `admin` mode.
+   (`keyword`). Confirm the target plan's name with the user, then call
+   `change_machine_workload_plan`/`change_m365_workload_plan`/`change_gws_workload_plan` with the
+   workload id and the resolved `plan_id`. Requires `admin` mode.
 
 ## Retiring a workload
 
-3. `retire_machine_workload`/`retire_m365_workload` move the workload to a retirement plan and
-   stop new backups, but keep existing backup data under that plan's retention policy. Resolve
-   the target retirement plan's id first (`list_retirement_plans`), then follow the
+3. `retire_machine_workload`/`retire_m365_workload`/`retire_gws_workload` move the workload to a
+   retirement plan and stop new backups, but keep existing backup data under that plan's
+   retention policy. Resolve the target retirement plan's id first (`list_retirement_plans`),
+   then follow the
    [preview/confirm pattern](../apm-mcp-conventions/SKILL.md#destructive-action-preview-pattern).
    Requires `admin` mode.
 
 ## Deleting a workload
 
-4. `delete_machine_workload`/`delete_m365_workload` permanently remove the workload **and its
-   backup data** — this is irreversible, unlike retiring. Follow the same
+4. `delete_machine_workload`/`delete_m365_workload`/`delete_gws_workload` permanently remove the
+   workload **and its backup data** — this is irreversible, unlike retiring. Follow the same
    [preview/confirm pattern](../apm-mcp-conventions/SKILL.md#destructive-action-preview-pattern)
    as retiring, and make sure the preview/warning is read back to the user verbatim before the
    `confirm=true` call, given the data loss involved. Requires `admin` mode.
-   `delete_m365_workload` succeeds silently if the workload is already gone — don't treat that
-   as an error.
+   `delete_m365_workload`/`delete_gws_workload` succeed silently if the workload is already gone
+   — don't treat that as an error.
 
 5. Report the outcome. If any call fails with a permission error, tell the user `admin` mode is
    required rather than retrying.

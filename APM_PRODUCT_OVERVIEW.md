@@ -3,9 +3,10 @@
 > Purpose: APM product domain knowledge — the backup/recovery model, workload categories, and
 > key concepts that the SDK's design builds on.
 >
-> This document does not describe the SDK itself. For the SDK's design rationale, public
-> interface, type definitions, enum/API string mappings, and collection behavior rules, see
-> `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` (design contract) and the Sphinx API docs. For SDK usage examples, see
+> This document does not describe the SDK itself. For the SDK's design rationale and public
+> interface, see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md` (design contract);
+> for type definitions, enum/API string mappings, and collection behavior rules, see its
+> companion `BEHAVIOR_REFERENCE.md` and the Sphinx API docs. For SDK usage examples, see
 > `packages/synology-apm-sdk/README.md`.
 
 ---
@@ -14,7 +15,7 @@
 
 ### Backup & Recovery
 
-APM refers to all protected objects collectively as **Workload**, divided by business domain into `WorkloadCategory`: **MACHINE** (device backup) and **M365** (cloud SaaS backup); `GWS` (Google Workspace SaaS) is reserved as of APM 1.2 and not yet supported.
+APM refers to all protected objects collectively as **Workload**, divided by business domain into `WorkloadCategory`: **MACHINE** (device backup), **M365** (Microsoft 365 cloud SaaS backup), and **GWS** (Google Workspace cloud SaaS backup).
 
 #### MACHINE (Device Backup)
 
@@ -45,7 +46,7 @@ Backs up cloud data via the Microsoft 365 API. **One Workload = one account (or 
 
 > For the same user, Exchange, OneDrive, and Chat are three independent workloads, each with its own backup schedule and version history.
 > The backup unit for `TEAMS` is the entire Team (covering all channels), not a single channel.
-> For the SDK-level representation of each subject (`M365UserInfo` / `M365SiteInfo` / `M365TeamInfo` / `M365GroupInfo` and their exact fields), see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md`.
+> For the SDK-level representation of each subject (`M365UserInfo` / `M365SiteInfo` / `M365TeamInfo` / `M365GroupInfo` and their exact fields), see `packages/synology-apm-sdk/src/synology_apm/sdk/BEHAVIOR_REFERENCE.md`'s "M365Info Union Type".
 
 - A Version represents the state of cloud items at a point in time
 - Smallest restore granularity: mailbox / single email / file / chat history
@@ -59,17 +60,45 @@ Backs up cloud data via the Microsoft 365 API. **One Workload = one account (or 
 | Version semantics | Disk snapshot | File tree snapshot | Cloud items snapshot |
 | Instant Restore | Supported | Not applicable | Not applicable |
 
+#### GWS (Google Workspace Cloud SaaS Backup)
+
+Backs up cloud data via the Google Workspace API. **One Workload = one account (or shared drive) for one service**, divided by `GWSWorkloadType` into five subtypes:
+
+| `GWSWorkloadType` | Workload Subject | Identified By |
+|---|---|---|
+| **MAIL** | A single user's Gmail mailbox | Email address |
+| **CALENDAR** | A single user's Calendar | Email address |
+| **CONTACT** | A single user's Contacts | Email address |
+| **DRIVE** | A single user's Drive | Email address |
+| **SHARED_DRIVE** | A single Shared Drive | Drive name |
+
+> For the same user, Mail, Calendar, Contact, and Drive are four independent workloads, each with its own backup schedule and version history.
+> For the SDK-level representation of each subject (`GWSUserInfo` / `GWSSharedDriveInfo`), see their class docstrings (→ Sphinx API docs) — unlike M365Info, this union type has no dedicated write-up in the SDK design contract.
+
+- A Version represents the state of cloud items at a point in time (same semantics as M365 above)
+- Smallest restore granularity: mailbox / single email / file / calendar event / contact
+
+**Key differences between M365 and GWS:**
+
+| | M365 | GWS |
+|---|---|---|
+| Subtypes | 6 | 5 |
+| Tenancy key | Tenant (Azure AD tenant ID) | Domain (Google Workspace domain) |
+| Mailbox/file export | PST export supported (Exchange, Group) | Not supported |
+| Auto-backup collaboration services | Four (M365 Groups / SharePoint Personal Sites / SharePoint Sites / Teams) | One (Shared Drives) |
+| Protected account type filter | Not applicable | Domain-level filter for unlicensed/archived accounts |
+
 **Key Concepts:**
 
 - **Protection Plan**: The core unit of a backup task, including schedule, version retention rules (by days / version count / GFS), backup sources, and application-aware settings
 - **Immutable Backup**: Locks versions via WORM mechanism; the retention period is determined at creation time and cannot be modified afterward
 - **CBT / RCT**: Changed Block Tracking / Resilient Change Tracking, significantly reducing the transfer volume of incremental backups
 - **Version retention execution**: Runs automatically every day at 01:00 AM
-- **Concurrent backup limits**: Machine workloads support up to 40 concurrent backups (of which scheduled backups are capped at 20); M365 supports up to 60 concurrent backups
+- **Concurrent backup limits**: Machine workloads support up to 40 concurrent backups (of which scheduled backups are capped at 20); M365 supports up to 60 concurrent backups; no GWS-specific limit is documented
 
 ### Backup Copy
 
-Copies backup versions to off-site storage, implementing a 3-2-1 backup strategy. Backup Copy settings are part of a Protection Plan, not a standalone resource, and the current APM API supports only one Backup Copy destination per Plan. (For the SDK-level representation — `ProtectionPlan.copy_policy` / `copy_destination`, `WorkloadVersion.locations` — see `packages/synology-apm-sdk/src/synology_apm/sdk/README.md`.)
+Copies backup versions to off-site storage, implementing a 3-2-1 backup strategy. Backup Copy settings are part of a Protection Plan, not a standalone resource, and the current APM API supports only one Backup Copy destination per Plan. (For the SDK-level representation — `ProtectionPlan.copy_policy` / `copy_destination`, `WorkloadVersion.locations` — see `packages/synology-apm-sdk/src/synology_apm/sdk/BEHAVIOR_REFERENCE.md`.)
 
 **Other Technical Details:**
 - Supported destination types: C2 Object Storage, AWS S3, AWS S3 China, ActiveProtect Vault, Wasabi, Azure Blob, Azure Blob China, S3-compatible storage

@@ -47,10 +47,9 @@ async def _list_dp_server_logs(
     than the whole thing being expressed as list_tool(...)) so the outer run_tool()
     at each call site catches that ValueError too, not just errors from the list call.
 
-    Whether the result's total is reliable varies by log type (True only for drive
-    logs, since that's the only one APM reports a true total for); list_result()
-    derives this directly from whether the coroutine's total is None, so it does
-    not need to be passed in here.
+    Only activity logs have an unreliable (always-null) total; list_result() derives
+    this directly from whether the coroutine's total is None, so it does not need
+    to be passed in here.
     """
     dp_server = await _resolve_dp_server(apm, server_id)
     coro = sdk_list_fn(dp_server, limit=limit, offset=offset, **extra_kwargs)
@@ -115,7 +114,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
 
     @registrar.tool(description=(
         "List connection/authentication logs for a backup server (DP appliances only). Filter by level "
-        f"(info/warning/error), time window, or keyword. {LIST_RESULT_SUFFIX_UNRELIABLE_TOTAL}"
+        f"(info/warning/error), time window, or keyword. {LIST_RESULT_SUFFIX}"
     ))
     async def list_connection_logs(
         ctx: Context,
@@ -139,7 +138,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
 
     @registrar.tool(description=(
         "List advanced system logs for a backup server (DP appliances only). Filter by level "
-        f"(info/warning/error), time window, or keyword. {LIST_RESULT_SUFFIX_UNRELIABLE_TOTAL}"
+        f"(info/warning/error), time window, or keyword. {LIST_RESULT_SUFFIX}"
     ))
     async def list_system_logs(
         ctx: Context,

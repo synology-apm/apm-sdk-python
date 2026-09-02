@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from synology_apm.sdk.collections._shared import _is_terminating
 from synology_apm.sdk.collections.m365_auto_backup_rule import (
     M365AutoBackupRuleCollection,
-    _is_terminating,
     _parse_collab_setting,
     _parse_rule,
 )

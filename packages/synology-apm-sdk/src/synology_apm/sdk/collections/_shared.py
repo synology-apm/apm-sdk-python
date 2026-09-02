@@ -1,4 +1,4 @@
-"""Shared collection helpers for Machine, M365, and tiering/copy-status parsing.
+"""Shared collection helpers for Machine, M365, GWS, and tiering/copy-status parsing.
 
 This module holds parsing logic common to multiple collection modules.
 To avoid import cycles it may import only from models / enums / exceptions and _http —
@@ -23,6 +23,7 @@ from ..enums import (
     VersionCopyStatus,
     VersionStatus,
     WorkloadCategory,
+    WorkloadStatus,
 )
 from ..exceptions import (
     APIError,
@@ -713,9 +714,21 @@ def _machine_protect_status(is_retired: bool) -> str:
     return "PROTECT_STATUS_ARCHIVED" if is_retired else "PROTECT_STATUS_PROTECTED"
 
 
-def _m365_plan_type(is_retired: bool) -> str:
-    """Return the planType filter value for an M365 workload query."""
+def _plan_type_filter(is_retired: bool) -> str:
+    """Return the planType filter value for an M365/GWS workload query."""
     return "ARCHIVE" if is_retired else "BACKUP"
+
+
+def _is_terminating(raw: dict[str, Any]) -> bool:
+    """Return True if an M365/GWS auto-backup rule is pending deletion.
+
+    A rule set for deletion keeps a non-empty deletionTimestamp for up to ~2 minutes while a
+    server-side finalizer runs.
+    """
+    rule_obj: dict[str, Any] = raw.get("autoBackupRule") or {}
+    metadata: dict[str, Any] = rule_obj.get("metadata") or {}
+    ts = metadata.get("deletionTimestamp") or "0"
+    return ts not in ("", "0")
 
 
 def _build_workload_plan_ref(
@@ -727,7 +740,51 @@ def _build_workload_plan_ref(
     return ProtectionPlan(plan_id=plan_id, name=name, category=category)
 
 
-# ── Workload action preconditions (shared by Machine/M365 collections) ─────
+# ── SaaS backup status parsing (shared by M365/GWS workload collections) ───
+
+_SAAS_BACKUP_STATUS_MAP: dict[str, WorkloadStatus] = {
+    "SUCCESS":           WorkloadStatus.SUCCESS,
+    "WARNING":           WorkloadStatus.PARTIAL,
+    "ERROR":             WorkloadStatus.FAILED,
+    "CANCELED":          WorkloadStatus.CANCELED,
+    "NOT_BACKED_UP_YET": WorkloadStatus.NO_BACKUPS,
+}
+
+# WorkloadStatus filter reverse map (list() `status` parameter). RETIRED is intentionally
+# absent — it's controlled by the is_retired parameter, not a raw status field, and is
+# rejected by list() if requested via `status`.
+_SAAS_STATUS_TO_API_BACKUP_STATUS: dict[WorkloadStatus, str] = {
+    **{v: k for k, v in _SAAS_BACKUP_STATUS_MAP.items()},
+    # no forward-map counterpart; parsed via _resolve_saas_workload_status() instead
+    WorkloadStatus.BACKING_UP: "BACKUPING",
+    WorkloadStatus.QUEUING:    "QUEUING",
+    WorkloadStatus.DELETING:   "DELETING",
+}
+
+
+def _resolve_saas_workload_status(
+    raw: dict[str, Any], *, is_retired: bool
+) -> tuple[WorkloadStatus, int | None]:
+    """Resolve (status, items_backed_up) for an M365/GWS workload from its raw backupStatus.
+
+    processItemCount is declared int32, not string, in the API schema — same reasoning as
+    MachineWorkloadCollection._parse_workload's processedSuccessCount guard: a compliant
+    numeric field can't legally serialize as "", so only None is guarded here.
+    """
+    backup_status = raw.get("backupStatus") or ""
+    if backup_status == "DELETING":
+        return WorkloadStatus.DELETING, None
+    if is_retired:
+        return WorkloadStatus.RETIRED, None
+    if backup_status == "BACKUPING":
+        raw_items = raw.get("processItemCount")
+        return WorkloadStatus.BACKING_UP, (int(raw_items) if raw_items is not None else None)
+    if backup_status == "QUEUING":
+        return WorkloadStatus.QUEUING, None
+    return _SAAS_BACKUP_STATUS_MAP.get(backup_status, WorkloadStatus.NO_BACKUPS), None
+
+
+# ── Workload action preconditions (shared by Machine/M365/GWS collections) ──
 
 
 def _check_active_for_write(workload: Workload, action: str) -> None:
@@ -759,7 +816,7 @@ def _raise_first_batch_error(
 ) -> None:
     """Raise InvalidOperationError from the first error of a batch-mutation response.
 
-    Used by Machine/M365 workload delete() and _put_plan_change() after a batch
+    Used by Machine/M365/GWS workload delete() and _put_plan_change() after a batch
     delete/change-plan request; errors is a flat list of {"message", "errorCode"}
     dicts — callers normalize their endpoint's own response shape to this before
     calling (e.g. unwrapping each entry's nested "error" key). No-op when errors
@@ -802,13 +859,18 @@ def _check_change_plan_preconditions(workload: Workload, plan: ProtectionPlan | 
             )
 
 
-async def _resolve_namespace_to_server_id(session: WebAPISession, namespace: str) -> str:
-    """Resolve a backup server namespace to its internal server ID.
+async def _resolve_namespaces_to_server_ids(session: WebAPISession, namespaces: list[str]) -> list[str]:
+    """Resolve one or more backup server namespaces to their internal server IDs.
 
-    Pages through all backup servers until a match is found.
-
-    Raises:
-        ResourceNotFoundError: No backup server with the given namespace exists.
+    Pages through all backup servers once, regardless of how many namespaces are
+    requested, and returns the server IDs for whichever namespaces resolve, in the
+    same relative order as `namespaces`. A namespace with no matching backup server,
+    or whose matching server carries no usable (non-empty) ID, contributes nothing to
+    the result rather than raising — consistent with every other repeatable filter on
+    the caller's list() method, where a value matching nothing simply narrows the
+    result instead of failing outright. Callers that pass a non-empty `namespaces` and
+    get back an empty list should treat that as "matches nothing" (see each collection's
+    own `namespace` parameter docs), not silently fall back to an unfiltered lookup.
     """
     async def fetch(offset: int, limit: int) -> tuple[list[dict[str, Any]], int | None]:
         raw = await session.get(
@@ -817,14 +879,18 @@ async def _resolve_namespace_to_server_id(session: WebAPISession, namespace: str
         )
         return raw.get("backupServers") or [], raw.get("total")
 
+    wanted = set(namespaces)
+    found: dict[str, str] = {}
     async for server in _paginate(fetch, page_size=500):
-        if server.get("namespace") == namespace:
-            return str(server.get("id") or "")
-    raise ResourceNotFoundError(
-        f"No backup server with namespace {namespace!r}.",
-        resource_type="BackupServer",
-        resource_id=namespace,
-    )
+        ns = server.get("namespace")
+        if ns in wanted and ns not in found:
+            server_id = str(server.get("id") or "")
+            if server_id:
+                found[ns] = server_id
+                if len(found) == len(wanted):
+                    break
+
+    return [found[ns] for ns in namespaces if ns in found]
 
 
 def _parse_version_location(raw: dict[str, Any]) -> list[VersionLocation]:

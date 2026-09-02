@@ -7,7 +7,7 @@ class WorkloadCategory(Enum):
 
     MACHINE: Device backup (PC / PS / VM / FS), accessed via APMClient.machine.
     M365: Microsoft 365 SaaS backup, accessed via APMClient.m365.
-    GWS: Google Workspace SaaS backup (reserved; not supported as of APM 1.2).
+    GWS: Google Workspace SaaS backup, accessed via APMClient.gws.
     """
     MACHINE = "machine"
     M365    = "m365"
@@ -30,6 +30,15 @@ class M365WorkloadType(Enum):
     SHAREPOINT = "sharepoint"
     TEAMS      = "teams"
     GROUP      = "group"
+
+
+class GWSWorkloadType(Enum):
+    """Service sub-type of a GWS Workload."""
+    DRIVE        = "drive"
+    MAIL         = "mail"
+    CONTACT      = "contact"
+    CALENDAR     = "calendar"
+    SHARED_DRIVE = "shared_drive"
 
 
 class ActivityWorkloadType(Enum):
@@ -192,7 +201,7 @@ class WorkloadStatus(Enum):
     """Current backup status of a Workload.
 
     QUEUING: A job is waiting in the queue.
-    BACKING_UP: Backup in progress (backup_progress holds the current percentage).
+    BACKING_UP: Backup in progress (see Workload.backup_progress / .items_backed_up).
     SUCCESS: Most recent backup succeeded.
     FAILED: Most recent backup failed.
     PARTIAL: Most recent backup partially succeeded.

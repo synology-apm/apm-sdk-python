@@ -11,6 +11,7 @@ from synology_apm.sdk import (
     BackupServer,
     ConnectionLog,
     DriveLog,
+    GWSWorkload,
     Hypervisor,
     M365ExportActivity,
     M365Workload,
@@ -398,6 +399,39 @@ def m365_workload_to_csv_row(wl: M365Workload) -> dict[str, Any]:
         "backup_server_name":     bs.name if bs else "",
         "copy_destination_name":  bc.name        if bc else "",
         "copy_destination_vault": (bc.vault or "") if bc else "",
+        "workload_id":            wl.workload_id,
+        "namespace":              wl.namespace,
+    }
+
+
+def gws_workload_to_dict(wl: GWSWorkload) -> dict[str, Any]:
+    """Serialize a GWSWorkload to a JSON/YAML-safe dict (local time, flattened plan, computed info_label)."""
+    d = wl.to_dict()
+    plan = d.pop("plan")
+    d["plan_name"] = plan["name"]
+    d["plan_id"] = plan["plan_id"]
+    d["last_backup_at"] = fmt_datetime_iso(wl.last_backup_at)
+    d["info_label"] = wl.info.label if wl.info else None
+    return d
+
+
+def gws_workload_to_csv_row(wl: GWSWorkload) -> dict[str, Any]:
+    """Serialize a GWSWorkload to a CSV-safe flat dict (table columns, raw values)."""
+    bs = wl.backup_server
+    bc = wl.backup_copy_destination
+    return {
+        "name":                   wl.name,
+        "info_label":             wl.info.label if wl.info else "",
+        "status":                 wl.status.value,
+        "last_backup_at":         fmt_datetime_iso(wl.last_backup_at) or "",
+        "protected_data_bytes":   wl.protected_data_bytes,
+        "backup_copy_data_bytes": wl.backup_copy_data_bytes,
+        "plan_name":              wl.plan.name,
+        "plan_id":                wl.plan.plan_id,
+        "backup_server_name":     bs.name if bs else "",
+        "copy_destination_name":  bc.name        if bc else "",
+        "copy_destination_vault": (bc.vault or "") if bc else "",
+        "backup_user":            wl.backup_user or "",
         "workload_id":            wl.workload_id,
         "namespace":              wl.namespace,
     }

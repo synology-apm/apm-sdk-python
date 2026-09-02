@@ -39,7 +39,7 @@ from synology_apm.sdk.enums import (
 from synology_apm.sdk.models.activity import BackupActivity, RestoreActivity
 from synology_apm.sdk.models.location import LocationInfo
 from synology_apm.sdk.models.protection_plan import GFSRetention, ProtectionRetentionPolicy
-from synology_apm.sdk.models.saas import SaasTenant
+from synology_apm.sdk.models.saas import M365TenantInfo
 from synology_apm.sdk.models.version import VersionLocation
 
 # ── fmt_bytes ─────────────────────────────────────────────────────────────────
@@ -355,10 +355,10 @@ async def test_resolve_m365_auto_resolves_tenant_when_none() -> None:
     apm = AsyncMock()
     apm.saas.list.return_value = (
         [
-            SaasTenant(
+            M365TenantInfo(
                 tenant_id="auto-tid",
-                tenant_name="Contoso",
-                tenant_email="admin@contoso.com",
+                name="Contoso",
+                domain="contoso.onmicrosoft.com",
                 category=WorkloadCategory.M365,
                 protected_data_bytes=0,
             )

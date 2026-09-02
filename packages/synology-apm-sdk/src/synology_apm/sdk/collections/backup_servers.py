@@ -53,7 +53,7 @@ class BackupServerCollection:
 
     async def list(
         self,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         status_filter: list[ServerStatus] | None = None,
         type_filter: list[BackupServerType] | None = None,
         limit: int = 500,
@@ -65,7 +65,7 @@ class BackupServerCollection:
         in the page that have a tiering plan assigned.
 
         Args:
-            name_contains:  Name keyword search (fuzzy match).
+            keyword:        Name keyword search (fuzzy match).
             status_filter:  Filter by ServerStatus. Accepts multiple values; None means no filter.
             type_filter:    Filter by BackupServerType (DP or NAS). Accepts multiple values; None means no filter.
             limit:          Maximum records to return (default 500).
@@ -75,8 +75,8 @@ class BackupServerCollection:
             (list of BackupServer, total count matching the filter)
         """
         params: list[tuple[str, str | int]] = [("offset", offset), ("limit", limit)]
-        if name_contains:
-            params.append(("keyword", name_contains))
+        if keyword:
+            params.append(("keyword", keyword))
         if status_filter:
             for s in dict.fromkeys(status_filter):  # deduplicate while preserving order
                 if s == ServerStatus.DISCONNECTED:
@@ -110,7 +110,7 @@ class BackupServerCollection:
         q = name.lower()
 
         async def fetch(offset: int, limit: int) -> tuple[list[BackupServer], int | None]:
-            return await self.list(name_contains=name, limit=limit, offset=offset)
+            return await self.list(keyword=name, limit=limit, offset=offset)
 
         async for s in _paginate(fetch):
             if s.name.lower() == q or s.hostname.lower() == q:

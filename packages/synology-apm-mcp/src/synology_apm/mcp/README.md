@@ -1,6 +1,6 @@
 # APM MCP Server — Design Contract
 
-> Corresponding product: Synology ActiveProtect Manager 1.2
+> Corresponding product: Synology ActiveProtect Manager
 
 **Purpose of this document**: the conventions and decisions a contribution to this package must follow —
 not a restatement of what each function does. Mechanism-level rationale (why a helper is shaped the way it
@@ -13,6 +13,8 @@ see `packages/synology-apm-mcp/README.md`.
 ## Table of Contents
 
 - [Purpose and Design Principles](#purpose-and-design-principles)
+- [Adding a New Tool](#adding-a-new-tool)
+   - [Renaming, Removing, or Re-gating a Tool](#renaming-removing-or-re-gating-a-tool)
 - [Package Structure](#package-structure)
 - [Tool and Resource Conventions](#tool-and-resource-conventions)
 - [Shared Code Patterns](#shared-code-patterns)
@@ -24,9 +26,9 @@ see `packages/synology-apm-mcp/README.md`.
 
 ## Purpose and Design Principles
 
-`synology-apm-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io/) server, built on
-[FastMCP](https://gofastmcp.com/), that exposes the APM Python SDK as tools and resources for LLM agents.
-The server depends solely on the SDK and does not call the REST API directly.
+See the root `CLAUDE.md`'s Project Background for what `synology-apm-mcp` is. It is built on
+[FastMCP](https://gofastmcp.com/); the server depends solely on the SDK and never calls the
+REST API directly.
 
 ```
 LLM agent  →  MCP server (synology_apm.mcp)  →  APM SDK (synology_apm.sdk)  →  APM REST API
@@ -35,8 +37,8 @@ LLM agent  →  MCP server (synology_apm.mcp)  →  APM SDK (synology_apm.sdk)  
 - **SDK-only, machine-facing output**: per CLAUDE.md's "Three-Layer Responsibility Separation", MCP consumes
   the SDK model's `to_dict()` output directly, with none of the CLI's presentation-only transforms. Every
   tool/resource returns a structured `dict[str, Any]` result.
-- **Domain-oriented naming**: mirrors the CLI's command structure and the SDK's `apm.machine` / `apm.m365`
-  object model.
+- **Domain-oriented naming**: mirrors the CLI's command structure and the SDK's `apm.machine` / `apm.m365` /
+  `apm.gws` object model.
 - **Progressive permission model**: `APM_MCP_MODE` gates which tools are *registered* at startup, not which
   are merely rejected at call time.
 - **Preview-then-confirm for irreversible actions**, and an **audit trail** for every mutation.
@@ -48,11 +50,35 @@ concrete rule and where it's implemented.
 
 ---
 
+## Adding a New Tool
+
+1. Implement it in the relevant `tools/<domain>.py` — SDK calls only, never raw HTTP (see "Tool and Resource
+   Conventions" for naming, mode gating, list result shape, and the destructive preview/confirm pattern).
+2. Add exactly one `[[mapping]]` entry to `scripts/mcp_coverage.toml` with the matching mode (`make test`
+   fails until this is done).
+3. Add a tool-level unit test in `tests/unit/mcp/tools/` (SDK wiring, mode gating, JSON result shape — see
+   "Testing Conventions" below).
+4. Update `packages/synology-apm-mcp/README.md`'s "Available Tools" domain overview if the change is
+   user-visible.
+5. Run `make test`.
+
+### Renaming, Removing, or Re-gating a Tool
+
+- Update all `call_tool(server, "<tool_name>", ...)` call sites in `tests/unit/mcp/tools/` to match the new name, or remove them if the tool was deleted.
+- Update the corresponding `scripts/mcp_coverage.toml` entry — mode mismatches and unregistered/unmapped tools both fail `make test`.
+- Update `packages/synology-apm-mcp/README.md`'s "Available Tools" domain overview if the change is user-visible, then run `make test`.
+
+---
+
 ## Package Structure
 
 Two naming conventions let most files go uncommented below: `tools/<domain>.py` implements the domain's
 tool set (one `register(registrar)` entry point per file), and `tools/plans/<category>.py` implements the
 plan-category's create/update tools. Only private helpers, entry points, and multi-role files are annotated.
+
+Keep this tree in sync when a source file is added, renamed, or removed under
+`synology_apm/mcp/` — add an inline comment only when the file doesn't follow one of the two
+naming conventions above.
 
 ```
 synology_apm/mcp/
@@ -68,18 +94,20 @@ synology_apm/mcp/
 ├── resources.py   # MCP resources (apm://...)
 └── tools/
     ├── __init__.py
-    ├── _workload.py        # Shared machine/M365 workload tool registration (FastMCP signature layer)
-    ├── _workload_logic.py  # Shared machine/M365 resolve/mutation logic (plain, unit-testable functions)
+    ├── _workload.py        # Shared machine/M365/GWS workload tool registration (FastMCP signature layer)
+    ├── _workload_logic.py  # Shared machine/M365/GWS resolve/mutation logic (plain, unit-testable functions)
     ├── activity.py         # Backup/restore activity tools
+    ├── gws.py              # GWS workload tools + auto-backup rules + domain lookup
     ├── infra.py            # Site info, backup server, remote storage, hypervisor tools
     ├── log.py              # DP-server-only log tools
     ├── m365.py             # M365 workload tools + exports + auto-backup rules + tenant lookup
     ├── machine.py          # Machine workload tools + file server add/update
     └── plans/
         ├── __init__.py
-        ├── _builders_common.py   # Retention/schedule/backup-copy builders shared by machine + M365
+        ├── _builders_common.py   # Retention/schedule/backup-copy builders shared by machine + M365 + GWS
         ├── _builders_machine.py  # Machine-specific plan request builder
         ├── common.py             # Cross-category tools: list/get/delete protection plans
+        ├── gws.py                # GWS protection plan create/update tools
         ├── m365.py               # M365 protection plan create/update tools
         ├── machine.py            # Machine protection plan create/update tools
         ├── retirement.py         # Retirement plan tools
@@ -95,10 +123,10 @@ only states the rule a new tool must follow and where that rule lives.
 
 ### Naming and return shape
 
-- Tool names follow `{verb}_{domain}_{noun}` (`list_machine_workloads`, `backup_machine_workload`). Machine
-  and M365 share the same verb/noun with a differing prefix; cross-category plan operations that behave
-  identically for both categories (list/get/delete) carry no category prefix — only `create_*`/`update_*`
-  are split per category, since their request shapes diverge.
+- Tool names follow `{verb}_{domain}_{noun}` (`list_machine_workloads`, `backup_machine_workload`). Machine,
+  M365, and GWS share the same verb/noun with a differing prefix; cross-category plan operations that behave
+  identically across all three categories (list/get/delete) carry no category prefix — only `create_*`/
+  `update_*` are split per category, since their request shapes diverge.
 - Every tool/resource returns a `ToolResult` (`dict[str, Any]`, defined in `_errors.py`) — built via
   `run_tool()` / `run_resource()` (`_errors.py`), `run_audited_tool()` / `destructive_tool()` (`_security.py`),
   or `list_tool()` / `get_tool()` (`_helpers.py`). A tool body must not catch exceptions itself — let them
@@ -129,15 +157,18 @@ only states the rule a new tool must follow and where that rule lives.
   already-anticipated action (backup, cancel, export); `admin` for version lock/unlock, and anything that
   creates/updates/deletes a persistent configuration object, or permanently changes a workload's lifecycle
   (retire, delete, change_plan).
+- Changing the `APM_MCP_MODE` env var itself (its accepted values or gating semantics), independent of any
+  single tool's mode, must be reflected in `packages/synology-apm-mcp/README.md`'s "Environment Variables"
+  and "Operation Modes" sections.
 
 ### Tool annotations
 
-- `readOnlyHint`/`destructiveHint`/`idempotentHint` are derived automatically for every tool by
+- `read_only_hint`/`destructive_hint`/`idempotent_hint` are derived automatically for every tool by
   `_annotations_for()` (`_registrar.py`) from information already established by the conventions above —
-  never set by hand at a `@registrar.tool(...)` call site. `readOnlyHint` mirrors `required_mode ==
-  "readonly"`; `destructiveHint` mirrors the `delete_*`/`retire_*` naming convention; `idempotentHint` is
+  never set by hand at a `@registrar.tool(...)` call site. `read_only_hint` mirrors `required_mode ==
+  "readonly"`; `destructive_hint` mirrors the `delete_*`/`retire_*` naming convention; `idempotent_hint` is
   true for readonly tools and for `update_*` tools (full-replace, per "Update tools are full-replace"
-  below). `openWorldHint` is deliberately left unset — not clearly derivable from existing conventions.
+  below). `open_world_hint` is deliberately left unset — not clearly derivable from existing conventions.
 
 ### Destructive actions
 
@@ -149,8 +180,10 @@ only states the rule a new tool must follow and where that rule lives.
 
 - Every mutating tool (destructive or not) is wrapped in `run_audited_tool()` (`_security.py`). `params`
   should hold only identifying arguments, not every parameter — see `mutation_params()`
-  (`tools/_workload_logic.py`) for the shared-workload-tool convention. Read-only tools are never
-  audit-logged.
+  (`tools/_workload_logic.py`) for the shared-workload-tool convention. `mutation_params()` keys the
+  tenant/domain value by `WorkloadCategory.scope_param_name` (`"tenant_id"` for M365, `"domain"`
+  for GWS), so the logged key matches the tool's own parameter name rather than always saying
+  `tenant_id`. Read-only tools are never audit-logged.
 
 ### Resources vs tools
 
@@ -160,31 +193,40 @@ only states the rule a new tool must follow and where that rule lives.
 
 ### Description text
 
-- A tool/resource's `description=` is the only reference the calling agent sees. It follows the same rule
-  as CLI `help=` text under CLAUDE.md's "API Abstraction in User-Facing Text": no REST paths, HTTP
-  methods/status codes, raw API field names, or raw error codes — describe SDK/domain-level behavior only.
+- A tool/resource's `description=` is the only reference the calling agent sees. It falls under the root
+  `CLAUDE.md`'s "API Abstraction in User-Facing Text" rule, the same as CLI `help=` text.
 
 ---
 
 ## Shared Code Patterns
 
-- **Machine/M365 shared workload tools**: ~11 tool shapes are shared between machine and M365 workloads via
+- **Machine/M365/GWS shared workload tools**: ~11 tool shapes are shared across all three categories via
   `register_workload_tools()` (`tools/_workload.py`) and `WorkloadCategory` (`tools/_workload_logic.py`) —
-  see that module's docstring for the split rationale. When adding a tool shared by both categories, add its
-  logic to `_workload_logic.py` and its FastMCP signature pair to `register_workload_tools()`; do not
-  duplicate the logic inside `machine.py` / `m365.py`.
+  see that module's docstring for the split rationale. The resolve/mutation logic in `_workload_logic.py` is
+  fully generic (parameterized by `WorkloadCategory.needs_saas_scope`/`workload_type_enum`/`collection_fn`),
+  so it needs no per-category branching; `register_workload_tools()`'s FastMCP-facing signature layer, by
+  contrast, takes an explicit `variant: Literal["machine", "m365", "gws"]` and genuinely branches 3-way per
+  tool, since FastMCP needs a concrete type baked into each tool's function signature for JSON Schema
+  generation (see `tools/_workload.py`'s module docstring for each variant's exact parameter shape). When
+  adding a tool shared by all three categories, add its logic to `_workload_logic.py` and its three FastMCP
+  signature variants to `register_workload_tools()`; do not duplicate the logic inside
+  `machine.py` / `m365.py` / `gws.py`.
 - **Plan request builders**: shared retention/schedule/backup-copy construction lives in
-  `tools/plans/_builders_common.py`; the machine-specific superset in `tools/plans/_builders_machine.py`.
-  Neither registers tools itself. `register_delete_plan_tool()` (`tools/plans/common.py`) is the shared
-  factory behind every plan-family delete tool.
+  `tools/plans/_builders_common.py` (used by the machine, M365, and GWS builders alike); the machine-specific
+  superset in `tools/plans/_builders_machine.py`. Neither registers tools itself.
+  `register_delete_plan_tool()` (`tools/plans/common.py`) is the shared factory behind every plan-family
+  delete tool.
 - **Update tools are full-replace**: for `update_*` tools whose SDK request type has no partial-update
-  semantics (protection/retirement/tiering plans, file server config), every field is a required parameter
-  with no default. The `description=` must say so explicitly, so the calling agent never assumes an omitted
-  field is preserved.
+  semantics (protection/retirement/tiering plans, file server config), an omitted field resets to its
+  default rather than preserving the resource's current value — some parameters do carry a Python-level
+  default (e.g. `run_schedule_by_controller_time: bool = False`, the machine-plan advanced sections, file
+  server `path`/`selectors`), but that default is what an omission resolves to, not "leave unchanged." The
+  `description=` must say so explicitly, so the calling agent never assumes an omitted field is preserved.
 - **Startup resilience**: the server always starts and registers every tool for its mode, even with
-  missing/invalid credentials — see `_server.py`'s `_FailedConnectionClient` / `build_lifespan()`
-  docstrings. The one case that still exits immediately is an unrecognized `APM_MCP_MODE`
-  (`_config.py::resolve_mode()`).
+  missing/invalid credentials, with one exception (an unrecognized `APM_MCP_MODE`) — see
+  `packages/synology-apm-mcp/README.md`'s "Troubleshooting" section for the resulting user-facing
+  behavior, and `_server.py`'s `_FailedConnectionClient` / `build_lifespan()` and
+  `_config.py::resolve_mode()` for the implementation.
 - **Error dict shape**: `sdk_error_to_dict()` (`_errors.py`) is the single place that converts any exception
   to `{"error": <code>, ...}`; codes needing user remediation get an additional `"hint"` field (see
   `_RECONFIGURE_CODES`) — this must not duplicate or diverge from the CLI's own error-message mapping
@@ -224,9 +266,9 @@ way it is:
 
 - Test what a tool does — the right SDK method called with the right arguments, the right result dict
   fields — not FastMCP's own dispatch/validation machinery (that's the library's own test suite).
-- Shared machine/M365 tool logic is tested once in `test_workload.py`, parametrized over
+- Shared machine/M365/GWS tool logic is tested once in `test_workload.py`, parametrized over
   `(kind, workload_factory, ...)` — category-specific tools (file server management, M365 exports/auto-backup
-  rules) stay in their own category's test file.
+  rules, GWS auto-backup rules/collaboration settings/protected account types) stay in their own category's test file.
 - The coverage check (`scripts/check_mcp_coverage.py`) is a separate `make test` step, not a pytest test.
 
 ---

@@ -36,6 +36,7 @@ from tests.unit.examples._fixtures import (
 
 _ACT_A = "123e4567-e89b-12d3-a456-426614174050"
 _ACT_B = "123e4567-e89b-12d3-a456-426614174051"
+_ACT_C = "123e4567-e89b-12d3-a456-426614174052"
 _WL_A = "123e4567-e89b-12d3-a456-426614174001"
 
 # ── Partition contract ─────────────────────────────────────────────────────────
@@ -358,7 +359,8 @@ async def test_run_json_buckets_and_metadata(
     [
         ("machine", ["CORP-PC-001"]),
         ("m365", ["alice@contoso.com"]),
-        ("all", ["CORP-PC-001", "alice@contoso.com"]),
+        ("gws", ["alice@gwsdemo.example.com"]),
+        ("all", ["CORP-PC-001", "alice@contoso.com", "alice@gwsdemo.example.com"]),
     ],
 )
 async def test_run_filters_activities_by_category(
@@ -379,7 +381,13 @@ async def test_run_filters_activities_by_category(
         workload_type=ActivityWorkloadType.M365,
         workload_name="alice@contoso.com",
     )
-    _wire_activities(apm, [machine_act, m365_act], [])
+    gws_act = make_restore_activity(
+        activity_id=_ACT_C,
+        category=WorkloadCategory.GWS,
+        workload_type=ActivityWorkloadType.GWS,
+        workload_name="alice@gwsdemo.example.com",
+    )
+    _wire_activities(apm, [machine_act, m365_act, gws_act], [])
     patch_make_client(monkeypatch, restore_activity_report, apm)
 
     await run(_REPORT_DATE, category, "json")

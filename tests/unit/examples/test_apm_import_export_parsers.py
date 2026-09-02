@@ -12,6 +12,7 @@ from synology_apm.sdk import (
     BackupCopyConfig,
     BackupServer,
     GFSRetention,
+    GWSPlanCreateRequest,
     M365PlanCreateRequest,
     MachinePlanCreateRequest,
     ProtectionRetentionPolicy,
@@ -451,6 +452,67 @@ def test_build_saas_tenant_ref_map_empty_list() -> None:
     assert errors == []
 
 
+# ── _build_gws_domain_ref_map ──────────────────────────────────────────────────
+
+
+def test_build_gws_domain_ref_map_happy_path() -> None:
+    entries: list[dict[str, Any]] = [
+        {"ref_key": "domain-ref", "domain": "gwsdemo.example.com"},
+    ]
+    ref_map, errors = ie._build_gws_domain_ref_map(entries)
+    assert errors == []
+    assert ref_map == {"domain-ref": "gwsdemo.example.com"}
+
+
+def test_build_gws_domain_ref_map_multiple_entries() -> None:
+    entries: list[dict[str, Any]] = [
+        {"ref_key": "domain-a", "domain": "a.example.com"},
+        {"ref_key": "domain-b", "domain": "b.example.com"},
+    ]
+    ref_map, errors = ie._build_gws_domain_ref_map(entries)
+    assert errors == []
+    assert ref_map["domain-a"] == "a.example.com"
+    assert ref_map["domain-b"] == "b.example.com"
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected_errors"),
+    [
+        (
+            [{"domain": "gwsdemo.example.com"}],
+            ["gws_domains entry missing 'ref_key'"],
+        ),
+        (
+            [{"ref_key": "domain-ref"}],
+            ["gws_domains ref_key='domain-ref' missing 'domain'"],
+        ),
+    ],
+    ids=["missing-ref-key", "missing-domain"],
+)
+def test_build_gws_domain_ref_map_missing_field_returns_error(
+    entries: list[dict[str, Any]], expected_errors: list[str]
+) -> None:
+    """An entry missing ref_key, or missing domain, returns a single descriptive error."""
+    _, errors = ie._build_gws_domain_ref_map(entries)
+    assert errors == expected_errors
+
+
+def test_build_gws_domain_ref_map_duplicate_ref_key_returns_error() -> None:
+    entries: list[dict[str, Any]] = [
+        {"ref_key": "domain-ref", "domain": "a.example.com"},
+        {"ref_key": "domain-ref", "domain": "b.example.com"},
+    ]
+    _, errors = ie._build_gws_domain_ref_map(entries)
+    assert len(errors) == 1
+    assert "duplicate" in errors[0]
+
+
+def test_build_gws_domain_ref_map_empty_list() -> None:
+    ref_map, errors = ie._build_gws_domain_ref_map([])
+    assert ref_map == {}
+    assert errors == []
+
+
 # ── _resolve_backup_copy ──────────────────────────────────────────────────────
 
 
@@ -613,6 +675,20 @@ def test_parse_protection_request_m365_plan() -> None:
     result = ie._parse_protection_request(d, {}, {})
     assert isinstance(result, M365PlanCreateRequest)
     assert result.name == "M365 Backup"
+    assert result.retention.retention_type == RetentionType.KEEP_VERSIONS
+    assert result.retention.versions == 10
+
+
+def test_parse_protection_request_gws_plan() -> None:
+    d: dict[str, Any] = {
+        "name_or_id": "GWS Backup",
+        "type": "gws",
+        "retention": {"type": "keep_versions", "versions": 10},
+        "schedule": {"frequency": "weekly", "start_time": "03:00", "weekdays": ["sunday"]},
+    }
+    result = ie._parse_protection_request(d, {}, {})
+    assert isinstance(result, GWSPlanCreateRequest)
+    assert result.name == "GWS Backup"
     assert result.retention.retention_type == RetentionType.KEEP_VERSIONS
     assert result.retention.versions == 10
 

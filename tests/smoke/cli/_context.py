@@ -10,7 +10,7 @@ from typing import Any, TextIO
 from .._context import DomainStats, StepResult, step_slug
 from ._cli_runner import CliEnv, CliResult, CliRunner
 
-DOMAINS = ("config", "infra", "machine", "m365", "activity", "plan", "log")
+DOMAINS = ("config", "infra", "machine", "m365", "gws", "activity", "plan", "log")
 M365_SCOPES = ("exchange", "onedrive", "chat", "group", "sharepoint", "teams")
 
 

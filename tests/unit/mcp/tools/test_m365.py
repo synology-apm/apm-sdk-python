@@ -14,40 +14,49 @@ from tests.unit.mcp.conftest import (
     assert_destructive_preview_then_execute,
     call_tool,
     make_export_activity,
+    make_m365_tenant_info,
     make_m365_workload,
     make_protection_plan,
-    make_saas_tenant,
     make_workload_version,
 )
 
 _WL_ID = "123e4567-e89b-12d3-a456-426614174002"
 
 
-class TestListSaasTenants:
+class TestListSaasApplications:
     @pytest.mark.asyncio
     async def test_returns_items_and_total(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
-        tenant = make_saas_tenant()
+        tenant = make_m365_tenant_info()
         mock_apm.saas.list.return_value = ([tenant], 1)
 
-        result = await call_tool(admin_server, "list_saas_tenants", mock_ctx)
+        result = await call_tool(admin_server, "list_saas_applications", mock_ctx)
 
         assert result["total"] == 1
-        assert result["items"][0]["tenant_name"] == "Contoso"
+        assert result["items"][0]["name"] == "Contoso"
         _, kwargs = mock_apm.saas.list.call_args
         assert kwargs["limit"] == 100
         assert kwargs["offset"] == 0
 
+    @pytest.mark.asyncio
+    async def test_passes_keyword_filter(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
+        mock_apm.saas.list.return_value = ([], 0)
 
-class TestGetSaasTenant:
+        await call_tool(admin_server, "list_saas_applications", mock_ctx, keyword="contoso")
+
+        _, kwargs = mock_apm.saas.list.call_args
+        assert kwargs["keyword"] == "contoso"
+
+
+class TestGetM365Tenant:
     @pytest.mark.asyncio
     async def test_returns_tenant_dict(self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP) -> None:
-        tenant = make_saas_tenant()
+        tenant = make_m365_tenant_info()
         mock_apm.saas.get_m365_tenant.return_value = tenant
 
-        result = await call_tool(admin_server, "get_saas_tenant", mock_ctx, tenant_id="tenant-001")
+        result = await call_tool(admin_server, "get_m365_tenant", mock_ctx, tenant_id="tenant-001")
 
         assert result["tenant_id"] == "tenant-001"
-        assert result["tenant_name"] == "Contoso"
+        assert result["name"] == "Contoso"
         mock_apm.saas.get_m365_tenant.assert_called_once_with("tenant-001")
 
 
@@ -94,6 +103,20 @@ class TestListM365Workloads:
         mock_apm.plans.get.assert_not_called()
         _, kwargs = mock_apm.m365.workloads.list.call_args
         assert kwargs["plan"] is None
+
+    @pytest.mark.asyncio
+    async def test_namespaces_forwarded_to_sdk_as_list(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
+        from synology_apm.mcp._server import create_server
+
+        mock_apm.m365.workloads.list.return_value = ([], 0)
+
+        server = create_server(mode="admin")
+        await call_tool(
+            server, "list_m365_workloads", mock_ctx, tenant_id="tenant-001", namespaces=["ns-001", "ns-002"]
+        )
+
+        _, kwargs = mock_apm.m365.workloads.list.call_args
+        assert kwargs["namespace"] == ["ns-001", "ns-002"]
 
     @pytest.mark.asyncio
     async def test_status_forwarded_to_sdk_as_enum_list(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:

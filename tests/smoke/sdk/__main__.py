@@ -18,15 +18,27 @@ from .._driver import build_argparser
 from ._client_env import load_sdk_env
 from ._context import M365_SCOPES, SmokeContext
 from ._report import make_report_dir, write_index
-from .phases import _activity, _infra, _log, _m365, _m365_auto_backup_rule, _machine, _plan
+from .phases import (
+    _activity,
+    _gws,
+    _gws_auto_backup_rule,
+    _infra,
+    _log,
+    _m365,
+    _m365_auto_backup_rule,
+    _machine,
+    _plan,
+)
 
-_ORDER = ("infra", "plan", "machine", "m365", "m365_rule", "activity", "log")
+_ORDER = ("infra", "plan", "machine", "m365", "m365_rule", "gws", "gws_rule", "activity", "log")
 _PHASES = {
     "infra": _infra,
     "plan": _plan,
     "machine": _machine,
     "m365": _m365,
     "m365_rule": _m365_auto_backup_rule,
+    "gws": _gws,
+    "gws_rule": _gws_auto_backup_rule,
     "activity": _activity,
     "log": _log,
 }

@@ -1,12 +1,12 @@
 ---
 name: provision-apm-config
-description: "Bulk-create or update APM infrastructure and plans from a config description: remote storages, protection/retirement/tiering plans, file servers, and M365 auto-backup rules. Use when the user asks to bulk-provision, import, or set up APM configuration from a document or list of resources."
+description: "Bulk-create or update APM infrastructure and plans from a config description: remote storages, protection/retirement/tiering plans, file servers, and M365/GWS auto-backup rules. Use when the user asks to bulk-provision, import, or set up APM configuration from a document or list of resources."
 ---
 
 # Provision APM Configuration (Bulk Import)
 
 When the user asks to bulk-create, import, or provision APM infrastructure/plans from a
-config description (remote storage, protection/retirement/tiering plans, file servers, M365
+config description (remote storage, protection/retirement/tiering plans, file servers, M365/GWS
 auto-backup rules):
 
 See [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) for shared conventions this skill
@@ -47,29 +47,23 @@ MCP tool — including `get_*` — identifies its target by id only (see
 name" below always means "call the matching `list_*` tool with a name filter, then use the id
 from the matching result," never a name parameter on `get_*` itself.
 
-- **Resources this skill cannot create** — backup servers, M365/SaaS tenants. Resolve these by
-  name against the *target* server (`list_backup_servers` with `name_contains`, then
-  `get_backup_server` with the matched `server_id`; `list_saas_tenants` matched by `tenant_name`
-  — there is no `get_*` tool that accepts a tenant name). Not found → this is a hard error; ask
-  the user to register it first, or confirm the name is right for this target (this is also how
-  you'd retarget the same config description to a different server: change just this one name —
-  every anchor/cross-reference elsewhere in the description stays the same).
+- **Resources this skill cannot create** — backup servers, M365 tenants, GWS domains. Resolve
+  these by name against the *target* server (`list_backup_servers` with `keyword`, then
+  `get_backup_server` with the matched `server_id`; `list_saas_applications` with `keyword`
+  — there is no `get_*` tool that accepts a tenant/domain name). Not found → this is a hard
+  error; ask the user to register it first, or confirm the name is right for this target (this
+  is also how you'd retarget the same config description to a different server: change just this
+  one name — every anchor/cross-reference elsewhere in the description stays the same).
 - **Resources this skill can create** — remote storages, protection/retirement/tiering plans.
   Resolve these by name against the target server first (the conflict check in step 3). If a
   match exists, every later stage that references it uses *that resource's existing id*. If no
   match exists, create it — every later stage that references it uses *the id this run's own
   create call just returned*. Never reuse an id that came from the source description itself.
 
-This is exactly what makes the same config description replayable against a different APM
-server: same names (and the anchors that link entries to each other) in, correctly-resolved
-(existing or freshly created) ids out, every time.
-
-**The general rule this collapses to**: an `update_*` call needs an id as *input* — and the only
-legitimate source for that id is a `list_*` lookup by name against the target server (followed
-by `get_*` with that id for the full current state), never the source description. A
-`create_*`/`add_*` call needs no id for the resource itself at all — names and config values
-only go in; the id it returns is the *output*, and that output is the only thing later stages
-are allowed to use when they need to reference this newly created resource.
+**In short**: an `update_*` call needs an id as *input* — the only legitimate source is a
+`list_*` lookup by name against the target server (followed by `get_*` for the full current
+state), never the source description. A `create_*`/`add_*` call needs no id in — the id it
+*returns* is the only one later stages may use to reference this newly created resource.
 
 1. Collect the desired config from the user: every resource named, and every cross-reference
    between resources either spelled out by name directly ("this tiering plan's destination is
@@ -80,18 +74,19 @@ are allowed to use when they need to reference this newly created resource.
    description.
 
 2. Resolve the reference-only entities first, since later stages need their real values:
-   - Each named backup server → `list_backup_servers` with `name_contains` → matched
+   - Each named backup server → `list_backup_servers` with `keyword` → matched
      `server_id` → `get_backup_server` with that id → its `namespace` (needed by file servers
-     and M365 auto-backup rules).
-   - Each named M365/SaaS tenant → `list_saas_tenants`, matched by `tenant_name` → its
-     `tenant_id` (needed by M365 auto-backup rules).
+     and M365/GWS auto-backup rules).
+   - Each named M365 tenant or GWS domain → `list_saas_applications` with `keyword` → its
+     `tenant_id` (M365) or `domain` (GWS) — needed by the matching auto-backup rule stage.
    - Any of these not found is a hard error for the affected entries — report it and ask the
      user to fix the name or register the resource first, rather than guessing.
 
 3. Check for conflicts on the creatable entities — list what already exists on the target:
    - `list_remote_storages`, `list_protection_plans`, `list_retirement_plans`,
      `list_tiering_plans`, `list_machine_workloads` with `workload_types="fs"`,
-     `list_m365_auto_backup_rules` (per resolved tenant).
+     `list_m365_auto_backup_rules` (per resolved tenant), `list_gws_auto_backup_rules` (per
+     resolved domain).
    - Match desired names against existing ones (case-insensitive). Ask the user once, up front:
      for anything that already exists, should this skip it or update it? (a single global choice
      is enough unless the user wants per-item control.)
@@ -114,8 +109,8 @@ are allowed to use when they need to reference this newly created resource.
       [manage-apm-resource](../manage-apm-resource/SKILL.md) — `update_remote_storage` requires
       working credentials on every call, with no "leave unchanged" option.
 
-   b. **Protection plans** (`create_machine_protection_plan` / `create_m365_protection_plan`,
-      or `update_machine_protection_plan` / `update_m365_protection_plan` when overwriting) —
+   b. **Protection plans** (`create_machine_protection_plan` / `create_m365_protection_plan` /
+      `create_gws_protection_plan`, or the matching `update_*` tool when overwriting) —
       existing match → use its `plan_id`; otherwise create and use
       the `plan_id` from the response. See
       [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#complex-parameter-formats-protection-plans)
@@ -171,6 +166,27 @@ are allowed to use when they need to reference this newly created resource.
       current `collab_settings`, and re-supply the plan_id/namespace for every type that's
       already enabled and that you don't intend to change — see
       [manage-apm-resource](../manage-apm-resource/SKILL.md) for the same rule stated generally.
+
+   h. **GWS auto-backup rules** (`create_gws_auto_backup_rule` / `update_gws_auto_backup_rule`)
+      — needs the `domain`/`namespace` resolved in step 2 and the `plan_id` from stage (b); the
+      plan must be a GWS-category plan. **Returns no rule id.** If you need to update or delete
+      this rule later in the session, call `list_gws_auto_backup_rules` and match by namespace +
+      plan_id to find its `uid`. The four group-id list fields (`mail_group_ids`/
+      `calendar_group_ids`/`contact_group_ids`/`drive_group_ids`) on the update call use the same
+      tri-state semantics as M365's (see
+      [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#update-semantics-every-field-every-time)).
+
+   i. **GWS collab settings** (`update_gws_collab_settings`) — **replaces the single Shared
+      Drive collaboration service in one call** (GWS has only this one service, unlike M365's
+      four); omitting `shared_drive_plan_id`/`shared_drive_namespace` disables it. Always call
+      `list_gws_auto_backup_rules` first to read the domain's current `shared_drive_setting`,
+      and re-supply it if it's already enabled and you don't intend to change it.
+
+   j. **GWS protected account types** (`update_gws_protected_account_types`) — a domain-wide
+      flag with no M365 equivalent, controlling whether unlicensed/archived Google Workspace
+      accounts are auto-protected. Both `include_unlicensed_accounts`/`include_archived_accounts`
+      are required on every call — fetch the domain's current values from
+      `list_gws_auto_backup_rules` first and resupply the one you're not changing.
 
 6. Report the outcome of every item (created / updated / skipped / failed with reason) — one
    item failing must not stop the rest of the batch.

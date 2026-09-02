@@ -292,14 +292,20 @@ def _parse_task_config(raw: dict[str, Any]) -> MachineTaskConfig:
     )
 
 
+_SERVICE_TYPE_TO_CATEGORY: dict[str, WorkloadCategory] = {
+    "M365": WorkloadCategory.M365,
+    "GW":   WorkloadCategory.GWS,
+}
+
+
 def _parse_plan(
     raw: dict[str, Any],
     location_cache: dict[str, LocationInfo] | None = None,
 ) -> ProtectionPlan:
     """API response → SDK ProtectionPlan. Category is inferred from spec.serviceType."""
     spec: dict[str, Any] = raw.get("spec") or {}
-    service_type = spec.get("serviceType")
-    category = WorkloadCategory.M365 if service_type == "M365" else WorkloadCategory.MACHINE
+    service_type: str = spec.get("serviceType") or ""
+    category = _SERVICE_TYPE_TO_CATEGORY.get(service_type, WorkloadCategory.MACHINE)
 
     retention = _parse_retention(spec.get("retention") or {})
 
@@ -310,6 +316,11 @@ def _parse_plan(
         main_schedule = config_device.get("mainSchedule")
         if main_schedule:
             schedule = _parse_schedule(main_schedule)
+    elif category == WorkloadCategory.GWS:
+        config_gw = spec.get("configGw") or {}
+        sched_raw = config_gw.get("schedule")
+        if sched_raw:
+            schedule = _parse_schedule(sched_raw)
     else:
         config_m365 = spec.get("configM365") or {}
         sched_raw = config_m365.get("schedule")

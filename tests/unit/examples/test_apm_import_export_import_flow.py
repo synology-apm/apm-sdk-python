@@ -281,7 +281,7 @@ def test_autodetect_credentials_explicit_storage_load_error_returns_none(
 # ── _fetch_import_index ───────────────────────────────────────────────────────
 
 
-async def test_fetch_import_index_returns_all_five_lists() -> None:
+async def test_fetch_import_index_returns_all_six_lists() -> None:
     bs = make_backup_server()
     rs = make_remote_storage()
     machine_stub = make_protection_plan(plan_id=_MACHINE_PLAN_UUID)
@@ -298,12 +298,13 @@ async def test_fetch_import_index_returns_all_five_lists() -> None:
     apm.m365.plans.list = AsyncMock(return_value=([m365_stub], 1))
     apm.machine.workloads.list = AsyncMock(return_value=([fs_wl], 1))
 
-    bs_list, rs_list, machine_stubs, m365_stubs, fs_wls = await ie._fetch_import_index(apm)
+    bs_list, rs_list, machine_stubs, m365_stubs, gws_stubs, fs_wls = await ie._fetch_import_index(apm)
 
     assert bs_list == [bs]
     assert rs_list == [rs]
     assert machine_stubs == [machine_stub]
     assert m365_stubs == [m365_stub]
+    assert gws_stubs == []
     assert fs_wls == [fs_wl]
     assert apm.machine.workloads.list.await_args.kwargs["workload_types"] == [
         MachineWorkloadType.FS
@@ -364,7 +365,7 @@ def test_print_dry_run_plan_table_and_counts(capsys: pytest.CaptureFixture[str])
     m365_dry = [(f"{_TENANT_UUID}:server-1", "m365_user_rule", "error")]
 
     n_create, n_overwrite, n_error = ie._print_dry_run_plan(
-        [entry], [fse], [rse], plan_actions, fs_actions, rs_actions, m365_dry
+        [entry], [fse], [rse], plan_actions, fs_actions, rs_actions, m365_dry, []
     )
 
     assert (n_create, n_overwrite, n_error) == (1, 1, 1)
@@ -744,7 +745,7 @@ async def test_run_import_no_matching_entries_returns_zero(
 
 _ALL_IMPORT_TYPES = {
     "remote-storage", "protection-plan", "retirement-plan",
-    "tiering-plan", "file-server", "m365-auto-backup-rule",
+    "tiering-plan", "file-server", "m365-auto-backup-rule", "gws-auto-backup-rule",
 }
 
 

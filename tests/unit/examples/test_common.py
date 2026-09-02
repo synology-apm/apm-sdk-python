@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from _common import (
+    GWS_TYPE_LABELS,
     M365_TYPE_LABELS,
     WORKLOAD_TYPE_ORDER,
     Progress,
@@ -23,6 +24,7 @@ from _common import (
     add_profile_arg,
     category_label,
     collect_backup_servers,
+    collect_gws_workloads,
     collect_m365_workloads,
     collect_workloads,
     fmt_bytes,
@@ -31,12 +33,14 @@ from _common import (
     fmt_duration,
     fmt_speed,
     interruptible_sleep,
+    list_gws_domains,
     list_m365_tenants,
     make_client,
     paginate,
     parse_compact_duration,
     prompt_yes_no,
     register_interrupt,
+    resolve_gws_workload_types,
     resolve_m365_services,
     run_main,
     safe_path,
@@ -46,18 +50,20 @@ from _common import (
 
 from synology_apm.sdk import (
     APMError,
+    GWSWorkloadType,
     KeyringUnavailableError,
     M365WorkloadType,
     MachineWorkloadType,
     ResolvedConnection,
-    WorkloadCategory,
 )
 from tests.unit.examples._fixtures import (
     make_backup_server,
     make_fake_apm,
+    make_gws_domain_info,
+    make_gws_workload,
+    make_m365_tenant_info,
     make_m365_workload,
     make_machine_workload,
-    make_saas_tenant,
 )
 
 # ── make_client ────────────────────────────────────────────────────────────────
@@ -324,12 +330,28 @@ def test_workload_type_label_machine(workload_type: MachineWorkloadType, expecte
     assert workload_type_label(wl) == expected
 
 
+@pytest.mark.parametrize(
+    "workload_type,expected",
+    [
+        (GWSWorkloadType.MAIL, "Mail"),
+        (GWSWorkloadType.SHARED_DRIVE, "Shared Drive"),
+    ],
+)
+def test_workload_type_label_gws(workload_type: GWSWorkloadType, expected: str) -> None:
+    wl = make_gws_workload(workload_type=workload_type)
+    assert workload_type_label(wl) == expected
+
+
 def test_category_label_m365_workload() -> None:
     assert category_label(make_m365_workload()) == "M365"
 
 
 def test_category_label_machine_workload() -> None:
     assert category_label(make_machine_workload()) == "Machine"
+
+
+def test_category_label_gws_workload() -> None:
+    assert category_label(make_gws_workload()) == "GWS"
 
 
 # ── enum exhaustiveness ────────────────────────────────────────────────────────
@@ -339,8 +361,12 @@ def test_m365_type_labels_covers_all_m365_workload_types() -> None:
     assert set(M365_TYPE_LABELS.keys()) == set(M365WorkloadType)
 
 
-def test_workload_type_order_covers_all_machine_and_m365_types() -> None:
-    assert set(WORKLOAD_TYPE_ORDER) == set(MachineWorkloadType) | set(M365WorkloadType)
+def test_gws_type_labels_covers_all_gws_workload_types() -> None:
+    assert set(GWS_TYPE_LABELS.keys()) == set(GWSWorkloadType)
+
+
+def test_workload_type_order_covers_all_machine_and_m365_and_gws_types() -> None:
+    assert set(WORKLOAD_TYPE_ORDER) == set(MachineWorkloadType) | set(M365WorkloadType) | set(GWSWorkloadType)
 
 
 # ── paginate ───────────────────────────────────────────────────────────────────
@@ -403,7 +429,7 @@ async def test_collect_workloads_forwards_is_retired_to_machine_list() -> None:
 
 async def test_collect_workloads_m365_category_returns_m365_items_and_forwards_filters() -> None:
     apm = make_fake_apm()
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     wl = make_m365_workload(tenant_id=tenant.tenant_id)
     apm.saas.list.return_value = ([tenant], 1)
     apm.m365.workloads.list.return_value = ([wl], 1)
@@ -421,7 +447,7 @@ async def test_collect_workloads_m365_category_returns_m365_items_and_forwards_f
 
 async def test_collect_workloads_all_category_merges_results_and_sums_totals() -> None:
     apm = make_fake_apm()
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     machine_wl = make_machine_workload()
     m365_wl = make_m365_workload(tenant_id=tenant.tenant_id)
     apm.machine.workloads.list.return_value = ([machine_wl], 1)
@@ -436,7 +462,7 @@ async def test_collect_workloads_all_category_merges_results_and_sums_totals() -
 
 async def test_collect_workloads_m365_none_services_queries_every_type() -> None:
     apm = make_fake_apm()
-    apm.saas.list.return_value = ([make_saas_tenant()], 1)
+    apm.saas.list.return_value = ([make_m365_tenant_info()], 1)
     await collect_workloads(apm, "m365", None, is_retired=False)
     queried_types = {c.kwargs["workload_type"] for c in apm.m365.workloads.list.call_args_list}
     assert queried_types == set(M365WorkloadType)
@@ -444,7 +470,7 @@ async def test_collect_workloads_m365_none_services_queries_every_type() -> None
 
 async def test_collect_m365_workloads_provided_tenants_skips_saas_list() -> None:
     apm = make_fake_apm()
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     wl = make_m365_workload(tenant_id=tenant.tenant_id)
     apm.m365.workloads.list.return_value = ([wl], 1)
     workloads, total = await collect_m365_workloads(
@@ -458,19 +484,68 @@ async def test_collect_m365_workloads_provided_tenants_skips_saas_list() -> None
     apm.saas.list.assert_not_called()
 
 
+async def test_collect_workloads_gws_category_returns_gws_items_and_forwards_filters() -> None:
+    apm = make_fake_apm()
+    domain = make_gws_domain_info()
+    wl = make_gws_workload(domain=domain.domain)
+    apm.saas.list.return_value = ([domain], 1)
+    apm.gws.workloads.list.return_value = ([wl], 1)
+    workloads, total = await collect_workloads(
+        apm, "gws", None, is_retired=False, gws_services=[GWSWorkloadType.MAIL]
+    )
+    assert workloads == [wl]
+    assert total == 1
+    apm.machine.workloads.list.assert_not_called()
+    apm.m365.workloads.list.assert_not_called()
+    call_kwargs = apm.gws.workloads.list.call_args.kwargs
+    assert call_kwargs["domain"] == domain.domain
+    assert call_kwargs["workload_type"] is GWSWorkloadType.MAIL
+    assert call_kwargs["is_retired"] is False
+
+
+async def test_collect_workloads_gws_none_services_queries_every_type() -> None:
+    apm = make_fake_apm()
+    apm.saas.list.return_value = ([make_gws_domain_info()], 1)
+    await collect_workloads(apm, "gws", None, is_retired=False)
+    queried_types = {c.kwargs["workload_type"] for c in apm.gws.workloads.list.call_args_list}
+    assert queried_types == set(GWSWorkloadType)
+
+
+async def test_collect_gws_workloads_provided_domains_skips_saas_list() -> None:
+    apm = make_fake_apm()
+    domain = make_gws_domain_info()
+    wl = make_gws_workload(domain=domain.domain)
+    apm.gws.workloads.list.return_value = ([wl], 1)
+    workloads, total = await collect_gws_workloads(
+        apm,
+        [GWSWorkloadType.MAIL],
+        is_retired=False,
+        domains=[domain],
+    )
+    assert workloads == [wl]
+    assert total == 1
+    apm.saas.list.assert_not_called()
+
+
 # ── list_m365_tenants / collect_backup_servers ─────────────────────────────────
 
 
 async def test_list_m365_tenants_filters_to_m365_category() -> None:
     apm = make_fake_apm()
-    m365_tenant = make_saas_tenant()
-    gws_tenant = make_saas_tenant(
-        tenant_id="123e4567-e89b-12d3-a456-426614174061",
-        category=WorkloadCategory.GWS,
-    )
+    m365_tenant = make_m365_tenant_info()
+    gws_tenant = make_gws_domain_info(domain="123e4567-e89b-12d3-a456-426614174061.example.com")
     apm.saas.list.return_value = ([m365_tenant, gws_tenant], 2)
     tenants = await list_m365_tenants(apm)
     assert tenants == [m365_tenant]
+
+
+async def test_list_gws_domains_filters_to_gws_category() -> None:
+    apm = make_fake_apm()
+    m365_tenant = make_m365_tenant_info()
+    gws_domain = make_gws_domain_info()
+    apm.saas.list.return_value = ([m365_tenant, gws_domain], 2)
+    domains = await list_gws_domains(apm)
+    assert domains == [gws_domain]
 
 
 async def test_collect_backup_servers_returns_all_servers() -> None:
@@ -560,6 +635,43 @@ def test_resolve_m365_services_all_without_service_returns_none() -> None:
     add_category_args(parser, verb="export")
     args = argparse.Namespace(category="all", m365_service=None)
     assert resolve_m365_services(parser, args) is None
+
+
+def test_resolve_gws_workload_types_gws_without_type_prints_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = argparse.ArgumentParser()
+    add_category_args(parser, verb="export")
+    args = argparse.Namespace(category="gws", gws_workload_type=None)
+    with pytest.raises(SystemExit):
+        resolve_gws_workload_types(parser, args)
+    assert "--gws-workload-type is required" in capsys.readouterr().err
+
+
+def test_resolve_gws_workload_types_machine_with_type_prints_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = argparse.ArgumentParser()
+    add_category_args(parser, verb="export")
+    args = argparse.Namespace(category="machine", gws_workload_type=["mail"])
+    with pytest.raises(SystemExit):
+        resolve_gws_workload_types(parser, args)
+    assert "not valid" in capsys.readouterr().err
+
+
+def test_resolve_gws_workload_types_returns_typed_list() -> None:
+    parser = argparse.ArgumentParser()
+    add_category_args(parser, verb="export")
+    args = argparse.Namespace(category="gws", gws_workload_type=["mail", "drive"])
+    result = resolve_gws_workload_types(parser, args)
+    assert result == [GWSWorkloadType.MAIL, GWSWorkloadType.DRIVE]
+
+
+def test_resolve_gws_workload_types_all_without_type_returns_none() -> None:
+    parser = argparse.ArgumentParser()
+    add_category_args(parser, verb="export")
+    args = argparse.Namespace(category="all", gws_workload_type=None)
+    assert resolve_gws_workload_types(parser, args) is None
 
 
 # ── run_main exit-code contract ────────────────────────────────────────────────

@@ -127,9 +127,9 @@ class TestToolAnnotations:
         tool = await server.get_tool("list_things")
         assert tool is not None
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.idempotent_hint is True
 
     @pytest.mark.asyncio
     async def test_delete_tool_gets_destructive_hint(self) -> None:
@@ -145,9 +145,9 @@ class TestToolAnnotations:
         tool = await server.get_tool("delete_thing")
         assert tool is not None
         assert tool.annotations is not None
-        assert tool.annotations.destructiveHint is True
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.idempotentHint is False
+        assert tool.annotations.destructive_hint is True
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.idempotent_hint is False
 
     @pytest.mark.asyncio
     async def test_retire_tool_gets_destructive_hint(self) -> None:
@@ -163,7 +163,7 @@ class TestToolAnnotations:
         tool = await server.get_tool("retire_thing")
         assert tool is not None
         assert tool.annotations is not None
-        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.destructive_hint is True
 
     @pytest.mark.asyncio
     async def test_update_tool_gets_idempotent_hint(self) -> None:
@@ -179,9 +179,9 @@ class TestToolAnnotations:
         tool = await server.get_tool("update_thing")
         assert tool is not None
         assert tool.annotations is not None
-        assert tool.annotations.idempotentHint is True
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.readOnlyHint is False
+        assert tool.annotations.idempotent_hint is True
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.read_only_hint is False
 
     @pytest.mark.asyncio
     async def test_plain_mutation_tool_gets_no_hints(self) -> None:
@@ -201,9 +201,9 @@ class TestToolAnnotations:
         tool = await server.get_tool("backup_thing")
         assert tool is not None
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is False
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is False
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.idempotent_hint is False
 
     @pytest.mark.asyncio
     async def test_direct_call_form_derives_hints_from_given_name(self) -> None:
@@ -222,7 +222,7 @@ class TestToolAnnotations:
         tool = await server.get_tool("delete_tiering_plan")
         assert tool is not None
         assert tool.annotations is not None
-        assert tool.annotations.destructiveHint is True
+        assert tool.annotations.destructive_hint is True
 
 
 class TestToolRequiredModes:

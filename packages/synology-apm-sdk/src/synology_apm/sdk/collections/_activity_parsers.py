@@ -15,6 +15,7 @@ from ..enums import (
     ActivityWorkloadType,
     BackupActivityStatus,
     BackupScope,
+    GWSWorkloadType,
     HypervisorType,
     LogLevel,
     M365WorkloadType,
@@ -123,6 +124,14 @@ _M365_TYPE_TO_SAAS_SERVICE: dict[M365WorkloadType, str] = {
     M365WorkloadType.GROUP:      "M365_GROUP_EXCHANGE",
 }
 
+_GWS_TYPE_TO_SAAS_SERVICE: dict[GWSWorkloadType, str] = {
+    GWSWorkloadType.DRIVE:        "GW_DRIVE",
+    GWSWorkloadType.MAIL:         "GW_MAIL",
+    GWSWorkloadType.CONTACT:      "GW_CONTACT",
+    GWSWorkloadType.CALENDAR:     "GW_CALENDAR",
+    GWSWorkloadType.SHARED_DRIVE: "GW_TEAM_DRIVE",
+}
+
 # API workloadType raw string → ActivityWorkloadType enum
 _RAW_TO_SUBTYPE: dict[str, ActivityWorkloadType] = {
     "MACHINE_PC":         ActivityWorkloadType.MACHINE_PC,
@@ -163,10 +172,11 @@ _SUBTYPE_TO_CANCEL_TYPE: dict[ActivityWorkloadType, str] = {
     ActivityWorkloadType.MSSQL:           "APPLICATION_MSSQL",
 }
 
-# Subtypes whose activities track per-item processed counts (FS and M365)
+# Subtypes whose activities track per-item processed counts (FS, M365, and GWS)
 _ITEM_BASED_SUBTYPES: frozenset[ActivityWorkloadType] = frozenset({
     ActivityWorkloadType.MACHINE_FS,
     ActivityWorkloadType.M365,
+    ActivityWorkloadType.GWS,
 })
 
 # Subtypes that support backup verification (PS and VM only)

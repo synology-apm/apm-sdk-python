@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Storage usage report — summarizes storage consumption across protected and retired
-workloads (both machine and M365), backup server disk usage, and remote storage
+workloads (machine, M365, and GWS), backup server disk usage, and remote storage
 allocation.
 
 Output is split into three sections: Workload Usage (per workload type, primary data
@@ -34,9 +34,11 @@ from _common import (
     WORKLOAD_TYPE_ORDER,
     add_output_arg,
     add_profile_arg,
+    collect_gws_workloads,
     collect_m365_workloads,
     collect_machine_workloads,
     fmt_bytes,
+    list_gws_domains,
     list_m365_tenants,
     make_client,
     paginate,
@@ -44,9 +46,18 @@ from _common import (
     workload_type_label,
 )
 
-from synology_apm.sdk import APMClient, M365Workload, M365WorkloadType, MachineWorkload, MachineWorkloadType
+from synology_apm.sdk import (
+    APMClient,
+    GWSWorkload,
+    GWSWorkloadType,
+    M365Workload,
+    M365WorkloadType,
+    MachineWorkload,
+    MachineWorkloadType,
+)
 
 _M365_TYPES: list[M365WorkloadType] = [t for t in WORKLOAD_TYPE_ORDER if isinstance(t, M365WorkloadType)]
+_GWS_TYPES: list[GWSWorkloadType] = [t for t in WORKLOAD_TYPE_ORDER if isinstance(t, GWSWorkloadType)]
 
 
 @dataclass
@@ -91,10 +102,10 @@ def _none_add(a: int | None, b: int | None) -> int | None:
 # ── Data collection ────────────────────────────────────────────────────────────
 
 async def _scan_workload_usage(apm: APMClient) -> list[_WlRow]:
-    buckets: dict[MachineWorkloadType | M365WorkloadType, _WlRow] = {}
+    buckets: dict[MachineWorkloadType | M365WorkloadType | GWSWorkloadType, _WlRow] = {}
 
     def _accumulate(
-        key: MachineWorkloadType | M365WorkloadType,
+        key: MachineWorkloadType | M365WorkloadType | GWSWorkloadType,
         label: str,
         usage: int,
         copy_usage: int,
@@ -109,17 +120,23 @@ async def _scan_workload_usage(apm: APMClient) -> list[_WlRow]:
             buckets[key].protected_bytes += usage
             buckets[key].protected_copy_bytes += copy_usage
 
-    # Machine + M365 workloads (all service types) — fetch protected and retired separately,
-    # then split locally by is_retired flag.
-    # list_m365_tenants is a single fast call; run it first so tenants is ready for the gather.
+    # Machine + M365 + GWS workloads (all service types) — fetch protected and retired
+    # separately, then split locally by is_retired flag.
+    # list_m365_tenants/list_gws_domains are single fast calls; run them first so tenants/domains
+    # are ready for the gather.
     tenants = await list_m365_tenants(apm)
-    (machine_p, _), (machine_r, _), (m365_p, _), (m365_r, _) = await asyncio.gather(
+    domains = await list_gws_domains(apm)
+    (machine_p, _), (machine_r, _), (m365_p, _), (m365_r, _), (gws_p, _), (gws_r, _) = await asyncio.gather(
         collect_machine_workloads(apm, is_retired=False),
         collect_machine_workloads(apm, is_retired=True),
         collect_m365_workloads(apm, _M365_TYPES, is_retired=False, tenants=tenants),
         collect_m365_workloads(apm, _M365_TYPES, is_retired=True,  tenants=tenants),
+        collect_gws_workloads(apm, _GWS_TYPES, is_retired=False, domains=domains),
+        collect_gws_workloads(apm, _GWS_TYPES, is_retired=True,  domains=domains),
     )
-    workloads: list[MachineWorkload | M365Workload] = [*machine_p, *machine_r, *m365_p, *m365_r]
+    workloads: list[MachineWorkload | M365Workload | GWSWorkload] = [
+        *machine_p, *machine_r, *m365_p, *m365_r, *gws_p, *gws_r,
+    ]
     for wl in workloads:
         _accumulate(
             wl.workload_type, workload_type_label(wl),

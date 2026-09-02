@@ -1,10 +1,10 @@
-"""Tests for tools/_workload.py: shared machine/M365 workload tool factory.
+"""Tests for tools/_workload.py: shared machine/M365/GWS workload tool factory.
 
-Both categories register list/get/backup/cancel_backup/versions/lock/unlock/
+All three categories register list/get/backup/cancel_backup/versions/lock/unlock/
 change_plan/retire/delete from the same closures in register_workload_tools().
 Since the underlying logic is genuinely shared, tests that exercise that shared
-logic are parametrized here over workload kind (machine vs m365) rather than
-hand-duplicated per category across test_machine.py/test_m365.py/this file.
+logic are parametrized here over workload kind (machine vs m365 vs gws) rather
+than hand-duplicated per category across test_machine.py/test_m365.py/test_gws.py/this file.
 """
 from __future__ import annotations
 
@@ -20,10 +20,11 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from synology_apm.mcp.tools._workload_logic import WorkloadCategory
-from synology_apm.sdk import M365Workload, M365WorkloadType, MachineWorkload
+from synology_apm.sdk import GWSWorkload, GWSWorkloadType, M365Workload, M365WorkloadType, MachineWorkload
 from tests.unit.mcp.conftest import (
     assert_destructive_preview_then_execute,
     call_tool,
+    make_gws_workload,
     make_m365_workload,
     make_machine_workload,
     make_protection_plan,
@@ -31,20 +32,23 @@ from tests.unit.mcp.conftest import (
     make_workload_version,
 )
 
-WorkloadFactory = Callable[..., "MachineWorkload | M365Workload"]
+WorkloadFactory = Callable[..., "MachineWorkload | M365Workload | GWSWorkload"]
 
 _MACHINE_WL_ID = "123e4567-e89b-12d3-a456-426614174001"
 _M365_WL_ID = "123e4567-e89b-12d3-a456-426614174002"
+_GWS_WL_ID = "123e4567-e89b-12d3-a456-426614174003"
 
-# (kind, workload_factory, workload_id, extra_kwargs_only_m365_needs)
+# (kind, workload_factory, workload_id, extra_kwargs_only_m365/gws_needs)
 _WORKLOAD_KIND_CASES = [
     ("machine", make_machine_workload, _MACHINE_WL_ID, {}),
     ("m365", make_m365_workload, _M365_WL_ID, {"tenant_id": "tenant-001", "workload_type": "exchange"}),
+    ("gws", make_gws_workload, _GWS_WL_ID, {"domain": "gwsdemo.example.com", "workload_type": "mail"}),
 ]
 
 
 def _workload_collection(mock_apm: MagicMock, kind: str) -> MagicMock:
-    return cast("MagicMock", mock_apm.machine.workloads if kind == "machine" else mock_apm.m365.workloads)
+    collection = {"machine": mock_apm.machine.workloads, "m365": mock_apm.m365.workloads, "gws": mock_apm.gws.workloads}[kind]
+    return cast("MagicMock", collection)
 
 
 class TestBackupWorkload:
@@ -96,8 +100,12 @@ class TestCancelWorkloadBackup:
             workload_id=wl_id, namespace="default", **extra_kwargs,
         )
 
-        get_kwargs = {"tenant_id": "tenant-001", "workload_type": M365WorkloadType.EXCHANGE} if kind == "m365" else {}
-        collection.get.assert_called_once_with(wl_id, "default", **get_kwargs)
+        get_args_by_kind = {
+            "machine": (wl_id, "default"),
+            "m365": (wl_id, "default", "tenant-001", M365WorkloadType.EXCHANGE),
+            "gws": (wl_id, "default", "gwsdemo.example.com", GWSWorkloadType.MAIL),
+        }
+        collection.get.assert_called_once_with(*get_args_by_kind[kind])
         collection.cancel_backup.assert_called_once_with(wl)
 
 
@@ -403,8 +411,17 @@ class TestRetireWorkload:
 
 def _make_category(kind: str) -> WorkloadCategory:
     if kind == "machine":
-        return WorkloadCategory(is_m365=False, name_prefix="machine", collection_fn=lambda apm: apm.machine.workloads, serializer=lambda w: w.to_dict())
-    return WorkloadCategory(is_m365=True, name_prefix="m365", collection_fn=lambda apm: apm.m365.workloads, serializer=lambda w: w.to_dict())
+        return WorkloadCategory(needs_saas_scope=False, name_prefix="machine", collection_fn=lambda apm: apm.machine.workloads, serializer=lambda w: w.to_dict())
+    if kind == "gws":
+        return WorkloadCategory(
+            needs_saas_scope=True, name_prefix="gws", collection_fn=lambda apm: apm.gws.workloads,
+            serializer=lambda w: w.to_dict(), workload_type_enum=GWSWorkloadType,
+            scope_param_name="domain",
+        )
+    return WorkloadCategory(
+        needs_saas_scope=True, name_prefix="m365", collection_fn=lambda apm: apm.m365.workloads,
+        serializer=lambda w: w.to_dict(), workload_type_enum=M365WorkloadType,
+    )
 
 
 class TestResolveWorkload:
@@ -433,19 +450,19 @@ class TestResolveWorkload:
 
         result = await resolve_workload(
             _make_category("m365"), mock_apm, workload_id=_M365_WL_ID, namespace="default",
-            tenant_id="tenant-001", workload_type="exchange",
+            saas_id="tenant-001", workload_type="exchange",
         )
 
         assert result is wl
         mock_apm.m365.workloads.get.assert_called_once_with(
-            _M365_WL_ID, "default", tenant_id="tenant-001", workload_type=M365WorkloadType.EXCHANGE,
+            _M365_WL_ID, "default", "tenant-001", M365WorkloadType.EXCHANGE,
         )
 
     @pytest.mark.asyncio
     async def test_m365_missing_tenant_id_raises_value_error(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_workload
 
-        with pytest.raises(ValueError, match="tenant_id is required"):
+        with pytest.raises(ValueError, match="saas_id is required"):
             await resolve_workload(_make_category("m365"), mock_apm, workload_id=_M365_WL_ID, namespace="default", workload_type="exchange")
 
     @pytest.mark.asyncio
@@ -453,7 +470,7 @@ class TestResolveWorkload:
         from synology_apm.mcp.tools._workload_logic import resolve_workload
 
         with pytest.raises(ValueError, match="workload_type is required"):
-            await resolve_workload(_make_category("m365"), mock_apm, workload_id=_M365_WL_ID, namespace="default", tenant_id="tenant-001")
+            await resolve_workload(_make_category("m365"), mock_apm, workload_id=_M365_WL_ID, namespace="default", saas_id="tenant-001")
 
 
 class TestResolveVersion:
@@ -487,7 +504,7 @@ class TestResolveVersion:
 
         result_wl, result_version = await resolve_version(
             _make_category("m365"), mock_apm, version_id="ver-001", workload_id=_M365_WL_ID, namespace="default",
-            tenant_id="tenant-001", workload_type="exchange",
+            saas_id="tenant-001", workload_type="exchange",
         )
 
         assert result_wl is wl
@@ -497,7 +514,7 @@ class TestResolveVersion:
     async def test_m365_missing_tenant_id_raises_value_error(self, mock_apm: MagicMock) -> None:
         from synology_apm.mcp.tools._workload_logic import resolve_version
 
-        with pytest.raises(ValueError, match="tenant_id is required"):
+        with pytest.raises(ValueError, match="saas_id is required"):
             await resolve_version(
                 _make_category("m365"), mock_apm, version_id=None, workload_id=_M365_WL_ID, namespace="default",
                 workload_type="exchange",
@@ -510,7 +527,7 @@ class TestResolveVersion:
         with pytest.raises(ValueError, match="workload_type is required"):
             await resolve_version(
                 _make_category("m365"), mock_apm, version_id=None, workload_id=_M365_WL_ID, namespace="default",
-                tenant_id="tenant-001",
+                saas_id="tenant-001",
             )
 
 
@@ -532,6 +549,19 @@ class TestMutationParams:
             "plan_id": "plan-001",
             "tenant_id": "tenant-001",
             "workload_type": "exchange",
+        }
+
+    def test_gws_includes_domain_not_tenant_id(self) -> None:
+        """GWS is domain-keyed: the audit-log dict must use the domain key, not tenant_id."""
+        from synology_apm.mcp.tools._workload_logic import mutation_params
+
+        params = mutation_params(_make_category("gws"), "wl-001", "gwsdemo.example.com", "mail", plan_id="plan-001")
+
+        assert params == {
+            "workload_id": "wl-001",
+            "plan_id": "plan-001",
+            "domain": "gwsdemo.example.com",
+            "workload_type": "mail",
         }
 
 

@@ -9,6 +9,7 @@ from synology_apm.sdk import APMClient
 from synology_apm.sdk.enums import DbActionOnError, RetentionType, ScheduleFrequency, WorkloadCategory
 from synology_apm.sdk.exceptions import APIError, PlanInUseError, PlanNameConflictError, ResourceNotFoundError
 from synology_apm.sdk.models.protection_plan import (
+    GWSPlanCreateRequest,
     M365PlanCreateRequest,
     MachineDbConfig,
     MachinePlanCreateRequest,
@@ -115,8 +116,9 @@ async def test_get_includes_schedule(apm: APMClient) -> None:
 
 
 async def test_get_nonexistent_raises(apm: APMClient) -> None:
-    with pytest.raises(APIError):
+    with pytest.raises(ResourceNotFoundError) as exc_info:
         await apm.machine.plans.get("00000000-0000-0000-0000-000000000000")
+    assert_resource_error(exc_info, resource_type="ProtectionPlan", resource_id="00000000-0000-0000-0000-000000000000")
 
 
 # ── MachinePlanCollection.get_by_name() ────────────────────────────────────
@@ -200,6 +202,71 @@ async def test_m365_plan_get_by_name_nonexistent_raises_not_found(apm: APMClient
     with pytest.raises(ResourceNotFoundError) as exc_info:
         await apm.m365.plans.get_by_name("__nonexistent_m365_plan__")
     assert_resource_error(exc_info, resource_type="ProtectionPlan", resource_id="__nonexistent_m365_plan__")
+
+
+# ── GWSPlanCollection ──────────────────────────────────────────────────────
+
+
+async def test_gws_plan_list_returns_list(apm: APMClient) -> None:
+    plans, _ = await apm.gws.plans.list()
+    assert isinstance(plans, list)
+
+
+async def test_gws_plan_list_items_are_protection_plans(apm: APMClient) -> None:
+    plans, _ = await apm.gws.plans.list()
+    for plan in plans:
+        assert isinstance(plan, ProtectionPlan)
+
+
+async def test_gws_plan_list_category_is_gws(apm: APMClient) -> None:
+    plans, _ = await apm.gws.plans.list()
+    if not plans:
+        pytest.skip("No GWS plans on this APM instance")
+    assert all(plan.category == WorkloadCategory.GWS for plan in plans)
+
+
+async def test_gws_plan_list_has_schedule(apm: APMClient) -> None:
+    plans, _ = await apm.gws.plans.list()
+    if not plans:
+        pytest.skip("No GWS plans")
+    for plan in plans:
+        assert plan.policy is not None
+        assert plan.policy.schedule is not None, (
+            f"Expected schedule in gws plans.list() for plan {plan.name!r}"
+        )
+
+
+async def test_gws_plan_get_returns_plan(apm: APMClient) -> None:
+    plans, _ = await apm.gws.plans.list()
+    if not plans:
+        pytest.skip("No GWS plans")
+    fetched = await apm.gws.plans.get(plans[0].plan_id)
+    assert fetched.plan_id == plans[0].plan_id
+
+
+async def test_gws_plan_get_includes_schedule(apm: APMClient) -> None:
+    plans, _ = await apm.gws.plans.list()
+    if not plans:
+        pytest.skip("No GWS plans")
+    fetched = await apm.gws.plans.get(plans[0].plan_id)
+    assert fetched.policy is not None
+    assert fetched.policy.schedule is not None, (
+        f"Expected schedule in gws get() for plan {fetched.name!r}"
+    )
+
+
+async def test_gws_plan_get_by_name_returns_plan(apm: APMClient) -> None:
+    plans, _ = await apm.gws.plans.list()
+    if not plans:
+        pytest.skip("No GWS plans")
+    fetched = await apm.gws.plans.get_by_name(plans[0].name)
+    assert fetched.plan_id == plans[0].plan_id
+
+
+async def test_gws_plan_get_by_name_nonexistent_raises_not_found(apm: APMClient) -> None:
+    with pytest.raises(ResourceNotFoundError) as exc_info:
+        await apm.gws.plans.get_by_name("__nonexistent_gws_plan__")
+    assert_resource_error(exc_info, resource_type="ProtectionPlan", resource_id="__nonexistent_gws_plan__")
 
 
 # ── RetirementPlanCollection ───────────────────────────────────────────────
@@ -320,7 +387,6 @@ async def test_get_plan_returns_plan(apm: APMClient) -> None:
 
 async def test_get_plan_raises_not_found_for_nonexistent(apm: APMClient) -> None:
     # APM returns HTTP 500 (not 404) for unknown plan UUIDs — accept either error
-    from synology_apm.sdk.exceptions import APIError
     with pytest.raises((ResourceNotFoundError, APIError)):
         await apm.plans.get("00000000-0000-0000-0000-000000000000")
 
@@ -528,6 +594,84 @@ async def test_m365_plan_delete_removes_plan(apm: APMClient) -> None:
     assert_resource_error(exc_info, resource_type="ProtectionPlan", resource_id=plan_id)
 
 
+# ── GWSPlanCollection.create() / update() / delete() ──────────────────────────
+
+
+async def test_gws_plan_create_returns_protection_plan(apm: APMClient) -> None:
+    plan = await apm.gws.plans.create(GWSPlanCreateRequest(
+        name="integ-gws-create",
+        retention=_MACHINE_RETENTION,
+        schedule=_MACHINE_SCHEDULE,
+    ))
+    try:
+        assert isinstance(plan, ProtectionPlan)
+        assert plan.plan_id
+        assert plan.category == WorkloadCategory.GWS
+    finally:
+        await apm.gws.plans.delete(plan)
+
+
+async def test_gws_plan_update_changes_name(apm: APMClient) -> None:
+    plan = await apm.gws.plans.create(GWSPlanCreateRequest(
+        name="integ-gws-update-orig",
+        retention=_MACHINE_RETENTION,
+        schedule=_MACHINE_SCHEDULE,
+    ))
+    try:
+        updated = await apm.gws.plans.update(plan.plan_id, GWSPlanCreateRequest(
+            name="integ-gws-update-new",
+            retention=_MACHINE_RETENTION,
+            schedule=_MACHINE_SCHEDULE,
+        ))
+        assert updated.name == "integ-gws-update-new"
+    finally:
+        await apm.gws.plans.delete(plan.plan_id)
+
+
+async def test_gws_plan_create_duplicate_name_raises(apm: APMClient) -> None:
+    plan = await apm.gws.plans.create(GWSPlanCreateRequest(
+        name="integ-gws-dup",
+        retention=_MACHINE_RETENTION,
+        schedule=_MACHINE_SCHEDULE,
+    ))
+    try:
+        with pytest.raises(PlanNameConflictError):
+            await apm.gws.plans.create(GWSPlanCreateRequest(
+                name="integ-gws-dup",
+                retention=_MACHINE_RETENTION,
+                schedule=_MACHINE_SCHEDULE,
+            ))
+    finally:
+        await apm.gws.plans.delete(plan)
+
+
+async def test_gws_plan_create_then_get_has_schedule(apm: APMClient) -> None:
+    plan = await apm.gws.plans.create(GWSPlanCreateRequest(
+        name="integ-gws-get-schedule",
+        retention=_MACHINE_RETENTION,
+        schedule=_MACHINE_SCHEDULE,
+    ))
+    try:
+        fetched = await apm.gws.plans.get(plan.plan_id)
+        assert fetched.policy is not None
+        assert fetched.policy.schedule is not None
+    finally:
+        await apm.gws.plans.delete(plan)
+
+
+async def test_gws_plan_delete_removes_plan(apm: APMClient) -> None:
+    plan = await apm.gws.plans.create(GWSPlanCreateRequest(
+        name="integ-gws-delete",
+        retention=_MACHINE_RETENTION,
+        schedule=_MACHINE_SCHEDULE,
+    ))
+    plan_id = plan.plan_id
+    await apm.gws.plans.delete(plan)
+    with pytest.raises(ResourceNotFoundError) as exc_info:
+        await apm.gws.plans.get(plan_id)
+    assert_resource_error(exc_info, resource_type="ProtectionPlan", resource_id=plan_id)
+
+
 # ── ProtectionPlanCollection facade create() / delete() ──────────────────────
 
 
@@ -553,6 +697,19 @@ async def test_protection_facade_create_m365_plan(apm: APMClient) -> None:
     try:
         assert isinstance(plan, ProtectionPlan)
         assert plan.category == WorkloadCategory.M365
+    finally:
+        await apm.plans.delete(plan)
+
+
+async def test_protection_facade_create_gws_plan(apm: APMClient) -> None:
+    plan = await apm.plans.create(GWSPlanCreateRequest(
+        name="integ-facade-gws",
+        retention=_MACHINE_RETENTION,
+        schedule=_MACHINE_SCHEDULE,
+    ))
+    try:
+        assert isinstance(plan, ProtectionPlan)
+        assert plan.category == WorkloadCategory.GWS
     finally:
         await apm.plans.delete(plan)
 

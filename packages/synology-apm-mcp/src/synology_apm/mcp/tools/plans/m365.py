@@ -12,9 +12,10 @@ from synology_apm.mcp._security import run_audited_tool
 from synology_apm.mcp.tools.plans._builders_common import (
     _BACKUP_COPY_FREQUENCY,
     _FREQUENCY,
-    _RETENTION_SCHEDULE_DESC,
     _RETENTION_TYPE,
     _build_m365_plan_request,
+    _create_plan_desc,
+    _update_plan_desc,
 )
 from synology_apm.sdk import APMClient
 
@@ -22,12 +23,7 @@ from synology_apm.sdk import APMClient
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     """Register M365 protection plan create/update tools onto server."""
 
-    @registrar.tool("admin", description=(
-        f"Create an M365 protection plan (fails if the name is already taken). {_RETENTION_SCHEDULE_DESC} "
-        "Optional backup_copy_* configures a cross-storage Backup Copy destination, retention, and "
-        "schedule (backup_copy_schedule_frequency accepts after_backup here in addition to "
-        "daily/weekly; weekly requires at least one weekday in backup_copy_weekdays)."
-    ))
+    @registrar.tool("admin", description=_create_plan_desc("an M365"))
     async def create_m365_protection_plan(
         ctx: Context,
         name: str,
@@ -73,14 +69,7 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
             params={"name": name},
         )
 
-    @registrar.tool("admin", description=(
-        "Update an existing M365 protection plan by ID. Base fields (name, retention_type, retention_days, "
-        "retention_versions, schedule_frequency, schedule_time, weekdays, description, is_immutable) must be "
-        "supplied explicitly every call — call get_protection_plan first and resupply current values for "
-        "anything unchanged. is_immutable requires keep_days retention; weekly needs at least one weekday; "
-        "gfs_* must be resupplied whenever retention_type=keep_advanced. This is a full replace: backup_copy_* "
-        "left unset resets Backup Copy to disabled."
-    ))
+    @registrar.tool("admin", description=_update_plan_desc("M365"))
     async def update_m365_protection_plan(
         ctx: Context,
         plan_id: str,

@@ -150,7 +150,7 @@ async def test_fetch_s3_cert_and_region_survives_null_fields() -> None:
 
     session = make_session()
     with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
-        mock_post.return_value = {"cert": None, "region": None}
+        mock_post.return_value = {"certificate": None, "region": None}
         cert, region = await _fetch_s3_cert_and_region(
             session, "https://s3.example.com:443", "ak", "sk"
         )
@@ -375,7 +375,7 @@ async def test_parser_vault_name() -> None:
 
 async def test_add_s3_posts_correct_body() -> None:
     async with connected_session() as (session, m):
-        m.post(REGION_CERT_URL, payload={"region": "us-east-1", "cert": ""})
+        m.post(REGION_CERT_URL, payload={"region": "us-east-1", "certificate": {"cert": ""}})
         m.post(VHOST_URL, payload={"supportVirtualHost": True})
         m.post(CATALOG_CHECK_URL, payload=EMPTY_CONNECTIONS_RAW)
         m.post(ADD_URL, payload={"id": STORAGE_ID, "encryptionKey": ""})
@@ -401,7 +401,7 @@ async def test_add_s3_posts_correct_body_fields() -> None:
         if json is not None:
             captured_bodies.append({"path": path, "body": json})
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -451,7 +451,7 @@ async def test_add_s3_trust_self_signed(
         if json is not None:
             captured_bodies.append({"path": path, "body": json})
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": cert_from_api}
+            return {"region": "us-east-1", "certificate": {"cert": cert_from_api}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -488,7 +488,7 @@ async def test_add_s3_relink_key_sent_in_body() -> None:
         if json is not None:
             captured_bodies.append({"path": path, "body": json})
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -523,7 +523,7 @@ async def test_add_s3_encryption_key(raw_key: str | None, expected_key: str | No
 
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -551,7 +551,7 @@ async def test_add_s3_conflict_raises() -> None:
 
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -580,7 +580,7 @@ async def test_add_s3_encryption_mismatch_raises() -> None:
 
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -609,7 +609,7 @@ async def test_add_s3_other_error_reraises() -> None:
 
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -637,7 +637,7 @@ async def test_add_s3_unmanaged_catalogs_no_plan_raises() -> None:
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         nonlocal add_called
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -668,7 +668,7 @@ async def test_add_s3_unmanaged_catalogs_with_plan_calls_batch_relink() -> None:
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         nonlocal batch_relink_body
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -707,7 +707,7 @@ async def test_add_s3_survives_null_id_in_batch_relink_storage_uuid() -> None:
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         nonlocal batch_relink_body
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -741,7 +741,7 @@ async def test_add_s3_batch_relink_failure_sets_relink_warning() -> None:
 
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -776,7 +776,7 @@ async def test_add_s3_no_catalogs_skips_batch_relink() -> None:
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         nonlocal batch_relink_called
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -810,7 +810,7 @@ async def test_add_s3_survives_null_connections_key() -> None:
 
     async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
         if "region_cert" in path:
-            return {"region": "us-east-1", "cert": ""}
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
         if "support_virtual_host" in path:
             return {"supportVirtualHost": True}
         if "storage_connection/remote" in path:
@@ -897,7 +897,7 @@ async def test_update_s3_trust_self_signed_includes_cert() -> None:
         if json is not None:
             captured_bodies.append({"path": path, "body": json})
         if "region_cert" in path:
-            return {"cert": "PEM", "region": ""}
+            return {"certificate": {"cert": "PEM"}, "region": ""}
         return {}
 
     async def fake_get(path: str, **kw: Any) -> dict[str, Any]:
@@ -925,7 +925,7 @@ async def test_update_s3_trust_self_signed_ca_endpoint_omits_cert() -> None:
         if json is not None:
             captured_bodies.append({"path": path, "body": json})
         if "region_cert" in path:
-            return {"cert": "", "region": ""}
+            return {"certificate": {"cert": ""}, "region": ""}
         return {}
 
     async def fake_get(path: str, **kw: Any) -> dict[str, Any]:

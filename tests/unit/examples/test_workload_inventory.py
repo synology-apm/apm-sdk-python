@@ -12,14 +12,16 @@ import pytest
 import workload_inventory
 from workload_inventory import _build_inventory, _get_version_count, _print_table, run
 
-from synology_apm.sdk import M365WorkloadType, MachineWorkloadType, WorkloadStatus
+from synology_apm.sdk import GWSWorkloadType, M365WorkloadType, MachineWorkloadType, WorkloadStatus
 from tests.unit.examples._fixtures import (
     make_fake_apm,
+    make_gws_domain_info,
+    make_gws_workload,
     make_location_info,
+    make_m365_tenant_info,
     make_m365_workload,
     make_machine_workload,
     make_protection_plan,
-    make_saas_tenant,
     patch_make_client,
 )
 
@@ -27,9 +29,11 @@ from tests.unit.examples._fixtures import (
 
 _TENANT_ID = "123e4567-e89b-12d3-a456-426614174000"
 _TENANT_NAME = "Contoso"
-_TENANT_NAMES: dict[str, str] = {_TENANT_ID: _TENANT_NAME}
+_DOMAIN = "gwsdemo.example.com"
+_DOMAIN_NAME = "Gwsdemo"
+_TENANT_OR_DOMAIN_NAMES: dict[str, str] = {_TENANT_ID: _TENANT_NAME, _DOMAIN: _DOMAIN_NAME}
 
-_NO_TENANT_NAMES: dict[str, str] = {}
+_NO_TENANT_OR_DOMAIN_NAMES: dict[str, str] = {}
 
 
 # ── _build_inventory: category="all" ─────────────────────────────────────────
@@ -37,42 +41,63 @@ _NO_TENANT_NAMES: dict[str, str] = {}
 
 def test_build_inventory_all_includes_category_and_tenant_columns() -> None:
     machine_wl = make_machine_workload()
-    headers, _ = _build_inventory([machine_wl], [None], _TENANT_NAMES, "all", False)
+    headers, _ = _build_inventory([machine_wl], [None], _TENANT_OR_DOMAIN_NAMES, "all", False)
     assert "category" in headers
-    assert "tenant" in headers
+    assert "tenant_or_domain" in headers
 
 
 def test_build_inventory_all_machine_row_has_empty_tenant() -> None:
     machine_wl = make_machine_workload(name="CORP-PC-001")
-    headers, rows = _build_inventory([machine_wl], [None], _TENANT_NAMES, "all", False)
-    tenant_idx = headers.index("tenant")
+    headers, rows = _build_inventory([machine_wl], [None], _TENANT_OR_DOMAIN_NAMES, "all", False)
+    tenant_idx = headers.index("tenant_or_domain")
     assert rows[0][tenant_idx] == ""
 
 
 def test_build_inventory_all_m365_row_uses_tenant_name_from_map() -> None:
     m365_wl = make_m365_workload(tenant_id=_TENANT_ID)
-    headers, rows = _build_inventory([m365_wl], [None], _TENANT_NAMES, "all", False)
-    tenant_idx = headers.index("tenant")
+    headers, rows = _build_inventory([m365_wl], [None], _TENANT_OR_DOMAIN_NAMES, "all", False)
+    tenant_idx = headers.index("tenant_or_domain")
     assert rows[0][tenant_idx] == _TENANT_NAME
 
 
 def test_build_inventory_all_m365_row_falls_back_to_tenant_id_when_not_in_map() -> None:
     m365_wl = make_m365_workload(tenant_id=_TENANT_ID)
-    headers, rows = _build_inventory([m365_wl], [None], _NO_TENANT_NAMES, "all", False)
-    tenant_idx = headers.index("tenant")
+    headers, rows = _build_inventory([m365_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "all", False)
+    tenant_idx = headers.index("tenant_or_domain")
     assert rows[0][tenant_idx] == _TENANT_ID
+
+
+def test_build_inventory_all_gws_row_uses_domain_name_from_map() -> None:
+    gws_wl = make_gws_workload(domain=_DOMAIN)
+    headers, rows = _build_inventory([gws_wl], [None], _TENANT_OR_DOMAIN_NAMES, "all", False)
+    tenant_idx = headers.index("tenant_or_domain")
+    assert rows[0][tenant_idx] == _DOMAIN_NAME
+
+
+def test_build_inventory_all_gws_row_falls_back_to_domain_when_not_in_map() -> None:
+    gws_wl = make_gws_workload(domain=_DOMAIN)
+    headers, rows = _build_inventory([gws_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "all", False)
+    tenant_idx = headers.index("tenant_or_domain")
+    assert rows[0][tenant_idx] == _DOMAIN
+
+
+def test_build_inventory_all_gws_row_has_category_label_gws() -> None:
+    gws_wl = make_gws_workload(domain=_DOMAIN)
+    headers, rows = _build_inventory([gws_wl], [None], _TENANT_OR_DOMAIN_NAMES, "all", False)
+    cat_idx = headers.index("category")
+    assert rows[0][cat_idx] == "GWS"
 
 
 def test_build_inventory_all_machine_row_has_category_label_machine() -> None:
     machine_wl = make_machine_workload()
-    headers, rows = _build_inventory([machine_wl], [None], _TENANT_NAMES, "all", False)
+    headers, rows = _build_inventory([machine_wl], [None], _TENANT_OR_DOMAIN_NAMES, "all", False)
     cat_idx = headers.index("category")
     assert rows[0][cat_idx] == "Machine"
 
 
 def test_build_inventory_all_m365_row_has_category_label_m365() -> None:
     m365_wl = make_m365_workload(tenant_id=_TENANT_ID)
-    headers, rows = _build_inventory([m365_wl], [None], _TENANT_NAMES, "all", False)
+    headers, rows = _build_inventory([m365_wl], [None], _TENANT_OR_DOMAIN_NAMES, "all", False)
     cat_idx = headers.index("category")
     assert rows[0][cat_idx] == "M365"
 
@@ -82,14 +107,14 @@ def test_build_inventory_all_m365_row_has_category_label_m365() -> None:
 
 def test_build_inventory_machine_omits_category_and_tenant_columns() -> None:
     machine_wl = make_machine_workload()
-    headers, _ = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, _ = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     assert "category" not in headers
-    assert "tenant" not in headers
+    assert "tenant_or_domain" not in headers
 
 
 def test_build_inventory_machine_includes_core_columns() -> None:
     machine_wl = make_machine_workload()
-    headers, _ = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, _ = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     for col in ("name", "type", "plan_name", "backup_server", "last_backup_at", "backup_status"):
         assert col in headers
 
@@ -99,8 +124,18 @@ def test_build_inventory_machine_includes_core_columns() -> None:
 
 def test_build_inventory_m365_includes_tenant_but_not_category() -> None:
     m365_wl = make_m365_workload(tenant_id=_TENANT_ID)
-    headers, _ = _build_inventory([m365_wl], [None], _TENANT_NAMES, "m365", False)
-    assert "tenant" in headers
+    headers, _ = _build_inventory([m365_wl], [None], _TENANT_OR_DOMAIN_NAMES, "m365", False)
+    assert "tenant_or_domain" in headers
+    assert "category" not in headers
+
+
+# ── _build_inventory: category="gws" ─────────────────────────────────────────
+
+
+def test_build_inventory_gws_includes_tenant_but_not_category() -> None:
+    gws_wl = make_gws_workload(domain=_DOMAIN)
+    headers, _ = _build_inventory([gws_wl], [None], _TENANT_OR_DOMAIN_NAMES, "gws", False)
+    assert "tenant_or_domain" in headers
     assert "category" not in headers
 
 
@@ -109,7 +144,7 @@ def test_build_inventory_m365_includes_tenant_but_not_category() -> None:
 
 def test_build_inventory_include_versions_true_adds_version_count_column() -> None:
     machine_wl = make_machine_workload()
-    headers, rows = _build_inventory([machine_wl], [42], _NO_TENANT_NAMES, "machine", True)
+    headers, rows = _build_inventory([machine_wl], [42], _NO_TENANT_OR_DOMAIN_NAMES, "machine", True)
     assert "version_count" in headers
     vc_idx = headers.index("version_count")
     assert rows[0][vc_idx] == 42
@@ -117,13 +152,13 @@ def test_build_inventory_include_versions_true_adds_version_count_column() -> No
 
 def test_build_inventory_include_versions_false_omits_version_count_column() -> None:
     machine_wl = make_machine_workload()
-    headers, _ = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, _ = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     assert "version_count" not in headers
 
 
 def test_build_inventory_include_versions_none_count_stored_as_none() -> None:
     machine_wl = make_machine_workload()
-    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", True)
+    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", True)
     vc_idx = headers.index("version_count")
     assert rows[0][vc_idx] is None
 
@@ -133,28 +168,28 @@ def test_build_inventory_include_versions_none_count_stored_as_none() -> None:
 
 def test_build_inventory_machine_row_name() -> None:
     machine_wl = make_machine_workload(name="CORP-PC-001")
-    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     name_idx = headers.index("name")
     assert rows[0][name_idx] == "CORP-PC-001"
 
 
 def test_build_inventory_machine_row_type_is_uppercase_enum_value() -> None:
     machine_wl = make_machine_workload(workload_type=MachineWorkloadType.PC)
-    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     type_idx = headers.index("type")
     assert rows[0][type_idx] == "PC"
 
 
 def test_build_inventory_machine_row_type_vm_is_uppercase() -> None:
     machine_wl = make_machine_workload(workload_type=MachineWorkloadType.VM)
-    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     type_idx = headers.index("type")
     assert rows[0][type_idx] == "VM"
 
 
 def test_build_inventory_m365_row_type_is_display_label() -> None:
     m365_wl = make_m365_workload(workload_type=M365WorkloadType.EXCHANGE, tenant_id=_TENANT_ID)
-    headers, rows = _build_inventory([m365_wl], [None], _TENANT_NAMES, "m365", False)
+    headers, rows = _build_inventory([m365_wl], [None], _TENANT_OR_DOMAIN_NAMES, "m365", False)
     type_idx = headers.index("type")
     assert rows[0][type_idx] == "Exchange"
 
@@ -162,7 +197,7 @@ def test_build_inventory_m365_row_type_is_display_label() -> None:
 def test_build_inventory_machine_row_plan_name() -> None:
     plan = make_protection_plan(name="Daily Backup")
     machine_wl = make_machine_workload(plan=plan)
-    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     plan_idx = headers.index("plan_name")
     assert rows[0][plan_idx] == "Daily Backup"
 
@@ -170,21 +205,21 @@ def test_build_inventory_machine_row_plan_name() -> None:
 def test_build_inventory_machine_row_backup_server_name() -> None:
     server = make_location_info(name="apm-server-01")
     machine_wl = make_machine_workload(backup_server=server)
-    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     server_idx = headers.index("backup_server")
     assert rows[0][server_idx] == "apm-server-01"
 
 
 def test_build_inventory_machine_row_backup_server_empty_when_none() -> None:
     machine_wl = make_machine_workload(backup_server=None)
-    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     server_idx = headers.index("backup_server")
     assert rows[0][server_idx] == ""
 
 
 def test_build_inventory_machine_row_backup_status_is_enum_value() -> None:
     machine_wl = make_machine_workload(status=WorkloadStatus.SUCCESS)
-    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_NAMES, "machine", False)
+    headers, rows = _build_inventory([machine_wl], [None], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     status_idx = headers.index("backup_status")
     assert rows[0][status_idx] == WorkloadStatus.SUCCESS.value
 
@@ -196,7 +231,7 @@ def test_build_inventory_all_mixed_workloads_produce_two_rows() -> None:
     machine_wl = make_machine_workload(name="CORP-PC-001")
     m365_wl = make_m365_workload(name="alice@contoso.com", tenant_id=_TENANT_ID)
     headers, rows = _build_inventory(
-        [machine_wl, m365_wl], [None, None], _TENANT_NAMES, "all", False
+        [machine_wl, m365_wl], [None, None], _TENANT_OR_DOMAIN_NAMES, "all", False
     )
     assert len(rows) == 2
     name_idx = headers.index("name")
@@ -208,7 +243,7 @@ def test_build_inventory_all_version_counts_assigned_per_workload() -> None:
     machine_wl = make_machine_workload()
     m365_wl = make_m365_workload(tenant_id=_TENANT_ID)
     headers, rows = _build_inventory(
-        [machine_wl, m365_wl], [7, 3], _TENANT_NAMES, "all", True
+        [machine_wl, m365_wl], [7, 3], _TENANT_OR_DOMAIN_NAMES, "all", True
     )
     vc_idx = headers.index("version_count")
     assert rows[0][vc_idx] == 7
@@ -219,7 +254,7 @@ def test_build_inventory_all_version_counts_assigned_per_workload() -> None:
 
 
 def test_build_inventory_empty_workloads_returns_empty_rows() -> None:
-    headers, rows = _build_inventory([], [], _NO_TENANT_NAMES, "machine", False)
+    headers, rows = _build_inventory([], [], _NO_TENANT_OR_DOMAIN_NAMES, "machine", False)
     assert rows == []
     assert "name" in headers
 
@@ -271,6 +306,19 @@ async def test_get_version_count_m365_workload_uses_m365_collection() -> None:
     apm.machine.workloads.list_versions.assert_not_called()
 
 
+async def test_get_version_count_gws_workload_uses_gws_collection() -> None:
+    apm = make_fake_apm()
+    apm.machine.workloads.list_versions = AsyncMock(return_value=([], 0))
+    apm.gws.workloads.list_versions = AsyncMock(return_value=([], 4))
+    wl = make_gws_workload()
+
+    count = await _get_version_count(apm, wl, asyncio.Semaphore(1))
+
+    assert count == 4
+    apm.gws.workloads.list_versions.assert_called_once_with(wl, limit=1)
+    apm.machine.workloads.list_versions.assert_not_called()
+
+
 # ── run() ─────────────────────────────────────────────────────────────────────
 
 
@@ -294,6 +342,7 @@ async def test_run_csv_machine_with_versions_emits_exact_header_and_row(
         concurrency=2,
         category="machine",
         m365_services=None,
+        gws_services=None,
         output_format="csv",
     )
 
@@ -319,6 +368,7 @@ async def test_run_no_versions_skips_lookup_and_omits_column(
         concurrency=2,
         category="machine",
         m365_services=None,
+        gws_services=None,
         output_format="csv",
     )
 
@@ -337,6 +387,7 @@ async def test_run_retired_only_forwards_is_retired(monkeypatch: pytest.MonkeyPa
         concurrency=2,
         category="machine",
         m365_services=None,
+        gws_services=None,
         output_format="csv",
     )
 
@@ -347,7 +398,7 @@ async def test_run_json_m365_uses_tenant_display_name(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     apm = make_fake_apm()
-    tenant = make_saas_tenant()
+    tenant = make_m365_tenant_info()
     wl = make_m365_workload(
         name="alice@contoso.com",
         tenant_id=tenant.tenant_id,
@@ -364,13 +415,47 @@ async def test_run_json_m365_uses_tenant_display_name(
         concurrency=2,
         category="m365",
         m365_services=[M365WorkloadType.EXCHANGE],
+        gws_services=None,
         output_format="json",
     )
 
     data = json.loads(capsys.readouterr().out)
     assert data[0]["name"] == "alice@contoso.com"
-    assert data[0]["tenant"] == "Contoso"
+    assert data[0]["tenant_or_domain"] == "Contoso"
     assert data[0]["type"] == "Exchange"
+    assert data[0]["version_count"] == 2
+    assert "category" not in data[0]
+
+
+async def test_run_json_gws_uses_domain_display_name(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    apm = make_fake_apm()
+    domain_info = make_gws_domain_info()
+    wl = make_gws_workload(
+        name="alice@gwsdemo.example.com",
+        domain=domain_info.domain,
+        workload_type=GWSWorkloadType.MAIL,
+    )
+    apm.saas.list.return_value = ([domain_info], 1)
+    apm.gws.workloads.list.return_value = ([wl], 1)
+    apm.gws.workloads.list_versions = AsyncMock(return_value=([], 2))
+    patch_make_client(monkeypatch, workload_inventory, apm)
+
+    await run(
+        retired_only=False,
+        include_versions=True,
+        concurrency=2,
+        category="gws",
+        m365_services=None,
+        gws_services=[GWSWorkloadType.MAIL],
+        output_format="json",
+    )
+
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["name"] == "alice@gwsdemo.example.com"
+    assert data[0]["tenant_or_domain"] == domain_info.name
+    assert data[0]["type"] == "Mail"
     assert data[0]["version_count"] == 2
     assert "category" not in data[0]
 
@@ -388,6 +473,7 @@ async def test_run_table_output_and_export_summary(
         concurrency=2,
         category="machine",
         m365_services=None,
+        gws_services=None,
         output_format="table",
     )
 
@@ -424,8 +510,31 @@ def test_main_parses_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> Non
         concurrency=5,
         category="machine",
         m365_services=None,
+        gws_services=None,
         output_format="csv",
         profile="lab",
+    )
+    run_main_mock.assert_called_once_with(run_mock.return_value)
+
+
+def test_main_parses_gws_flags_and_wires_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_mock, run_main_mock = _patch_entry_points(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "workload_inventory.py",
+        "--category", "gws", "--gws-workload-type", "mail", "--gws-workload-type", "drive",
+    ])
+
+    workload_inventory.main()
+
+    run_mock.assert_called_once_with(
+        retired_only=False,
+        include_versions=True,
+        concurrency=10,
+        category="gws",
+        m365_services=None,
+        gws_services=[GWSWorkloadType.MAIL, GWSWorkloadType.DRIVE],
+        output_format="table",
+        profile=None,
     )
     run_main_mock.assert_called_once_with(run_mock.return_value)
 
@@ -442,6 +551,7 @@ def test_main_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         concurrency=10,
         category="all",
         m365_services=None,
+        gws_services=None,
         output_format="table",
         profile=None,
     )

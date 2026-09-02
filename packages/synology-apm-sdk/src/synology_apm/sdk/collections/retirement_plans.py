@@ -30,23 +30,23 @@ class RetirementPlanCollection:
 
     async def list(
         self,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         limit: int = 500,
         offset: int = 0,
     ) -> ListResult[RetirementPlan]:
         """List all Retirement Plans.
 
         Args:
-            name_contains: Name keyword search. None = no filter.
-            limit:         Maximum records to return (default 500).
-            offset:        Pagination start offset (default 0).
+            keyword: Name keyword search. None = no filter.
+            limit:   Maximum records to return (default 500).
+            offset:  Pagination start offset (default 0).
 
         Returns:
             ListResult of (list of RetirementPlan, total count matching the filter)
         """
         params: dict[str, Any] = {"offset": offset, "limit": limit}
-        if name_contains:
-            params["keyword"] = name_contains
+        if keyword:
+            params["keyword"] = keyword
 
         raw = await self._session.get("/api/v1/plan/archive_plan", params=params)
         return ListResult([_parse_retirement_plan(p) for p in raw.get("plans") or []], raw.get("total"))

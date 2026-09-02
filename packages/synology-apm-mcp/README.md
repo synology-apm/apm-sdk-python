@@ -1,6 +1,6 @@
 # synology-apm-mcp
 
-MCP server for [Synology ActiveProtect Manager (APM)](https://www.synology.com/en-global/dsm/feature/active-protect-manager), built on the `synology-apm-sdk`. Exposes APM backup and restore operations, protection plans, M365 workloads, infrastructure, activities, and logs as [Model Context Protocol](https://modelcontextprotocol.io/) tools and resources for LLM agents.
+MCP server for [Synology ActiveProtect Manager (APM)](https://www.synology.com/en-global/dsm/feature/active-protect-manager), built on the `synology-apm-sdk`. Exposes APM backup and restore operations, protection plans, M365 and GWS workloads, infrastructure, activities, and logs as [Model Context Protocol](https://modelcontextprotocol.io/) tools and resources for LLM agents.
 
 ## Installation
 
@@ -162,23 +162,26 @@ sensible set of tools to register without knowing which mode was intended.
 
 ## Available Tools
 
-The MCP server exposes tools across six domains:
+The MCP server exposes tools across seven domains:
 
 - **Infrastructure**: site info, backup servers, remote storage, hypervisors
-- **Machine workloads**: list, get, backup, cancel, versions, lock/unlock, file servers, retire, delete
-- **M365 workloads**: list, get, backup, cancel, versions, lock/unlock, exports, auto backup rules, retire, delete
+- **Machine workloads**: list, get, backup, cancel, versions, lock/unlock, file servers, change plan, retire, delete
+- **M365 workloads**: list, get, backup, cancel, versions, lock/unlock, exports, auto backup rules, collaboration settings, change plan, retire, delete, tenant lookup
+- **GWS workloads**: list, get, backup, cancel, versions, lock/unlock, auto backup rules, collaboration settings, protected account types, change plan, retire, delete, domain lookup
 - **Plans**: protection, retirement, and tiering plans — list, get, create, update, delete
 - **Activities**: backup and restore activities — list, get, cancel
 - **Logs**: activity, drive, connection, and system logs (DP appliances only)
 
 Plus six **MCP resources** for stable, small reference data: `apm://site` (site overview
 including workload counts by type), `apm://servers`, `apm://plans/protection`,
-`apm://plans/retirement`, `apm://plans/tiering`, `apm://tenants`, and the
+`apm://plans/retirement`, `apm://plans/tiering`, `apm://saas-applications`, and the
 `apm://server/{server_id}` resource template. For workload queries use the
-`list_machine_workloads` and `list_m365_workloads` tools, which support filtering (including
-by backup status, and for Machine workloads also verification status) and pagination. List
-resources include `"truncated": true` when the result set exceeds 500 items, indicating that
-further pages are available via the corresponding list tool.
+`list_machine_workloads`, `list_m365_workloads`, and `list_gws_workloads` tools, which support
+filtering (including by backup status, and for Machine workloads also verification status) and
+pagination. List resources include `"truncated": true` when the result set exceeds 500 items,
+indicating that further pages are available via the corresponding list tool. The paginated,
+filterable `list_saas_applications` tool (plus `get_m365_tenant` / `get_gws_domain` for a single
+tenant/domain) complements the `apm://saas-applications` resource for larger tenant/domain lists.
 
 ## Workflow Skills
 
@@ -201,47 +204,16 @@ workflow skills are also available (a manually configured server does not get th
 - **reassign-or-retire-workload** — Move a workload to a different plan, or retire/delete it
 - **apm-mcp-conventions** — Shared reference (list-vs-get field completeness, pagination, permission modes, update semantics, destructive action preview pattern) the other skills point to; not a task on its own
 
-For implementers (tool/resource conventions, mode gating, the SDK ↔ MCP coverage manifest, testing
-conventions), see the design contract at
-[`src/synology_apm/mcp/README.md`](src/synology_apm/mcp/README.md).
-
 ## Local Development
 
 The setups above install and run the *published* `synology-apm-mcp` package via `uvx`. To point a
-client at your own checkout instead — for testing local changes before they're published —
-replace `uvx synology-apm-mcp` with `uv run --directory /path/to/apm-sdk-python synology-apm-mcp`,
-run from the repo root.
-
-**Claude:** same config file as [Claude Desktop (manual config)](#claude-desktop-manual-config)
-above, just point `command`/`args` at your checkout:
+client at your own checkout instead — for testing local changes before they're published — run
+from the repo root and replace `command`/`args` in either manual config above with:
 
 ```json
-{
-  "mcpServers": {
-    "synology-apm": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/apm-sdk-python", "synology-apm-mcp"],
-      "env": {
-        "APM_PROFILE": "default",
-        "APM_MCP_MODE": "operator"
-      }
-    }
-  }
-}
+"command": "uv",
+"args": ["run", "--directory", "/path/to/apm-sdk-python", "synology-apm-mcp"]
 ```
 
-**Codex CLI:** add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.synology-apm]
-command = "uv"
-args = ["run", "--directory", "/path/to/apm-sdk-python", "synology-apm-mcp"]
-
-[mcp_servers.synology-apm.env]
-APM_PROFILE = "default"
-APM_MCP_MODE = "operator"
-```
-
-Same environment variables as [Environment Variables](#environment-variables) above. Once
-connected, `tests/smoke/mcp/PROMPT.md` is a comprehensive prompt for exercising the full tool
-surface against a test/staging APM instance.
+(TOML: `command = "uv"` / `args = ["run", "--directory", "/path/to/apm-sdk-python", "synology-apm-mcp"]`.)
+The `env` block is unchanged either way.

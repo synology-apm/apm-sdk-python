@@ -13,17 +13,17 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 
 
 def _annotations_for(tool_name: str, required_mode: str) -> ToolAnnotations:
-    """Derive readOnlyHint/destructiveHint/idempotentHint from information already
+    """Derive read_only_hint/destructive_hint/idempotent_hint from information already
     established by this codebase's own naming/mode conventions: readonly mode means
     list/get (no side effects, trivially idempotent); delete_*/retire_* tools always
     go through destructive_tool(); update_* tools are always full-replace (also
-    idempotent). openWorldHint is deliberately left unset -- not clearly derivable
+    idempotent). open_world_hint is deliberately left unset -- not clearly derivable
     from existing conventions."""
     is_readonly = required_mode == "readonly"
     return ToolAnnotations(
-        readOnlyHint=is_readonly,
-        destructiveHint=tool_name.startswith(("delete_", "retire_")),
-        idempotentHint=is_readonly or tool_name.startswith("update_"),
+        read_only_hint=is_readonly,
+        destructive_hint=tool_name.startswith(("delete_", "retire_")),
+        idempotent_hint=is_readonly or tool_name.startswith("update_"),
     )
 
 

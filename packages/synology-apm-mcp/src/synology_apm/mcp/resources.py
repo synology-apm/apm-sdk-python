@@ -1,7 +1,7 @@
 """MCP resources: URI-addressable reference entities agents read as context."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastmcp import Context, FastMCP
@@ -15,10 +15,10 @@ from synology_apm.sdk import APMClient
 # via list_result().
 _LIST_RESOURCES: list[tuple[str, str, Callable[[APMClient], Any]]] = [
     ("apm://servers", "All backup servers with storage summary.", lambda apm: apm.backup_servers),
-    ("apm://plans/protection", "All protection plans (machine and M365).", lambda apm: apm.plans),
+    ("apm://plans/protection", "All protection plans (machine, M365, and GWS).", lambda apm: apm.plans),
     ("apm://plans/retirement", "All retirement plans.", lambda apm: apm.retirement_plans),
     ("apm://plans/tiering", "All tiering plans.", lambda apm: apm.tiering_plans),
-    ("apm://tenants", "All M365/SaaS tenants registered in APM.", lambda apm: apm.saas),
+    ("apm://saas-applications", "All SaaS applications connected to APM (M365 tenants and GWS domains).", lambda apm: apm.saas),
 ]
 
 
@@ -30,7 +30,7 @@ def register(server: FastMCP) -> None:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]
         return await run_resource(apm.get_site_info(), lambda x: x.to_dict())
 
-    def _make_list_resource(collection_fn: Callable[[APMClient], Any]) -> Callable[[Context], Any]:
+    def _make_list_resource(collection_fn: Callable[[APMClient], Any]) -> Callable[[Context], Awaitable[ToolResult]]:
         # A factory (rather than a plain loop-body closure) so each resource captures
         # its own collection_fn — a closure over the loop variable directly would have
         # every resource see whatever collection_fn the loop last landed on.

@@ -6,6 +6,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from typing import TypeVar
 
 import typer
@@ -13,13 +14,24 @@ import typer
 from synology_apm.cli._display import fmt_datetime
 from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.sdk import (
+    APMActivityLogType,
     APMClient,
+    BackupActivityStatus,
+    BackupServerType,
+    GWSDomainInfo,
+    GWSWorkload,
+    GWSWorkloadType,
+    LogLevel,
+    M365TenantInfo,
     M365Workload,
     M365WorkloadType,
     MachineWorkload,
     MachineWorkloadType,
     ProtectionPlan,
+    RestoreActivityStatus,
     RetirementPlan,
+    SaasApplication,
+    ServerStatus,
     TieringPlan,
     VerifyStatus,
     WorkloadCategory,
@@ -28,52 +40,84 @@ from synology_apm.sdk import (
 )
 
 _T = TypeVar("_T")
+_E = TypeVar("_E", bound=Enum)
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
-MACHINE_TYPE_ARGS: dict[str, MachineWorkloadType] = {
-    "pc": MachineWorkloadType.PC,
-    "ps": MachineWorkloadType.PS,
-    "vm": MachineWorkloadType.VM,
-    "fs": MachineWorkloadType.FS,
-}
+
+def _enum_args(enum_cls: type[_E], *, exclude: frozenset[_E] = frozenset()) -> dict[str, _E]:
+    """Build a CLI arg-name -> enum-member dict from every member's .value, skipping `exclude`."""
+    return {e.value: e for e in enum_cls if e not in exclude}
+
+
+MACHINE_TYPE_ARGS: dict[str, MachineWorkloadType] = _enum_args(MachineWorkloadType)
+
+# Shared by `m365 <scope> list`'s sub-app registration and `activity backup list --m365-type`.
+M365_TYPE_ARGS: dict[str, M365WorkloadType] = _enum_args(M365WorkloadType)
+
+# `activity backup list --gws-type`. Not shared with `gws.py`'s own sub-app registration —
+# that keeps a separate, hyphenated _TYPE_MAP ("shared-drive", the CLI command-path spelling)
+# distinct from this dict's underscored enum-value spelling ("shared_drive").
+GWS_TYPE_ARGS: dict[str, GWSWorkloadType] = _enum_args(GWSWorkloadType)
 
 # Shared by `machine list --status` and `m365 <scope> list --status`.
 # RETIRED is excluded — already governed by the --retired flag, not a filterable status value.
-WORKLOAD_STATUS_ARGS: dict[str, WorkloadStatus] = {
-    "queuing":    WorkloadStatus.QUEUING,
-    "backing_up": WorkloadStatus.BACKING_UP,
-    "success":    WorkloadStatus.SUCCESS,
-    "failed":     WorkloadStatus.FAILED,
-    "partial":    WorkloadStatus.PARTIAL,
-    "canceled":   WorkloadStatus.CANCELED,
-    "no_backups": WorkloadStatus.NO_BACKUPS,
-    "deleting":   WorkloadStatus.DELETING,
+WORKLOAD_STATUS_ARGS: dict[str, WorkloadStatus] = _enum_args(
+    WorkloadStatus, exclude=frozenset({WorkloadStatus.RETIRED})
+)
+
+# `machine list --verify-status` (backup verification status is a Machine-specific concept).
+VERIFY_STATUS_ARGS: dict[str, VerifyStatus] = _enum_args(VerifyStatus)
+
+# `activity backup list --status`.
+BACKUP_ACTIVITY_STATUS_ARGS: dict[str, BackupActivityStatus] = _enum_args(BackupActivityStatus)
+
+# `activity restore list --status`.
+RESTORE_ACTIVITY_STATUS_ARGS: dict[str, RestoreActivityStatus] = _enum_args(RestoreActivityStatus)
+
+# `infra server list --status`.
+SERVER_STATUS_ARGS: dict[str, ServerStatus] = _enum_args(ServerStatus)
+
+# `infra server list --type`.
+BACKUP_SERVER_TYPE_ARGS: dict[str, BackupServerType] = _enum_args(BackupServerType)
+
+# `log * list --level`.
+LOG_LEVEL_ARGS: dict[str, LogLevel] = _enum_args(LogLevel)
+
+# `log activity list --type`.
+APM_ACTIVITY_LOG_TYPE_ARGS: dict[str, APMActivityLogType] = _enum_args(APMActivityLogType)
+
+# `plan protection list --category`.
+WORKLOAD_CATEGORY_ARGS: dict[str, WorkloadCategory] = _enum_args(WorkloadCategory)
+
+
+_NO_SAAS_TENANT_MESSAGE: dict[WorkloadCategory, str] = {
+    WorkloadCategory.M365: "No M365 tenant found. Add a tenant in the APM UI or specify --tenant-id.",
+    WorkloadCategory.GWS:  "No GWS domain found. Add a domain in the APM UI or specify --domain.",
 }
 
-# `machine list --verify-status` (Machine-only; M365 has no verification concept).
-VERIFY_STATUS_ARGS: dict[str, VerifyStatus] = {
-    "verifying":     VerifyStatus.VERIFYING,
-    "success":       VerifyStatus.SUCCESS,
-    "failed":        VerifyStatus.FAILED,
-    "canceled":      VerifyStatus.CANCELED,
-    "not_supported": VerifyStatus.NOT_SUPPORTED,
-    "not_enabled":   VerifyStatus.NOT_ENABLED,
-    "partial":       VerifyStatus.PARTIAL,
-    "waiting":       VerifyStatus.WAITING,
-}
+
+def saas_application_id(application: SaasApplication) -> str:
+    """Return the identifier: tenant_id for M365, domain for GWS (GWS has no separate ID)."""
+    if isinstance(application, M365TenantInfo):
+        return application.tenant_id
+    assert isinstance(application, GWSDomainInfo)
+    return application.domain
 
 
-async def _resolve_tenant(apm: APMClient, tenant_id: str | None) -> str:
-    """Return a valid tenant_id; if not provided, take the first M365 tenant from saas.list()."""
+async def _resolve_saas_tenant_id(
+    apm: APMClient, tenant_id: str | None, category: WorkloadCategory = WorkloadCategory.M365
+) -> str:
+    """Return a valid tenant_id (M365) or domain (GWS); if not provided, take the first
+    matching application from saas.list()."""
     if tenant_id is not None:
         return tenant_id
-    tenants, _ = await apm.saas.list()
-    m365 = [t for t in tenants if t.category == WorkloadCategory.M365]
-    if not m365:
-        err_console.print("[red]✗[/red] No M365 tenant found. Add a tenant in the APM UI or specify --tenant-id.")
+    apps, _ = await apm.saas.list()
+    matched = [a for a in apps if a.category == category]
+    if not matched:
+        err_console.print(f"[red]✗[/red] {_NO_SAAS_TENANT_MESSAGE[category]}")
         raise typer.Exit(code=EXIT_ERROR)
-    return m365[0].tenant_id
+    return saas_application_id(matched[0])
 
 
 async def _resolve_tiering_plan(apm: APMClient, plan_arg: str) -> TieringPlan:
@@ -110,10 +154,14 @@ async def _resolve_plans(
     return await asyncio.gather(*(_resolve_plan(apm, p, is_retired=is_retired) for p in plan_args))
 
 
-def print_resolved_tenant(cli_tenant_id: str | None, resolved_tenant_id: str) -> None:
-    """Inform the user which tenant was auto-selected when --tenant-id was not given."""
+def print_resolved_saas_tenant(cli_tenant_id: str | None, resolved_tenant_id: str, label: str = "tenant") -> None:
+    """Inform the user which tenant/domain was auto-selected when its ID option was not given.
+
+    ``label`` names the resolved scope in the printed message ("tenant" for M365,
+    "domain" for GWS).
+    """
     if cli_tenant_id is None:
-        err_console.print(f"[bright_black](Using tenant: {resolved_tenant_id})[/bright_black]")
+        err_console.print(f"[bright_black](Using {label}: {resolved_tenant_id})[/bright_black]")
 
 
 def print_resolved_version(cli_version_id: str | None, resolved_version: WorkloadVersion) -> None:
@@ -156,13 +204,31 @@ class WorkloadRef:
         provided. is_retired only applies in search mode; direct mode looks up the workload by
         ID regardless of its retirement state.
         """
-        tid = await _resolve_tenant(apm, tenant_id)
+        tid = await _resolve_saas_tenant_id(apm, tenant_id)
         if self.namespace is not None:
             return await apm.m365.workloads.get(
                 self.identifier, self.namespace, tenant_id=tid, workload_type=workload_type
             )
         return await apm.m365.workloads.get_by_name(
             self.identifier, tid, workload_type=workload_type, is_retired=is_retired
+        )
+
+    async def resolve_gws(
+        self, apm: APMClient, domain: str | None, workload_type: GWSWorkloadType, is_retired: bool = False
+    ) -> GWSWorkload:
+        """Resolve to a GWSWorkload via get() (direct mode) or get_by_name() (search mode).
+
+        ``domain`` is resolved automatically (falling back to the first GWS domain) if not
+        provided. is_retired only applies in search mode; direct mode looks up the workload by
+        ID regardless of its retirement state.
+        """
+        did = await _resolve_saas_tenant_id(apm, domain, category=WorkloadCategory.GWS)
+        if self.namespace is not None:
+            return await apm.gws.workloads.get(
+                self.identifier, self.namespace, domain=did, workload_type=workload_type
+            )
+        return await apm.gws.workloads.get_by_name(
+            self.identifier, did, workload_type=workload_type, is_retired=is_retired
         )
 
 
@@ -299,11 +365,11 @@ def parse_enum_list(
     values: list[str] | None,
     mapping: dict[str, _T],
     option_name: str,
-    available: str | None = None,
 ) -> list[_T] | None:
     """Validate and convert a list of CLI string values to enum instances.
 
-    Returns None when values is empty or None; exits with code 1 on unknown value.
+    Returns None when values is empty or None; exits with code 1 on unknown value. The
+    "available" hint shown on an unsupported value is derived from ``mapping``'s keys.
     """
     if not values:
         return None
@@ -311,13 +377,22 @@ def parse_enum_list(
     for v in values:
         enum_val = mapping.get(v.lower())
         if enum_val is None:
-            if available:
-                err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v} (available: {available})")
-            else:
-                err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v}")
+            hint = ", ".join(mapping)
+            err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v} (available: {hint})")
             raise typer.Exit(code=EXIT_ERROR)
         result.append(enum_val)
     return result
+
+
+def parse_enum_scalar(
+    value: str | None,
+    mapping: dict[str, _T],
+    option_name: str,
+) -> _T | None:
+    """Scalar counterpart to parse_enum_list(); same validation and error UX for a
+    single-value enum option. Returns None when value is None."""
+    result = parse_enum_list([value] if value is not None else None, mapping, option_name)
+    return result[0] if result else None
 
 
 def parse_time_filter(value: str) -> datetime:

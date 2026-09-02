@@ -15,6 +15,7 @@ from synology_apm.sdk import (
     BackupServerType,
     CopyReason,
     FileServerType,
+    GWSWorkloadType,
     Hypervisor,
     M365WorkloadType,
     MachineWorkloadType,
@@ -46,11 +47,14 @@ from synology_apm.sdk.models.protection_plan import (
     ProtectionPlanPolicy,
 )
 from synology_apm.sdk.models.remote_storage import RemoteStorage
-from synology_apm.sdk.models.saas import SaasTenant
+from synology_apm.sdk.models.saas import GWSDomainInfo, M365TenantInfo
 from synology_apm.sdk.models.version import VersionLocation, WorkloadVersion
 from synology_apm.sdk.models.workload import (
     FileServerConfig,
     FileServerPathSelector,
+    GWSInfo,
+    GWSUserInfo,
+    GWSWorkload,
     M365GroupInfo,
     M365Info,
     M365UserInfo,
@@ -241,6 +245,64 @@ def make_m365_workload(
         workload_type=workload_type,
         tenant_id=tenant_id,
         info=resolved_info,
+    )
+
+
+def make_gws_user_info(
+    *,
+    email: str = "alice@gwsdemo.example.com",
+) -> GWSUserInfo:
+    """Build a GWSUserInfo with sensible defaults."""
+    return GWSUserInfo(email=email)
+
+
+def make_gws_workload(
+    *,
+    workload_id: str = "123e4567-e89b-12d3-a456-426614174011",
+    name: str = "alice@gwsdemo.example.com",
+    category: WorkloadCategory = WorkloadCategory.GWS,
+    namespace: str = "ns-apm-server-01",
+    last_backup_at: datetime | None = _DT,
+    is_retired: bool = False,
+    protected_data_bytes: int = 2_147_483_648,
+    status: WorkloadStatus = WorkloadStatus.SUCCESS,
+    plan: ProtectionPlan | None = None,
+    backup_progress: int | None = None,
+    items_backed_up: int | None = None,
+    backup_server: LocationInfo | None = None,
+    backup_copy_destination: LocationInfo | None = None,
+    backup_copy_data_bytes: int = 0,
+    workload_type: GWSWorkloadType = GWSWorkloadType.MAIL,
+    domain: str = "gwsdemo.example.com",
+    info: GWSInfo | None = None,
+    backup_user: str | None = None,
+    is_anomaly: bool = False,
+) -> GWSWorkload:
+    """Build a GWSWorkload with sensible defaults."""
+    resolved_plan = plan if plan is not None else make_protection_plan(
+        category=WorkloadCategory.GWS,
+    )
+    resolved_info: GWSInfo = info if info is not None else make_gws_user_info()
+    return GWSWorkload(
+        workload_id=workload_id,
+        name=name,
+        category=category,
+        namespace=namespace,
+        last_backup_at=last_backup_at,
+        is_retired=is_retired,
+        protected_data_bytes=protected_data_bytes,
+        status=status,
+        plan=resolved_plan,
+        backup_progress=backup_progress,
+        items_backed_up=items_backed_up,
+        backup_server=backup_server,
+        backup_copy_destination=backup_copy_destination,
+        backup_copy_data_bytes=backup_copy_data_bytes,
+        workload_type=workload_type,
+        domain=domain,
+        info=resolved_info,
+        backup_user=backup_user,
+        is_anomaly=is_anomaly,
     )
 
 
@@ -455,20 +517,36 @@ def make_restore_activity(
     )
 
 
-def make_saas_tenant(
+def make_m365_tenant_info(
     *,
     tenant_id: str = "123e4567-e89b-12d3-a456-426614174060",
-    tenant_name: str = "Contoso",
-    tenant_email: str = "admin@contoso.com",
-    category: WorkloadCategory = WorkloadCategory.M365,
+    name: str = "Contoso",
+    domain: str = "contoso.onmicrosoft.com",
     protected_data_bytes: int = 107_374_182_400,
-) -> SaasTenant:
-    """Build a SaasTenant with sensible defaults."""
-    return SaasTenant(
+) -> M365TenantInfo:
+    """Build an M365TenantInfo with sensible defaults."""
+    return M365TenantInfo(
         tenant_id=tenant_id,
-        tenant_name=tenant_name,
-        tenant_email=tenant_email,
-        category=category,
+        name=name,
+        domain=domain,
+        category=WorkloadCategory.M365,
+        protected_data_bytes=protected_data_bytes,
+    )
+
+
+def make_gws_domain_info(
+    *,
+    domain: str = "gwsdemo.example.com",
+    name: str = "gwsdemo.example.com",
+    domain_admin: str = "evelyn.test@gwsdemo.example.com",
+    protected_data_bytes: int = 107_374_182_400,
+) -> GWSDomainInfo:
+    """Build a GWSDomainInfo with sensible defaults."""
+    return GWSDomainInfo(
+        domain=domain,
+        name=name,
+        domain_admin=domain_admin,
+        category=WorkloadCategory.GWS,
         protected_data_bytes=protected_data_bytes,
     )
 
@@ -539,8 +617,10 @@ def make_fake_apm() -> MagicMock:
     for collection in (
         apm.machine.workloads,
         apm.m365.workloads,
+        apm.gws.workloads,
         apm.machine.plans,
         apm.m365.plans,
+        apm.gws.plans,
         apm.plans,
         apm.activities.backup,
         apm.activities.restore,

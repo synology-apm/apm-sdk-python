@@ -1,10 +1,11 @@
-"""Integration tests: MachineWorkloadCollection / M365WorkloadCollection"""
+"""Integration tests: MachineWorkloadCollection / M365WorkloadCollection / GWSWorkloadCollection"""
 from __future__ import annotations
 
 import pytest
 
 from synology_apm.sdk import APMClient
 from synology_apm.sdk.enums import (
+    GWSWorkloadType,
     M365WorkloadType,
     MachineWorkloadType,
     WorkloadCategory,
@@ -12,6 +13,7 @@ from synology_apm.sdk.enums import (
 )
 from synology_apm.sdk.exceptions import ResourceNotFoundError
 from synology_apm.sdk.models.retirement_plan import RetirementPlan
+from synology_apm.sdk.models.saas import GWSDomainInfo, M365TenantInfo
 from synology_apm.sdk.models.version import WorkloadVersion
 from synology_apm.sdk.models.workload import M365Workload, MachineWorkload, Workload
 from tests.unit.sdk.conftest import assert_resource_error
@@ -57,7 +59,7 @@ async def test_list_namespace_filter_returns_only_matching_server(apm: APMClient
     if not servers:
         pytest.skip("No backup servers available")
     server = servers[0]
-    workloads, _ = await apm.machine.workloads.list(namespace=server.namespace)
+    workloads, _ = await apm.machine.workloads.list(namespace=[server.namespace])
     for wl in workloads:
         assert wl.namespace == server.namespace
 
@@ -226,7 +228,7 @@ async def test_backup_now_returns_backup_job(apm: APMClient) -> None:
 async def _first_m365_tenant_id(apm: APMClient) -> str:
     """Helper: return first M365 tenant_id or skip the test."""
     tenants, _ = await apm.saas.list()
-    m365 = [t for t in tenants if t.category == WorkloadCategory.M365]
+    m365 = [t for t in tenants if isinstance(t, M365TenantInfo)]
     if not m365:
         pytest.skip("No M365 tenants configured on this APM instance")
     return m365[0].tenant_id
@@ -349,4 +351,124 @@ async def test_m365_backup_now_triggers_without_error(apm: APMClient) -> None:
         pytest.skip("No protected M365 mailbox workloads — cannot test backup_now")
     wl = workloads[0]
     await apm.m365.workloads.backup_now(wl)
+
+
+# ── apm.gws.workloads.list() ──────────────────────────────────────────────────
+
+
+async def _first_gws_domain(apm: APMClient) -> str:
+    """Helper: return first GWS domain or skip the test."""
+    tenants, _ = await apm.saas.list()
+    gws = [t for t in tenants if isinstance(t, GWSDomainInfo)]
+    if not gws:
+        pytest.skip("No GWS domains configured on this APM instance")
+    return gws[0].domain
+
+
+async def test_gws_workloads_list_category_is_gws(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    workloads, _ = await apm.gws.workloads.list(domain, workload_type=GWSWorkloadType.MAIL)
+    if not workloads:
+        pytest.skip("No GWS mail workloads")
+    assert all(wl.category == WorkloadCategory.GWS for wl in workloads)
+
+
+async def test_gws_workloads_list_scope_is_mail(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    workloads, _ = await apm.gws.workloads.list(domain, workload_type=GWSWorkloadType.MAIL)
+    for wl in workloads:
+        assert wl.workload_type == GWSWorkloadType.MAIL
+
+
+async def test_gws_workloads_list_domain_matches(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    workloads, _ = await apm.gws.workloads.list(domain, workload_type=GWSWorkloadType.MAIL)
+    for wl in workloads:
+        assert wl.domain == domain
+
+
+async def test_gws_workloads_list_shared_drive_scope(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    workloads, _ = await apm.gws.workloads.list(domain, workload_type=GWSWorkloadType.SHARED_DRIVE)
+    assert isinstance(workloads, list)
+    for wl in workloads:
+        assert wl.workload_type == GWSWorkloadType.SHARED_DRIVE
+
+
+async def test_gws_workloads_list_status_filter_returns_only_matching_status(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    workloads, _ = await apm.gws.workloads.list(
+        domain, workload_type=GWSWorkloadType.MAIL, status=[WorkloadStatus.SUCCESS]
+    )
+    for wl in workloads:
+        assert wl.status == WorkloadStatus.SUCCESS
+
+
+async def test_gws_workloads_list_status_retired_raises_value_error(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    with pytest.raises(ValueError, match="RETIRED"):
+        await apm.gws.workloads.list(
+            domain, workload_type=GWSWorkloadType.MAIL, status=[WorkloadStatus.RETIRED]
+        )
+
+
+# ── apm.gws.workloads.get() ───────────────────────────────────────────────────
+
+
+async def test_gws_workloads_get_direct_mode(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    workloads, _ = await apm.gws.workloads.list(domain, workload_type=GWSWorkloadType.MAIL)
+    if not workloads:
+        pytest.skip("No GWS mail workloads")
+    first = workloads[0]
+    fetched = await apm.gws.workloads.get(
+        first.workload_id,
+        namespace=first.namespace,
+        domain=domain,
+        workload_type=GWSWorkloadType.MAIL,
+    )
+    assert fetched.workload_id == first.workload_id
+
+
+async def test_gws_workloads_get_raises_not_found_for_bad_id(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    with pytest.raises(ResourceNotFoundError) as exc_info:
+        await apm.gws.workloads.get(
+            "00000000-0000-0000-0000-000000000000",
+            namespace="00000000-0000-0000-0000-000000000000",
+            domain=domain,
+            workload_type=GWSWorkloadType.MAIL,
+        )
+    assert_resource_error(exc_info, resource_type="GWSWorkload", resource_id="00000000-0000-0000-0000-000000000000")
+
+
+# ── apm.gws.workloads.list_versions() ─────────────────────────────────────────
+
+
+async def test_gws_list_versions_returns_list(apm: APMClient) -> None:
+    domain = await _first_gws_domain(apm)
+    workloads, _ = await apm.gws.workloads.list(domain, workload_type=GWSWorkloadType.MAIL, is_retired=False)
+    if not workloads:
+        pytest.skip("No protected GWS mail workloads")
+    wl = workloads[0]
+    versions, total = await apm.gws.workloads.list_versions(wl)
+    assert isinstance(versions, list)
+    assert isinstance(total, int)
+
+
+# ── apm.gws.workloads.backup_now() ────────────────────────────────────────────
+
+
+async def test_gws_backup_now_triggers_without_error(apm: APMClient) -> None:
+    """Triggers a real GWS backup and verifies no exception is raised.
+
+    This is a write operation — it starts an actual backup task on the APM.
+    The job is NOT awaited to completion to keep the test fast.
+    """
+    domain = await _first_gws_domain(apm)
+    workloads, _ = await apm.gws.workloads.list(domain, workload_type=GWSWorkloadType.MAIL, is_retired=False)
+    if not workloads:
+        pytest.skip("No protected GWS mail workloads — cannot test backup_now")
+    wl = workloads[0]
+    await apm.gws.workloads.backup_now(wl)
 

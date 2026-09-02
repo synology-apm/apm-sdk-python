@@ -20,18 +20,18 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
     @registrar.tool(description=f"List tiering plans. Filter by name. {LIST_RESULT_SUFFIX}")
     async def list_tiering_plans(
         ctx: Context,
-        name_contains: str | None = None,
+        keyword: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await list_tool(
-            apm.tiering_plans.list(name_contains=name_contains, limit=limit, offset=offset),
+            apm.tiering_plans.list(keyword=keyword, limit=limit, offset=offset),
             lambda x: x.to_dict(),
             offset=offset,
         )
 
-    @registrar.tool(description="Get a single tiering plan by ID. Use list_tiering_plans (optionally with name_contains) to find the ID.")
+    @registrar.tool(description="Get a single tiering plan by ID. Use list_tiering_plans (optionally with keyword) to find the ID.")
     async def get_tiering_plan(
         ctx: Context,
         plan_id: str,

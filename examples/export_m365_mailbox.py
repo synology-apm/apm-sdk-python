@@ -57,7 +57,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any
+from typing import cast
 
 from _common import (
     Progress,
@@ -156,7 +156,9 @@ class MailExportDomain:
     export_collection: Callable[[APMClient], ExportCollection]
     identity_of: Callable[[M365Workload], str]
     plan_units: Callable[[M365Workload, str, str], list[PlannedUnit]]   # (wl, identity, out_dir)
-    start_unit: Callable[[Any, M365Workload, WorkloadVersion, PlannedUnit], Awaitable[M365ExportStartResult]]
+    start_unit: Callable[
+        [ExportCollection, M365Workload, WorkloadVersion, PlannedUnit], Awaitable[M365ExportStartResult]
+    ]
     job_to_row: Callable[[MailExportJob], dict[str, str]]
     failure_to_row: Callable[[MailExportFailure], dict[str, str]]
     listing_label: str                       # "Exchange users" / "M365 Groups"
@@ -490,7 +492,7 @@ async def cancel_all(
     export = domain.export_collection(apm)
     print("Scanning export tasks...")
 
-    async def _list_cancellable(wl: M365Workload) -> list[tuple[M365Workload, Any]]:
+    async def _list_cancellable(wl: M365Workload) -> list[tuple[M365Workload, M365ExportActivity]]:
         try:
             activities, _ = await export.list(wl, limit=200)
             return [(wl, a) for a in activities if a.status == M365ExportStatus.PREPARING]
@@ -517,7 +519,7 @@ async def cancel_all(
 
     print(f"\nCancelling {len(targets)} task(s)...")
 
-    async def _do_cancel(wl: M365Workload, act: Any) -> bool:
+    async def _do_cancel(wl: M365Workload, act: M365ExportActivity) -> bool:
         label = "archive mailbox" if act.is_archive_mail else "mailbox"
         async with sem:
             try:
@@ -798,9 +800,11 @@ def _build_exchange_domain(mailbox_scope: str) -> MailExportDomain:
         return units
 
     async def start_unit(
-        export: Any, workload: M365Workload, version: WorkloadVersion, unit: PlannedUnit
+        export: ExportCollection, workload: M365Workload, version: WorkloadVersion, unit: PlannedUnit
     ) -> M365ExportStartResult:
-        result: M365ExportStartResult = await export.start(
+        # This domain's export_collection always yields an ExchangeExportCollection; the
+        # field is typed ExportCollection because MailExportDomain is shared with the Group domain.
+        result: M365ExportStartResult = await cast(ExchangeExportCollection, export).start(
             workload, version,
             archive_mailbox=unit.archive,
             export_name=os.path.basename(unit.dest_path),
@@ -870,7 +874,7 @@ def _group_plan_units(workload: M365Workload, identity: str, output_dir: str) ->
 
 
 async def _group_start_unit(
-    export: Any, workload: M365Workload, version: WorkloadVersion, unit: PlannedUnit
+    export: ExportCollection, workload: M365Workload, version: WorkloadVersion, unit: PlannedUnit
 ) -> M365ExportStartResult:
     result: M365ExportStartResult = await export.start(
         workload, version, export_name=os.path.basename(unit.dest_path)

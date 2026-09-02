@@ -35,7 +35,8 @@ relies on (list vs. get field completeness, pagination, permission modes).
    - Servers approaching capacity (>80% used): flag as needing attention
    - Recommendation: enable tiering, add storage, or retire old workloads
 
-7. If the user asks about specific workload storage, call `list_machine_workloads` and sort by
+7. If the user asks about specific workload storage, call
+   `list_machine_workloads`/`list_m365_workloads`/`list_gws_workloads` and sort by
    `protected_data_bytes` descending to identify the largest consumers. There is no server-side
    sort — page through with `offset` until `total` is fully collected (see
    `apm-mcp-conventions`) before sorting, otherwise the "largest" result is only the largest

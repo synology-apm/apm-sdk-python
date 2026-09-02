@@ -66,6 +66,37 @@ class TestListBackupActivities:
             await call_tool(server, "list_backup_activities", mock_ctx, machine_types=["vm"], m365_types=["exchange"])
 
     @pytest.mark.asyncio
+    async def test_machine_types_and_gws_types_mutually_exclusive(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
+        from synology_apm.mcp._server import create_server
+
+        server = create_server(mode="admin")
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            await call_tool(server, "list_backup_activities", mock_ctx, machine_types=["vm"], gws_types=["mail"])
+
+    @pytest.mark.asyncio
+    async def test_m365_types_and_gws_types_mutually_exclusive(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
+        from synology_apm.mcp._server import create_server
+
+        server = create_server(mode="admin")
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            await call_tool(server, "list_backup_activities", mock_ctx, m365_types=["exchange"], gws_types=["mail"])
+
+    @pytest.mark.asyncio
+    async def test_gws_types_forwarded(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
+        from synology_apm.mcp._server import create_server
+
+        mock_apm.activities.backup.list.return_value = ([], 0)
+
+        server = create_server(mode="admin")
+        await call_tool(server, "list_backup_activities", mock_ctx, gws_types=["mail", "shared_drive"])
+
+        _, kwargs = mock_apm.activities.backup.list.call_args
+        from synology_apm.sdk import GWSWorkloadType
+        assert kwargs["gws_types"] == [GWSWorkloadType.MAIL, GWSWorkloadType.SHARED_DRIVE]
+
+    @pytest.mark.asyncio
     async def test_machine_workload_scoping_resolves_and_forwards_workload(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 

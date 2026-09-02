@@ -1,7 +1,8 @@
-"""Request-construction primitives shared by machine and M365 protection plan tools.
+"""Request-construction primitives shared by machine, M365, and GWS protection plan tools.
 
-No tool registration lives here — these are pure parsers and request-builders
-consumed by tools/plans/machine.py, tools/plans/m365.py, and tools/plans/_builders_machine.py.
+No tool registration lives here — these are pure parsers and request-builders consumed by
+tools/plans/machine.py, tools/plans/m365.py, tools/plans/gws.py, and
+tools/plans/_builders_machine.py.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from synology_apm.sdk import (
     BackupCopyConfig,
     BackupServer,
     GFSRetention,
+    GWSPlanCreateRequest,
     M365PlanCreateRequest,
     ProtectionRetentionPolicy,
     ProtectionSchedule,
@@ -33,9 +35,40 @@ _RETENTION_SCHEDULE_DESC = (
     "none; is_immutable requires keep_days. schedule_frequency: manual, hourly, daily, weekly (weekly "
     "requires at least one weekday in weekdays). schedule_time: HH:MM. weekdays: list of sun,mon,tue,..."
 )
-"""Shared clause for create_machine_protection_plan and create_m365_protection_plan
-descriptions, documenting the retention/schedule semantics both plan types share
-identically, so the wording can't drift between the two tool files."""
+"""Shared clause for create_machine_protection_plan, create_m365_protection_plan, and
+create_gws_protection_plan descriptions, documenting the retention/schedule semantics all
+three plan types share identically, so the wording can't drift between the tool files."""
+
+
+def _create_plan_desc(article_and_label: str) -> str:
+    """Tool description for create_m365_protection_plan / create_gws_protection_plan —
+    the two SaaS plan types have no vm_config/pc_config/ps_config/db_config, so their
+    create-tool description is otherwise identical aside from the plan-type label.
+
+    Args:
+        article_and_label: e.g. "an M365" or "a GWS" (includes the grammatical article
+                            since it depends on pronunciation, not spelling)."""
+    return (
+        f"Create {article_and_label} protection plan (fails if the name is already taken). "
+        f"{_RETENTION_SCHEDULE_DESC} "
+        "Optional backup_copy_* configures a cross-storage Backup Copy destination, retention, and "
+        "schedule (backup_copy_schedule_frequency accepts after_backup here in addition to "
+        "daily/weekly; weekly requires at least one weekday in backup_copy_weekdays)."
+    )
+
+
+def _update_plan_desc(label: str) -> str:
+    """Tool description for update_m365_protection_plan / update_gws_protection_plan —
+    see _create_plan_desc for why the two SaaS plan types share this template."""
+    return (
+        f"Update an existing {label} protection plan by ID. Base fields (name, retention_type, "
+        "retention_days, retention_versions, schedule_frequency, schedule_time, weekdays, description, "
+        "is_immutable) must be supplied explicitly every call — call get_protection_plan first and "
+        "resupply current values for anything unchanged. is_immutable requires keep_days retention; "
+        "weekly needs at least one weekday; gfs_* must be resupplied whenever retention_type=keep_advanced. "
+        "This is a full replace: backup_copy_* left unset resets Backup Copy to disabled."
+    )
+
 
 _DAY_MAP = {"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
 
@@ -187,9 +220,63 @@ async def _build_m365_plan_request(
     backup_copy_weekdays: list[WeekDayLiteral] | None,
 ) -> M365PlanCreateRequest:
     """Shared request-builder for create_m365_protection_plan and
-    update_m365_protection_plan. Narrower than _build_machine_plan_request (in
-    _builders_machine.py) — M365 plans have no vm_config/pc_config/ps_config/db_config."""
+    update_m365_protection_plan: assembles retention, schedule, and backup copy
+    config into an M365PlanCreateRequest."""
     return M365PlanCreateRequest(
+        name=name,
+        retention=_build_retention(
+            retention_type, retention_days, retention_versions,
+            gfs_daily_versions, gfs_weekly_versions, gfs_monthly_versions, gfs_yearly_versions,
+        ),
+        schedule=_build_schedule(schedule_frequency, schedule_time, weekdays),
+        description=description,
+        is_immutable=is_immutable,
+        run_schedule_by_controller_time=run_schedule_by_controller_time,
+        backup_copy=await _build_backup_copy(
+            apm,
+            backup_copy_destination_type, backup_copy_destination_id,
+            backup_copy_retention_type, backup_copy_retention_days, backup_copy_retention_versions,
+            backup_copy_gfs_daily_versions, backup_copy_gfs_weekly_versions,
+            backup_copy_gfs_monthly_versions, backup_copy_gfs_yearly_versions,
+            backup_copy_schedule_frequency, backup_copy_schedule_time, backup_copy_weekdays,
+        ),
+    )
+
+
+async def _build_gws_plan_request(
+    apm: APMClient,
+    *,
+    name: str,
+    retention_type: str,
+    retention_days: int | None,
+    retention_versions: int | None,
+    gfs_daily_versions: int | None,
+    gfs_weekly_versions: int | None,
+    gfs_monthly_versions: int | None,
+    gfs_yearly_versions: int | None,
+    schedule_frequency: str,
+    schedule_time: str | None,
+    weekdays: list[WeekDayLiteral] | None,
+    description: str,
+    is_immutable: bool,
+    run_schedule_by_controller_time: bool,
+    backup_copy_destination_type: str | None,
+    backup_copy_destination_id: str | None,
+    backup_copy_retention_type: str | None,
+    backup_copy_retention_days: int | None,
+    backup_copy_retention_versions: int | None,
+    backup_copy_gfs_daily_versions: int | None,
+    backup_copy_gfs_weekly_versions: int | None,
+    backup_copy_gfs_monthly_versions: int | None,
+    backup_copy_gfs_yearly_versions: int | None,
+    backup_copy_schedule_frequency: str | None,
+    backup_copy_schedule_time: str | None,
+    backup_copy_weekdays: list[WeekDayLiteral] | None,
+) -> GWSPlanCreateRequest:
+    """Shared request-builder for create_gws_protection_plan and
+    update_gws_protection_plan: assembles retention, schedule, and backup copy
+    config into a GWSPlanCreateRequest."""
+    return GWSPlanCreateRequest(
         name=name,
         retention=_build_retention(
             retention_type, retention_days, retention_versions,
