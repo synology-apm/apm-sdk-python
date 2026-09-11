@@ -19,13 +19,19 @@ class RemoteStorageCred:
     """Credential entry for one ``[[remote_storage]]`` block in smoke_creds.toml."""
 
     type: str
-    access_key: str
-    secret_key: str
+    access_key: str = ""
+    secret_key: str = ""
     name: str = ""
     endpoint: str = ""
     vault: str = ""
     trust_self_signed: bool = False
     relink_encryption_key: str = ""
+    # azure_blob / azure_blob_china only — registered via a Microsoft Entra application
+    # instead of access_key/secret_key. `vault` doubles as the container name.
+    tenant_id: str = ""
+    client_id: str = ""
+    secret: str = ""
+    account_name: str = ""
 
     def display_name(self) -> str:
         return self.name or self.type

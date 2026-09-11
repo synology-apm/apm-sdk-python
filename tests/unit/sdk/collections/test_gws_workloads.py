@@ -512,6 +512,21 @@ async def test_get_by_name_matches_shared_drive_name() -> None:
     assert wl.workload_id == "wl-gws-shared-drive-001"
 
 
+async def test_get_by_name_skips_unparseable_entry_before_match() -> None:
+    """An entry with an unrecognized workloadType is skipped rather than raised on, and
+    get_by_name still finds a later matching entry in the same page."""
+    unparseable_entry = {"workloadType": "SOME_UNKNOWN_TYPE"}
+    async with connected_session() as (session, m):
+
+        m.post(WORKLOAD_LIST_URL, payload={"gwWorkloads": [unparseable_entry, SAMPLE_GWS_WORKLOAD]})
+
+        collection = GWSWorkloadCollection(session)
+        wl = await collection.get_by_name("Alice", DOMAIN_ID, workload_type=GWSWorkloadType.MAIL)
+        await session.disconnect()
+
+    assert wl.workload_id == WORKLOAD_UID
+
+
 async def test_get_by_name_raises_not_found_when_keyword_returns_empty() -> None:
     async with connected_session() as (session, m):
 
@@ -562,6 +577,21 @@ async def test_list_plan_is_passed_as_plan_uids_in_filter_body() -> None:
     _, kwargs = mock_post.call_args
     body = kwargs["json"]["filter"]
     assert body["planUids"] == [SAMPLE_PROTECTION_PLAN.plan_id, SAMPLE_RETIREMENT_PLAN.plan_id]
+
+
+async def test_list_keyword_is_passed_as_keyword_in_filter_body() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    collection = GWSWorkloadCollection(session)
+
+    with patch.object(session, "post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"gwWorkloads": []}
+        await collection.list(DOMAIN_ID, workload_type=GWSWorkloadType.MAIL, keyword="Alice")
+
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]["filter"]
+    assert body["keyword"] == "Alice"
 
 
 async def test_list_status_is_passed_as_backup_status_in_filter_body() -> None:

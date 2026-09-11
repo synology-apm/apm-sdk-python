@@ -24,6 +24,10 @@ Reuse these values consistently so examples form a coherent, recognizable "sampl
 | Backup server in a non-default state | `apm-server-<state>` / `192.0.2.N` | e.g. `apm-server-dr`, `apm-server-updating`, `apm-server-tiering` |
 | NAS-type backup server | `nas-server-01` / `10.0.0.10` | |
 | ESXi / hypervisor | `esxi1.example.com` / `192.0.2.40` | |
+| Nutanix hypervisor | `nutanix1.example.com` / `192.0.2.44` | covers Prism Element/Central |
+| Proxmox hypervisor | `proxmox1.example.com` / `192.0.2.45` | covers Node/Cluster |
+| AWS hypervisor (cloud inventory) | `aws-account-01` | cloud inventories are identified by an account/tenant alias, not a hostname/IP — no address value |
+| Azure hypervisor (cloud inventory) | `azure-tenant-01` | same as above |
 | Hypervisor account | `root` (local) / `administrator@vsphere.local` (vCenter) | |
 | VM workload (primary) | `vm-web-01` (restore dest: `vm-web-01-restored`) | |
 | Additional VM workloads | `vm-app-01`, `vm-db-01` (same `-restored` pattern) | |
@@ -42,12 +46,14 @@ Reuse these values consistently so examples form a coherent, recognizable "sampl
 | Primary remote storage (DSM-based) | `DSM-Storage` / `192.0.2.20:8444`, vault `MyVault` | |
 | Tiering destination (S3-compatible) | `tiering-remote` / `https://s3.example.com:443` | |
 | APV-based external vault | `APV Vault` / `apv.example.com`, vault `my-bucket` | distinct storage type from `DSM-Storage` |
+| Azure Blob Storage remote storage | account `azurestorage01`, container `my-container`, secret `azure-secret-01` | tenant ID / application (client) ID reuse the Resource UUID pattern below (two distinct values) |
 | Appliance model | `DP320` | |
 | Reference NAS model | `DS720+` | |
 | Serial number | `SN001` (pattern: `SN` + digits) | |
 | APM software version | `APM 1.2-71845` | build number must stay fictional — never copy a version string from a live system |
 | Protection / retirement plan name | `Daily Backup` / `Compliance Retention` | |
 | Admin username | `admin` | |
+| Two-factor authentication (TOTP) code | `123456` | |
 | Resource UUIDs (workload/plan/namespace/tenant/version IDs) | `123e4567-e89b-12d3-a456-4266141740NN` (increment `NN` per distinct resource in an example) | based on the RFC 4122 example UUID; truncated form `123e4567-...` is fine |
 | IP addresses (not covered above) | RFC 5737: `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`; or `10.0.0.0/24` | |
 | Hostnames (not covered above) | RFC 2606: `example.com` / `example.org` | |

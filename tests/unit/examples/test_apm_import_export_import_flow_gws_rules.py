@@ -174,6 +174,39 @@ def test_parse_gws_rule_entries_shared_drive_error() -> None:
     )
 
 
+def test_parse_gws_rule_entries_skips_non_dict_domain_entry() -> None:
+    data: dict[str, Any] = {"gws_auto_backup_rules": ["not-a-dict"]}
+
+    rule_entries, collab_entries = ie._parse_gws_rule_entries(
+        data, {}, _GWS_PLANS_BY_NAME, _PLAN_NAME_BY_REF, {}
+    )
+
+    assert rule_entries == []
+    assert collab_entries == []
+
+
+def test_parse_gws_rule_entries_skips_entry_without_domain_ref_or_domain() -> None:
+    """A domain block with neither domain_ref nor domain is skipped entirely."""
+    data = _gws_rules_data(domain_ref="", domain="")
+
+    rule_entries, collab_entries = ie._parse_gws_rule_entries(
+        data, {}, _GWS_PLANS_BY_NAME, _PLAN_NAME_BY_REF, {}
+    )
+
+    assert rule_entries == []
+    assert collab_entries == []
+
+
+def test_parse_gws_rule_entries_skips_non_dict_user_rule() -> None:
+    data = _gws_rules_data(user_rules=["not-a-dict"])
+
+    rule_entries, _ = ie._parse_gws_rule_entries(
+        data, {}, _GWS_PLANS_BY_NAME, _PLAN_NAME_BY_REF, {"domain-1": _DOMAIN}
+    )
+
+    assert rule_entries == []
+
+
 def test_parse_gws_rule_entries_protected_account_types() -> None:
     """protected_account_types alone (no collab_services key) must not touch shared_drive."""
     data = {
@@ -565,6 +598,45 @@ async def test_execute_gws_rules_omitted_protected_account_types_not_applied() -
         ("gws_shared_drive", "overwrite", "ok"),
     ]
     apm.gws.auto_backup_rules.update_protected_account_types.assert_not_awaited()
+
+
+async def test_execute_gws_rules_shared_drive_update_failure_is_recorded() -> None:
+    """update_collab_settings() raising APMError for the Shared Drive setting is recorded as
+    a failed overwrite, not raised (the protected-account-types equivalent below is a
+    separate, independent call per the module docstring)."""
+    apm = make_fake_apm()
+    apm.gws.auto_backup_rules.list = AsyncMock(return_value=_empty_rules_result())
+    apm.gws.auto_backup_rules.update_collab_settings = AsyncMock(
+        side_effect=APMError("shared drive unavailable")
+    )
+    collab = _make_collab_entry(include_unlicensed_accounts=None, include_archived_accounts=None)
+
+    results = await ie._execute_gws_rules(
+        apm, _DOMAIN, [], [collab], "overwrite", asyncio.Semaphore(5), asyncio.Event(),
+    )
+
+    assert [(r.kind, r.action, r.result, r.error_msg) for r in results] == [
+        ("gws_shared_drive", "overwrite", "failed", "shared drive unavailable"),
+    ]
+
+
+async def test_execute_gws_rules_protected_account_types_update_failure_is_recorded() -> None:
+    """update_protected_account_types() raising APMError is recorded as a failed overwrite,
+    not raised."""
+    apm = make_fake_apm()
+    apm.gws.auto_backup_rules.list = AsyncMock(return_value=_empty_rules_result())
+    apm.gws.auto_backup_rules.update_protected_account_types = AsyncMock(
+        side_effect=APMError("account types service unavailable")
+    )
+    collab = _make_collab_entry(shared_drive_specified=False)
+
+    results = await ie._execute_gws_rules(
+        apm, _DOMAIN, [], [collab], "overwrite", asyncio.Semaphore(5), asyncio.Event(),
+    )
+
+    assert [(r.kind, r.action, r.result, r.error_msg) for r in results] == [
+        ("gws_protected_account_types", "overwrite", "failed", "account types service unavailable"),
+    ]
 
 
 # ── _compute_gws_dry_actions ────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ from synology_apm.sdk.client import APMClient
 from synology_apm.sdk.enums import RetentionType, ScheduleFrequency, WorkloadCategory
 from synology_apm.sdk.exceptions import APIError, PlanInUseError, ResourceNotFoundError
 from synology_apm.sdk.models.protection_plan import (
+    GWSPlanCreateRequest,
     M365PlanCreateRequest,
     MachinePlanCreateRequest,
     ProtectionRetentionPolicy,
@@ -54,6 +55,17 @@ SAMPLE_M365_PLAN = {
     },
     "protectedWorkloadCount": 5,
     "unprotectedWorkloadCount": 1,
+}
+
+SAMPLE_GWS_PLAN = {
+    "id": "plan-gws-001",
+    "spec": {
+        "name": "GWS Daily",
+        "serviceType": "GW",
+        "retention": {"keepDays": 30},
+    },
+    "protectedWorkloadCount": 3,
+    "unprotectedWorkloadCount": 0,
 }
 
 
@@ -520,6 +532,34 @@ async def test_plans_create_with_m365_request_dispatches_to_m365_body() -> None:
     assert body["plan"]["configM365"]["schedule"]["runHour"] == 9
     assert plan.plan_id == "plan-m365-001"
     assert plan.name == "M365 Daily"
+
+
+async def test_plans_create_with_gws_request_dispatches_to_gws_body() -> None:
+    """apm.plans.create(GWSPlanCreateRequest) POSTs with serviceType=GW."""
+    create_url = f"{BASE_URL}/api/v1/plan/backup_plan"
+    get_url = f"{BASE_URL}/api/v1/plan/backup_plan/plan-gws-001"
+    _retention = ProtectionRetentionPolicy(retention_type=RetentionType.KEEP_DAYS, days=30)
+    _schedule = ProtectionSchedule(frequency=ScheduleFrequency.DAILY, start_time=time(9, 0))
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        m.get(ME_URL, payload=ME_OK)
+        m.post(create_url, payload={"id": "plan-gws-001"})
+        m.get(get_url, payload=SAMPLE_GWS_PLAN)
+        m.get(f"{BASE_URL}/api/v1/preference/logout", payload=LOGOUT_OK)
+        async with APMClient(HOST, "user", "pass", verify_ssl=False) as apm:
+            plan = await apm.plans.create(GWSPlanCreateRequest(
+                name="GWS Daily",
+                retention=_retention,
+                schedule=_schedule,
+            ))
+
+    post_key = ("POST", URL(create_url))
+    body = request_json(m, post_key)
+    assert body["plan"]["serviceType"] == "GW"
+    assert body["plan"]["retention"]["keepDays"] == 30
+    assert body["plan"]["configGw"]["schedule"]["runHour"] == 9
+    assert plan.plan_id == "plan-gws-001"
+    assert plan.name == "GWS Daily"
 
 
 # ── plans.delete() ─────────────────────────────────────────────────────────

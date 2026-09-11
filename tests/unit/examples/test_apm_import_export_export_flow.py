@@ -146,6 +146,7 @@ def _wire_export_apm(
     rules_error: APMError | None = None,
     include_gws_domain: bool = False,
     gws_rules_result: GWSAutoBackupRuleListResult | None = None,
+    gws_rules_error: APMError | None = None,
 ) -> MagicMock:
     """Fake APM with one backup server, one remote storage, and one SaaS tenant."""
     apm = make_fake_apm()
@@ -173,9 +174,12 @@ def _wire_export_apm(
             return_value=rules_result if rules_result is not None else _empty_rules_result()
         )
     if include_gws_domain:
-        apm.gws.auto_backup_rules.list = AsyncMock(
-            return_value=gws_rules_result if gws_rules_result is not None else _empty_gws_rules_result()
-        )
+        if gws_rules_error is not None:
+            apm.gws.auto_backup_rules.list = AsyncMock(side_effect=gws_rules_error)
+        else:
+            apm.gws.auto_backup_rules.list = AsyncMock(
+                return_value=gws_rules_result if gws_rules_result is not None else _empty_gws_rules_result()
+            )
     return apm
 
 
@@ -289,6 +293,29 @@ async def test_run_export_rules_fetch_error_warns_and_continues(
     assert data["m365_auto_backup_rules"] == []
 
 
+async def test_run_export_gws_rules_fetch_error_warns_and_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A GWS auto-backup-rules fetch failure is warned per domain, not fatal (mirrors the
+    M365 case above -- the GWS export path has its own try/except)."""
+    apm = _wire_export_apm(include_gws_domain=True, gws_rules_error=APMError("domain offline"))
+    patch_make_client(monkeypatch, ie, apm)
+    out = tmp_path / "export.yaml"
+
+    ret = await ie.run_export(str(out), concurrency=2)
+
+    assert ret == 0
+    err = capsys.readouterr().err
+    warning_line = next(
+        ln for ln in err.splitlines() if "failed to fetch auto-backup rules" in ln
+    )
+    assert "'gwsdemo.example.com'" in warning_line
+    data = yaml.safe_load(out.read_text(encoding="utf-8"))
+    assert data["gws_auto_backup_rules"] == []
+
+
 async def test_run_export_serializes_enabled_collab_rules(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -366,6 +393,9 @@ async def test_run_export_writes_credential_templates(
         "access_key": "",
         "secret_key": "",
         "relink_encryption_key": "",
+        "tenant_id": "",
+        "client_id": "",
+        "secret": "",
     }]
     assert stat.S_IMODE(os.stat(rs_csv).st_mode) == 0o600
 

@@ -435,7 +435,7 @@ def make_machine_workload(**kwargs: Any) -> MachineWorkload:
         device_uuid=None,
         ip_address="192.0.2.100",
         inventory_name="vm-web-01",
-        inventory_type="vm",
+        inventory_type=HypervisorType.VSPHERE_ESXI,
         fs_config=None,
     )
     defaults.update(kwargs)

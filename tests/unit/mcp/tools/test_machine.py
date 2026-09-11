@@ -33,6 +33,9 @@ class TestListMachineWorkloads:
         )
         assert result["total"] == 1
         assert result["items"][0]["name"] == "vm-web-01"
+        # inventory_type is a HypervisorType now (not a raw API string) -- pin its serialized
+        # wire value so a regression back to a raw string would fail this test.
+        assert result["items"][0]["inventory_type"] == "vsphere_esxi"
 
     @pytest.mark.asyncio
     async def test_plan_ids_resolves_protection_plan_and_forwards_filter(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
@@ -435,6 +438,86 @@ class TestUpdateMachineFileServer:
                 connection_timeout_seconds=180,
                 path="/data",
                 selectors=[{"path": "share1"}],
+            )
+
+        parsed = json.loads(str(exc_info.value))
+        assert parsed["error"] == "invalid_argument"
+        mock_apm.machine.workloads.update_file_server.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_when_selectors_is_empty(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
+        from synology_apm.mcp._server import create_server
+
+        wl = make_machine_workload()
+        mock_apm.machine.workloads.get.return_value = wl
+
+        server = create_server(mode="admin")
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(
+                server, "update_machine_file_server", mock_ctx,
+                workload_id=_WL_ID,
+                namespace="default",
+                host_ip="192.0.2.1",
+                login_user="admin",
+                login_password=None,
+                host_port=445,
+                enable_vss=False,
+                connection_timeout_seconds=180,
+                selectors=[],
+            )
+
+        parsed = json.loads(str(exc_info.value))
+        assert parsed["error"] == "invalid_argument"
+        mock_apm.machine.workloads.update_file_server.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_when_selectors_entry_missing_path(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
+        from synology_apm.mcp._server import create_server
+
+        wl = make_machine_workload()
+        mock_apm.machine.workloads.get.return_value = wl
+
+        server = create_server(mode="admin")
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(
+                server, "update_machine_file_server", mock_ctx,
+                workload_id=_WL_ID,
+                namespace="default",
+                host_ip="192.0.2.1",
+                login_user="admin",
+                login_password=None,
+                host_port=445,
+                enable_vss=False,
+                connection_timeout_seconds=180,
+                selectors=[{"excluded_paths": ["tmp"]}],
+            )
+
+        parsed = json.loads(str(exc_info.value))
+        assert parsed["error"] == "invalid_argument"
+        mock_apm.machine.workloads.update_file_server.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_when_selectors_entry_excluded_paths_not_a_list(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock
+    ) -> None:
+        from synology_apm.mcp._server import create_server
+
+        wl = make_machine_workload()
+        mock_apm.machine.workloads.get.return_value = wl
+
+        server = create_server(mode="admin")
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(
+                server, "update_machine_file_server", mock_ctx,
+                workload_id=_WL_ID,
+                namespace="default",
+                host_ip="192.0.2.1",
+                login_user="admin",
+                login_password=None,
+                host_port=445,
+                enable_vss=False,
+                connection_timeout_seconds=180,
+                selectors=[{"path": "share1", "excluded_paths": "tmp"}],
             )
 
         parsed = json.loads(str(exc_info.value))

@@ -51,6 +51,24 @@ Each collection's methods are shown in its section below; full signatures and ev
 field are documented in the docstrings and the
 [Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).
 
+### Two-factor authentication (TOTP) / trusted devices
+
+For an account with two-factor authentication enabled, pass `otp_code` to verify a code and
+register this connection as a trusted device (the returned `device_id` then lets later
+connections skip the code entirely):
+
+```python
+async with APMClient(host, username, password, otp_code="123456") as apm:
+    trusted_device_id = apm.device_id  # persist this for future connections
+
+# Later connections, no code needed:
+async with APMClient(host, username, password, device_id=trusted_device_id) as apm:
+    ...
+```
+
+`connect()` raises `OTPRequiredError` when a two-factor code is required and none (or no valid
+trusted device) was supplied, and `OTPIncorrectError` when the supplied code was rejected.
+
 Manual lifecycle (if context manager is not suitable):
 
 ```python
@@ -654,7 +672,9 @@ from synology_apm.sdk import (
     GenericS3StorageAddRequest,
     AmazonS3StorageAddRequest,
     APVStorageAddRequest,
-    RemoteStorageUpdateRequest,
+    AzureBlobStorageAddRequest,
+    AzureBlobStorageUpdateRequest,
+    AccessKeyStorageUpdateRequest,
     RemoteStorageConflictError,
     RemoteStorageInUseError,
     RemoteStorageUnmanagedCatalogError,
@@ -701,10 +721,26 @@ result = await apm.remote_storages.add(APVStorageAddRequest(
     trust_self_signed=True,
 ))
 
+# Add Azure Blob Storage (via a Microsoft Entra application)
+result = await apm.remote_storages.add(AzureBlobStorageAddRequest(
+    tenant_id="123e4567-e89b-12d3-a456-426614174020",
+    client_id="123e4567-e89b-12d3-a456-426614174021",
+    secret="…",
+    account_name="azurestorage01",
+    vault_name="my-container",
+))
+
 # Update credentials
-await apm.remote_storages.update(storage, RemoteStorageUpdateRequest(
+await apm.remote_storages.update(storage, AccessKeyStorageUpdateRequest(
     access_key="new-key",
     secret_key="new-secret",
+))
+
+# Update Azure Blob Storage credentials
+await apm.remote_storages.update(storage, AzureBlobStorageUpdateRequest(
+    tenant_id="123e4567-e89b-12d3-a456-426614174020",
+    client_id="123e4567-e89b-12d3-a456-426614174021",
+    secret="new-secret",
 ))
 
 # Delete
@@ -800,6 +836,11 @@ All SDK exceptions inherit from `APMError` and carry three common attributes:
 | `.response_body` | Full JSON body from APM, for debugging (`Any \| None`) |
 
 Resource-oriented exceptions (`ResourceNotFoundError`, `InvalidOperationError`, `PlanNameConflictError`, `PlanInUseError`, `DuplicateWorkloadError`, and the `RemoteStorage*` conflict/in-use errors) additionally carry `.resource_type` and `.resource_id` identifying the resource involved. Operation-specific exceptions raised by each method — and their extra attributes, such as `PlanInUseError.has_workloads` or `RemoteStorageUnmanagedCatalogError.catalog_count` — are documented in the method's docstring and the [Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).
+
+`OTPRequiredError` and `OTPIncorrectError` (raised by `connect()` for a two-factor-enabled
+account — see "Two-factor authentication (TOTP) / trusted devices" above) are siblings of
+`AuthenticationError`, not subclasses of it — catch them explicitly if you need to distinguish
+a two-factor challenge from any other authentication failure.
 
 `str(exc)` automatically appends the response body as formatted JSON when present, making it
 easy to forward for debugging.

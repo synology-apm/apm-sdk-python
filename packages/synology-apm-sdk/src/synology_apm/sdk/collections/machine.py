@@ -42,6 +42,7 @@ from ._shared import (
     _tunnel_headers,
     _VersionMixin,
 )
+from .hypervisors import _parse_optional_host_type
 from .protection_plans import MachinePlanCollection
 
 _LVR_TO_STATUS: dict[str, WorkloadStatus] = {
@@ -623,7 +624,7 @@ def _parse_workload(raw: dict[str, Any]) -> MachineWorkload:
         device_uuid = None
 
     inventory_name: str | None = raw.get("inventoryName") or None if api_type == "VM" else None
-    inventory_type: str | None = raw.get("inventoryType") or None if api_type == "VM" else None
+    inventory_type = _parse_optional_host_type(raw.get("inventoryType")) if api_type == "VM" else None
     verify_status = _parse_verify_status(status.get("verifyStatus"), wl_type)
 
     fs_config: FileServerConfig | None = None

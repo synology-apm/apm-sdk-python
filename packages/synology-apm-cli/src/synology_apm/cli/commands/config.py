@@ -5,20 +5,31 @@ from dataclasses import dataclass
 
 import typer
 
+from synology_apm.cli._async import run_async
 from synology_apm.cli.errors import EXIT_ERROR, abortable, err_console, handle_keyring_error
 from synology_apm.cli.output import console
 from synology_apm.sdk import (
     CONFIG_FILE,
     DEFAULT_PROFILE,
+    APMClient,
+    APMError,
     AppConfig,
     KeyringUnavailableError,
+    OTPIncorrectError,
+    OTPRequiredError,
     PasswordStorage,
     ProfileConfig,
     delete_keyring_password,
+    get_keyring_password,
     load_config,
     save_config,
+    save_profile_device_token,
     set_keyring_password,
 )
+
+# Two-factor prompt attempts config_set will make before giving up and saving
+# the profile without a trusted-device registration.
+_MAX_OTP_ATTEMPTS = 3
 
 
 def _delete_keyring_password_or_warn(profile_name: str, username: str) -> None:
@@ -84,6 +95,82 @@ def _resolve_password_decision(
     return PasswordDecision(storage=storage, password=password, changed=False, rename_blocked=rename_blocked)
 
 
+async def _verify_connection_and_register_device(
+    *,
+    host: str,
+    username: str,
+    password: str,
+    verify_ssl: bool,
+    existing: ProfileConfig,
+    no_input: bool,
+) -> tuple[str, str]:
+    """Attempt a real connection; register a new trusted device via an
+    interactive two-factor prompt if the account requires one.
+
+    This is the only place synology-apm-cli ever handles a two-factor code —
+    every other command only ever consumes a stored trusted-device token (see
+    cli/_helpers.py's get_client()) and fails with an actionable message if
+    that's missing or no longer valid.
+
+    Returns (device_id, status_message). device_id is "" when no trusted
+    device is confirmed valid for the settings just entered. `existing`'s
+    device_id is only reused — never blindly kept — when host/username are
+    unchanged from it (a device token registered for a different host/account
+    can never apply to this one).
+    """
+    same_identity = host == existing.host and username == existing.username
+
+    if no_input or not password:
+        # Nothing to validate against, or the user opted out of prompting.
+        if same_identity:
+            return existing.device_id, ""
+        return "", ""
+
+    trial_device_id = existing.device_id if same_identity else ""
+
+    async def _try_connect(*, otp_code: str | None, device_id: str | None) -> str | None:
+        async with APMClient(
+            host, username, password,
+            otp_code=otp_code, device_id=device_id,
+            verify_ssl=verify_ssl,
+        ) as apm:
+            return apm.device_id
+
+    try:
+        new_device_id = await _try_connect(otp_code=None, device_id=trial_device_id or None)
+        return new_device_id or "", "✓ Connection verified."
+    except (OTPRequiredError, OTPIncorrectError):
+        # A stored device_id (if any) didn't satisfy two-factor authentication —
+        # fall through to a fresh, OTP-verified registration attempt below.
+        pass
+    except APMError as exc:
+        err_console.print(f"[yellow]⚠[/yellow] Could not verify the connection: {exc.message}")
+        if same_identity:
+            # An unrelated/transient failure shouldn't discard a previously-valid
+            # device registration.
+            return existing.device_id, ""
+        return "", "Could not verify the connection; two-factor status unknown."
+
+    for attempt in range(1, _MAX_OTP_ATTEMPTS + 1):
+        otp_code = typer.prompt("Two-factor authentication code")
+        try:
+            new_device_id = await _try_connect(otp_code=otp_code, device_id=None)
+            return new_device_id or "", "✓ Registered a trusted device for two-factor authentication."
+        except OTPIncorrectError:
+            if attempt == _MAX_OTP_ATTEMPTS:
+                break
+            err_console.print("[yellow]⚠[/yellow] Incorrect code.")
+        except APMError as exc:
+            err_console.print(f"[yellow]⚠[/yellow] Could not verify the connection: {exc.message}")
+            return "", "Could not verify the connection; two-factor status unknown."
+
+    err_console.print(
+        "[yellow]⚠[/yellow] Could not complete two-factor verification; "
+        "run `config set` again once you have a valid code."
+    )
+    return "", ""
+
+
 app = typer.Typer(
     help="Manage APM connection settings (~/.config/synology-apm/config.toml).",
     no_args_is_help=True,
@@ -91,7 +178,8 @@ app = typer.Typer(
 
 
 @app.command("set")
-def config_set(
+@run_async
+async def config_set(
     ctx: typer.Context,
     host: str | None = typer.Option(None, "--host", help="APM hostname or IP, supports host:port"),
     username: str | None = typer.Option(None, "--username", "-u", help="APM login account"),
@@ -113,6 +201,13 @@ def config_set(
       - APM host and account (can be pre-filled with --host / --username)
       - Password (leave blank to prompt on each command, not saved; --save-password forces saving)
       - SSL certificate verification (choose skip for self-signed certificates)
+
+    When a password is available to test with, this command also attempts a real connection
+    to verify it and, if the account has two-factor authentication enabled, prompts once for
+    a verification code and registers this device to skip that prompt on future connections
+    (see `config show`'s "2FA device" line, and `config clear --forget-device`). This is the
+    only synology-apm-cli command that ever prompts for a two-factor code; every other command
+    only consumes an already-registered device and points back here if none is on file.
 
     With --no-input, --host and --username must already be resolvable (from the flags here,
     an existing profile, or environment variables) or the command errors instead of prompting;
@@ -194,12 +289,29 @@ def config_set(
 
     persisted_password = new_password if new_storage == PasswordStorage.PLAINTEXT else ""
 
+    # ── Connection validation / two-factor device registration ──────────────
+    if new_storage == PasswordStorage.KEYRING and not password_changed:
+        # The prompt was left blank to keep the existing keyring-stored password —
+        # fetch it back so there's something to test the connection with.
+        try:
+            password_to_test = get_keyring_password(profile, new_username) or ""
+        except KeyringUnavailableError:
+            password_to_test = ""
+    else:
+        password_to_test = new_password
+
+    device_id, verify_status = await _verify_connection_and_register_device(
+        host=new_host, username=new_username, password=password_to_test,
+        verify_ssl=not new_no_verify, existing=existing, no_input=no_input,
+    )
+
     updated = ProfileConfig(
         host=new_host,
         username=new_username,
         password=persisted_password,
         no_verify_ssl=new_no_verify,
         password_storage=new_storage,
+        device_id=device_id,
     )
     cfg.set_profile(profile, updated)
     save_config(cfg)
@@ -212,6 +324,8 @@ def config_set(
         )
     elif new_storage == PasswordStorage.KEYRING:
         console.print("[green]✓[/green] Password stored in the OS keyring.")
+    if verify_status:
+        console.print(verify_status)
 
 
 @app.command("show")
@@ -239,6 +353,13 @@ def config_show(
 def config_clear(
     profile: str | None = typer.Option(None, "--profile", help="Profile name to clear"),
     all_profiles: bool = typer.Option(False, "--all", help="Clear all profiles"),
+    forget_device: bool = typer.Option(
+        False, "--forget-device",
+        help=(
+            "Only clear this profile's registered two-factor trusted device "
+            "(keep host/username/password); forces a fresh verification on the next `config set`."
+        ),
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
 ) -> None:
@@ -247,6 +368,23 @@ def config_clear(
     Also removes the profile's OS keyring entry, if it has one. Clearing a profile that
     doesn't exist prints a warning rather than failing.
     """
+    if forget_device:
+        if all_profiles:
+            err_console.print("[red]✗[/red] --forget-device cannot be combined with --all.")
+            raise typer.Exit(code=EXIT_ERROR)
+        target = profile or DEFAULT_PROFILE
+        if target not in load_config().profiles:
+            # Mirrors the whole-profile clear path below: never silently fabricate a
+            # profile entry for a name that was never configured.
+            console.print(f"[yellow]⚠[/yellow] Profile '{target}' does not exist.")
+            return
+        # Low-stakes and easily reversible (the next `config set` just re-registers a
+        # device), unlike clearing a whole profile — no confirmation prompt needed.
+        save_profile_device_token(target, "")
+        if not quiet:
+            console.print(f"[green]✓[/green] Trusted-device registration cleared for profile '{target}'.")
+        return
+
     cfg = load_config()
 
     if all_profiles:
@@ -289,3 +427,7 @@ def _show_single_profile(cfg: AppConfig, name: str) -> None:
         pw_status = "[bright_black](not saved)[/bright_black]"
     console.print(f"Password: {pw_status}")
     console.print(f"SSL:      {'skip verify' if p.no_verify_ssl else 'verify'}")
+    if p.device_id:
+        console.print("2FA device: [green]registered[/green]")
+    else:
+        console.print("2FA device: [bright_black](not registered)[/bright_black]")

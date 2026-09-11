@@ -157,6 +157,30 @@ class TestCreateMachineProtectionPlan:
         assert request.backup_window.allowed_hours[WeekDay.TUESDAY] == frozenset(range(0, 24))
 
     @pytest.mark.asyncio
+    async def test_backup_window_ignores_stray_day_and_hour_separators(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock
+    ) -> None:
+        """A trailing/doubled ';' between day entries, or ',' between hour ranges, is skipped
+        rather than raising or corrupting the parsed schedule."""
+        from synology_apm.mcp._server import create_server
+
+        mock_apm.machine.plans.create.return_value = make_protection_plan()
+
+        server = create_server(mode="admin")
+        await call_tool(
+            server, "create_machine_protection_plan", mock_ctx,
+            name="New Plan",
+            backup_window_enabled=True,
+            backup_window_allowed_hours="mon:0-8,,13-18;;tue:0-23",
+        )
+
+        (request,), _ = mock_apm.machine.plans.create.call_args
+        from synology_apm.sdk import WeekDay
+
+        assert request.backup_window.allowed_hours[WeekDay.MONDAY] == frozenset(range(0, 9)) | frozenset(range(13, 19))
+        assert request.backup_window.allowed_hours[WeekDay.TUESDAY] == frozenset(range(0, 24))
+
+    @pytest.mark.asyncio
     async def test_tasks_json_reaches_request(self, mock_apm: MagicMock, mock_ctx: MagicMock) -> None:
         from synology_apm.mcp._server import create_server
 

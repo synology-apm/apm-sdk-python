@@ -1,12 +1,14 @@
 """RemoteStorageCollection — collection interface for managing remote storage devices."""
 from __future__ import annotations
 
+import builtins
 from typing import Any
 
 from .._http import WebAPISession
 from ..enums import RemoteStorageStatus, RemoteStorageType
 from ..exceptions import (
     APIError,
+    RemoteStorageAuthenticationError,
     RemoteStorageConflictError,
     RemoteStorageEncryptionMismatchError,
     RemoteStorageInUseError,
@@ -14,15 +16,19 @@ from ..exceptions import (
     ResourceNotFoundError,
 )
 from ..models.remote_storage import (
+    AccessKeyStorageUpdateRequest,
     AmazonS3ChinaStorageAddRequest,
     AmazonS3StorageAddRequest,
     APVStorageAddRequest,
+    AzureBlobChinaStorageAddRequest,
+    AzureBlobStorageAddRequest,
+    AzureBlobStorageUpdateRequest,
     C2ObjectStorageAddRequest,
     GenericS3StorageAddRequest,
     RemoteStorage,
     RemoteStorageAddResult,
-    RemoteStorageUpdateRequest,
     WasabiCloudStorageAddRequest,
+    _AzureBlobStorageAddRequestBase,
     _S3VendorStorageAddRequest,
 )
 from ._shared import ListResult, _not_found_as
@@ -98,6 +104,35 @@ async def _fetch_s3_cert_and_region(
     cert = (raw.get("certificate") or {}).get("cert") or ""
     region = raw.get("region") or ""
     return cert, region
+
+
+def _build_azure_info(
+    account_name: str, container_name: str, tenant_id: str, client_id: str, secret: str
+) -> dict[str, str]:
+    """Build the ``azureInfo`` sub-object shared by the add and update request bodies."""
+    return {
+        "accountName":   account_name,
+        "containerName": container_name,
+        "tenantId":      tenant_id,
+        "clientId":      client_id,
+        "secret":        secret,
+    }
+
+
+def _raise_if_auth_failed(exc: APIError, resource_id: str) -> None:
+    """Re-raise ``exc`` as RemoteStorageAuthenticationError if it is a credential rejection
+    (error_code 3000); otherwise return normally so the caller's own ``raise`` re-raises ``exc``
+    unchanged. Shared by add() and update() — resource_id is computed by each caller since its
+    fallback differs (add() may not yet know the vault name; update() always has storage_id).
+    """
+    if exc.error_code == 3000:
+        raise RemoteStorageAuthenticationError(
+            exc.message,
+            resource_type="RemoteStorage",
+            resource_id=resource_id,
+            error_code=exc.error_code,
+            response_body=exc.response_body,
+        ) from exc
 
 
 async def _fetch_s3_support_virtual_host(
@@ -184,6 +219,8 @@ class RemoteStorageCollection:
             | AmazonS3ChinaStorageAddRequest
             | C2ObjectStorageAddRequest
             | WasabiCloudStorageAddRequest
+            | AzureBlobStorageAddRequest
+            | AzureBlobChinaStorageAddRequest
         ),
     ) -> RemoteStorageAddResult:
         """Register a new remote storage device.
@@ -193,6 +230,9 @@ class RemoteStorageCollection:
         vault name or display name input is needed.
         For Amazon S3, Amazon S3 China, C2 Object Storage, and Wasabi storages, only
         credentials and bucket name are required — no endpoint input is needed.
+        For Azure Blob Storage and Azure Blob Storage China, register using the target Microsoft
+        Entra application's tenant ID, application (client) ID, and client secret, along with the
+        storage account and container name.
 
         Set trust_self_signed=True on GenericS3StorageAddRequest or APVStorageAddRequest when the
         endpoint uses a self-signed certificate. Endpoint-free request types do not expose
@@ -218,57 +258,13 @@ class RemoteStorageCollection:
             RemoteStorageConflictError: The vault is already registered.
             RemoteStorageEncryptionMismatchError: The vault was registered with encryption;
                 relink_encryption_key required.
-            APIError: Other errors (e.g. invalid credentials, certificate issue, key format error).
+            RemoteStorageAuthenticationError: The provider rejected the given credentials.
+            APIError: Other errors (e.g. certificate issue, key format error).
         """
-        body = await self._build_add_body(request)
-
-        # Check for pre-existing backup catalogs. Endpoint-free types (Amazon S3, Amazon S3 China,
-        # C2, Wasabi) have body["endpoint"]="" so they naturally send endpoint:"" here — no
-        # special-casing needed. S3 Compatible and APV use the full endpoint and also require
-        # customizedRegion/supportVirtualHost when present (same as the final add body).
-        catalog_body: dict[str, Any] = {
-            "storageType": body["storageType"],
-            "accessKey":   body["accessKey"],
-            "secretKey":   body["secretKey"],
-            "vaultName":   body["vaultName"],
-            "endpoint":    body.get("endpoint") or "",
-            "certificate": body.get("certificate") or "",
-        }
-        if "customizedRegion" in body:
-            catalog_body["customizedRegion"] = body["customizedRegion"]
-        if "supportVirtualHost" in body:
-            catalog_body["supportVirtualHost"] = body["supportVirtualHost"]
-        catalog_raw = await self._session.post("/api/v1/storage_connection/remote", json=catalog_body)
-        connections = catalog_raw.get("connections") or []
-        if connections and request.unmanaged_retirement_plan is None:
-            raise RemoteStorageUnmanagedCatalogError(
-                f"Found {len(connections)} unmanaged catalog(s) in vault '{body['vaultName']}'; "
-                f"provide unmanaged_retirement_plan to relink them.",
-                vault_name=body["vaultName"],
-                catalog_count=len(connections),
-            )
-
-        try:
-            raw = await self._session.post("/api/v1/external_storage", json=body)
-        except APIError as exc:
-            if exc.error_code == 3004:
-                raise RemoteStorageConflictError(
-                    f"RemoteStorage vault '{body['vaultName']}' is already registered.",
-                    resource_type="RemoteStorage",
-                    resource_id=body["vaultName"],
-                    error_code=exc.error_code,
-                    response_body=exc.response_body,
-                ) from exc
-            if exc.error_code == 3006:
-                raise RemoteStorageEncryptionMismatchError(
-                    f"Vault '{body['vaultName']}' was registered with encryption; "
-                    "provide relink_encryption_key from the original registration.",
-                    resource_type="RemoteStorage",
-                    resource_id=body["vaultName"],
-                    error_code=exc.error_code,
-                    response_body=exc.response_body,
-                ) from exc
-            raise
+        # Code after a successful create (extracting the id, the best-effort catalog relink, the
+        # final get()) intentionally sits outside _create_storage() — those failures are
+        # unrelated to credential verification and must not be misreported as such.
+        raw, connections = await self._create_storage(request)
 
         storage_id = raw.get("id") or ""
         raw_key = raw.get("encryptionKey") or ""
@@ -299,7 +295,7 @@ class RemoteStorageCollection:
     async def update(
         self,
         storage: RemoteStorage,
-        request: RemoteStorageUpdateRequest,
+        request: AccessKeyStorageUpdateRequest | AzureBlobStorageUpdateRequest,
     ) -> RemoteStorage:
         """Update the access credentials for a remote storage device.
 
@@ -310,19 +306,31 @@ class RemoteStorageCollection:
         to auto-fetch and pin the endpoint's self-signed TLS certificate. Leave False for all other
         storage types; their endpoints are CA-signed.
 
+        For AZURE_BLOB and AZURE_BLOB_CHINA storages, pass an AzureBlobStorageUpdateRequest with
+        the Microsoft Entra application's tenant ID, application (client) ID, and secret; the
+        storage account and container are immutable and carried over automatically.
+
         Args:
             storage: RemoteStorage to update (obtained via get() or get_by_name()).
-            request: RemoteStorageUpdateRequest with the new credentials/endpoint.
+            request: AccessKeyStorageUpdateRequest (or, for Azure storages,
+                     AzureBlobStorageUpdateRequest) with the new credentials/endpoint.
 
         Returns:
             Updated RemoteStorage reflecting the current connection state.
 
         Raises:
+            ValueError: request's type does not match storage.storage_type (e.g. an
+                AzureBlobStorageUpdateRequest for a non-Azure storage, or vice versa).
             ResourceNotFoundError: The storage no longer exists.
-            APIError: Credential or certificate validation failed.
+            RemoteStorageAuthenticationError: The provider rejected the given credentials.
+            APIError: Other credential or certificate validation failures.
         """
-        body = await self._build_update_body(storage, request)
-        await self._session.post("/api/v1/external_storage/update", json=body)
+        try:
+            body = await self._build_update_body(storage, request)
+            await self._session.post("/api/v1/external_storage/update", json=body)
+        except APIError as exc:
+            _raise_if_auth_failed(exc, storage.storage_id)
+            raise
         return await self.get(storage.storage_id)
 
     async def delete(self, storage: RemoteStorage) -> None:
@@ -350,12 +358,132 @@ class RemoteStorageCollection:
                 ) from exc
             raise
 
+    async def _create_storage(
+        self,
+        request: (
+            GenericS3StorageAddRequest
+            | APVStorageAddRequest
+            | AmazonS3StorageAddRequest
+            | AmazonS3ChinaStorageAddRequest
+            | C2ObjectStorageAddRequest
+            | WasabiCloudStorageAddRequest
+            | AzureBlobStorageAddRequest
+            | AzureBlobChinaStorageAddRequest
+        ),
+    ) -> tuple[dict[str, Any], builtins.list[dict[str, Any]]]:
+        """Build the add-request body, run the unmanaged-catalog pre-flight check, and create
+        the storage. Returns (raw create response, unmanaged catalog connections found during
+        the pre-flight — empty when none).
+
+        Credential verification (error_code 3000, raised by the provider) can happen at any of
+        several points depending on storage type: inside _build_add_body()'s own pre-flight
+        fetches (GenericS3StorageAddRequest, APVStorageAddRequest only), at the catalog
+        pre-flight check below, or at the final create call — so everything from body-build
+        through the create call is wrapped in one outer handler for it. body starts as None
+        since _build_add_body() itself may be where credentials first get checked, before a
+        vault name is even known.
+
+        Raises:
+            RemoteStorageUnmanagedCatalogError, RemoteStorageConflictError,
+            RemoteStorageEncryptionMismatchError, RemoteStorageAuthenticationError, APIError.
+        """
+        body: dict[str, Any] | None = None
+        try:
+            body = await self._build_add_body(request)
+
+            # Check for pre-existing backup catalogs. Endpoint-free types (Amazon S3, Amazon S3
+            # China, C2, Wasabi) have body["endpoint"]="" so they naturally send endpoint:"" here
+            # — no special-casing needed. S3 Compatible and APV use the full endpoint and also
+            # require customizedRegion/supportVirtualHost when present (same as the final add
+            # body). Azure has an entirely different body shape (azureInfo, no
+            # accessKey/secretKey) — handled separately.
+            if isinstance(request, _AzureBlobStorageAddRequestBase):
+                catalog_body: dict[str, Any] = {
+                    "storageType":       body["storageType"],
+                    "vaultName":         body["vaultName"],
+                    "supportVirtualHost": True,
+                    "azureInfo":         body["azureInfo"],
+                }
+            else:
+                catalog_body = {
+                    "storageType": body["storageType"],
+                    "accessKey":   body["accessKey"],
+                    "secretKey":   body["secretKey"],
+                    "vaultName":   body["vaultName"],
+                    "endpoint":    body.get("endpoint") or "",
+                    "certificate": body.get("certificate") or "",
+                }
+                if "customizedRegion" in body:
+                    catalog_body["customizedRegion"] = body["customizedRegion"]
+                if "supportVirtualHost" in body:
+                    catalog_body["supportVirtualHost"] = body["supportVirtualHost"]
+            catalog_raw = await self._session.post("/api/v1/storage_connection/remote", json=catalog_body)
+            connections = catalog_raw.get("connections") or []
+            if connections and request.unmanaged_retirement_plan is None:
+                raise RemoteStorageUnmanagedCatalogError(
+                    f"Found {len(connections)} unmanaged catalog(s) in vault '{body['vaultName']}'; "
+                    f"provide unmanaged_retirement_plan to relink them.",
+                    vault_name=body["vaultName"],
+                    catalog_count=len(connections),
+                )
+
+            try:
+                raw = await self._session.post("/api/v1/external_storage", json=body)
+            except APIError as exc:
+                if exc.error_code == 3004:
+                    raise RemoteStorageConflictError(
+                        f"RemoteStorage vault '{body['vaultName']}' is already registered.",
+                        resource_type="RemoteStorage",
+                        resource_id=body["vaultName"],
+                        error_code=exc.error_code,
+                        response_body=exc.response_body,
+                    ) from exc
+                if exc.error_code == 3006:
+                    raise RemoteStorageEncryptionMismatchError(
+                        f"Vault '{body['vaultName']}' was registered with encryption; "
+                        "provide relink_encryption_key from the original registration.",
+                        resource_type="RemoteStorage",
+                        resource_id=body["vaultName"],
+                        error_code=exc.error_code,
+                        response_body=exc.response_body,
+                    ) from exc
+                raise
+        except APIError as exc:
+            resource_id = body["vaultName"] if body is not None else (
+                getattr(request, "vault_name", "") or getattr(request, "endpoint", "")
+            )
+            _raise_if_auth_failed(exc, resource_id)
+            raise
+        return raw, connections
+
     async def _build_add_body(
         self,
-        request: GenericS3StorageAddRequest | APVStorageAddRequest | _S3VendorStorageAddRequest,
+        request: (
+            GenericS3StorageAddRequest
+            | APVStorageAddRequest
+            | _S3VendorStorageAddRequest
+            | _AzureBlobStorageAddRequestBase
+        ),
     ) -> dict[str, Any]:
         enc_type = "Encryption" if request.encryption_enabled else "NoEncryption"
-        if isinstance(request, APVStorageAddRequest):
+        if isinstance(request, _AzureBlobStorageAddRequestBase):
+            # Azure Blob Storage: no endpoint input, no pre-flight fetch — APM derives the
+            # endpoint/region from the storage account server-side.
+            api_type = "AZURE_BLOB_CHINA" if isinstance(request, AzureBlobChinaStorageAddRequest) else "AZURE_BLOB"
+            return {
+                "displayName":           request.vault_name,
+                "storageType":           api_type,
+                "storageEncryptionType": enc_type,
+                "storageEncryptionKey":  request.relink_encryption_key,
+                "accessKey":             "",
+                "secretKey":             "",
+                "vaultName":             request.vault_name,
+                "azureInfo": _build_azure_info(
+                    request.account_name, request.vault_name, request.tenant_id,
+                    request.client_id, request.secret,
+                ),
+            }
+        elif isinstance(request, APVStorageAddRequest):
             cert = ""
             if request.trust_self_signed:
                 cert = await _fetch_apv_cert(
@@ -434,14 +562,38 @@ class RemoteStorageCollection:
             return body
 
     async def _build_update_body(
-        self, storage: RemoteStorage, request: RemoteStorageUpdateRequest
+        self, storage: RemoteStorage, request: AccessKeyStorageUpdateRequest | AzureBlobStorageUpdateRequest
     ) -> dict[str, Any]:
         # UPDATE is a pure credential re-auth endpoint — minimal body.
         # displayName, storageType, vaultName, encryption fields are silently ignored.
         # Endpoint-free types (Amazon S3, Amazon S3 China, C2, Wasabi): endpoint NOT sent
         # (wizard only sends {id, accessKey, secretKey}).
+        is_azure_storage = storage.storage_type in (RemoteStorageType.AZURE_BLOB, RemoteStorageType.AZURE_BLOB_CHINA)
+        is_azure_request = isinstance(request, AzureBlobStorageUpdateRequest)
+        if is_azure_request != is_azure_storage:
+            wrong = "AzureBlobStorageUpdateRequest" if is_azure_request else "AccessKeyStorageUpdateRequest"
+            right = "AccessKeyStorageUpdateRequest" if is_azure_request else "AzureBlobStorageUpdateRequest"
+            raise ValueError(
+                f"Cannot update {storage.storage_type.value} storage {storage.name!r} with a "
+                f"{wrong}; use {right} instead."
+            )
+        if isinstance(request, AzureBlobStorageUpdateRequest):
+            # Azure re-auth resends the immutable accountName/containerName alongside the new
+            # tenantId/clientId/secret — pulled from the existing storage, not the caller.
+            return {
+                "id": storage.storage_id,
+                "azureInfo": _build_azure_info(
+                    storage.account_name, storage.vault_name, request.tenant_id,
+                    request.client_id, request.secret,
+                ),
+            }
         is_endpoint_free = storage.storage_type not in _ENDPOINT_REQUIRED_TYPES
         is_apv = storage.storage_type == RemoteStorageType.ACTIVE_PROTECT_VAULT
+        if not is_endpoint_free and not request.endpoint:
+            raise ValueError(
+                f"Updating {storage.storage_type.value} storage {storage.name!r} requires endpoint "
+                "— it is not optional for this storage type."
+            )
         body: dict[str, Any] = {
             "id":        storage.storage_id,
             "accessKey": request.access_key,
@@ -480,4 +632,6 @@ def _parse_remote_storage(raw: dict[str, Any]) -> RemoteStorage:
         remaining_bytes=remaining_bytes,
         encryption_enabled=bool(raw.get("isEncryption") or False),
         vault_name=raw.get("vaultName") or "",
+        account_name=raw.get("azureAccountName") or "",
+        client_id=raw.get("azureEntraAppId") or "",
     )

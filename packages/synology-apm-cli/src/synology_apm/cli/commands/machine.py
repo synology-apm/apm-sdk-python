@@ -19,6 +19,7 @@ from synology_apm.cli._display import (
     fmt_backup_server,
     fmt_bytes,
     fmt_datetime,
+    fmt_hypervisor_type,
     fmt_verify_status,
     fmt_workload_status,
     print_list_footer,
@@ -602,8 +603,8 @@ def _print_workload_detail(wl: MachineWorkload) -> None:
     # type-to-field mapping here.
     info_rows: list[tuple[str, str]] = []
     if wl.inventory_name:
-        inv_type = f" ({wl.inventory_type})" if wl.inventory_type else ""
-        info_rows.append(("Host", f"{wl.inventory_name}{inv_type}"))
+        inv_type = f"{fmt_hypervisor_type(wl.inventory_type)} / " if wl.inventory_type else ""
+        info_rows.append(("Host", f"{inv_type}{wl.inventory_name}"))
     if wl.device_uuid:
         info_rows.append(("Device UUID", wl.device_uuid))
     if wl.agent_version:

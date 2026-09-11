@@ -185,6 +185,35 @@ async def test_my_server_property_set_after_connect() -> None:
             assert apm.my_server.system_version == "APM 1.2-71845"
 
 
+# ── device_id (two-factor authentication / trusted devices) ────────────────
+
+
+def test_device_id_property_none_when_no_two_factor_in_use() -> None:
+    """apm.device_id is None when no otp_code/device_id was ever supplied."""
+    client = make_client()
+    assert client.device_id is None
+
+
+async def test_device_id_property_reflects_new_device_id_after_otp_login() -> None:
+    """apm.device_id exposes the trusted-device id APM issues after an otp_code-verified
+    login — proving the property delegates to the underlying session rather than just
+    echoing back a caller-supplied device_id."""
+    login_url_with_otp = (
+        "https://fake-apm.test/webapi/entry.cgi"
+        "?account=user&api=SYNO.API.Auth&client=browser"
+        "&enable_device_token=yes&enable_syno_token=yes&method=login"
+        "&otp_code=123456&passwd=pass&session=webui&version=6"
+    )
+    login_ok_with_did = {"success": True, "data": {"sid": "abc", "synotoken": "tok", "did": "did-new"}}
+    logout_url = f"{BASE_URL}/api/v1/preference/logout"
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(login_url_with_otp, payload=login_ok_with_did)
+        m.get(ME_URL, payload=ME_OK)
+        m.get(logout_url, payload=LOGOUT_OK)
+        async with APMClient(HOST, "user", "pass", otp_code="123456", verify_ssl=False) as apm:
+            assert apm.device_id == "did-new"
+
+
 async def test_connect_raises_not_management_server_when_not_apm() -> None:
     """connect() raises NotManagementServerError when get_me() returns 404 (not an APM host)."""
     async with aiointercept(mock_external_urls=True) as m:

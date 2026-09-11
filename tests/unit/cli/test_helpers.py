@@ -24,8 +24,8 @@ from synology_apm.cli._display import (
 )
 from synology_apm.cli._helpers import enable_debug, is_debug
 from synology_apm.cli._validate import WorkloadRef, parse_time_filter
-from synology_apm.cli.errors import EXIT_ERROR
-from synology_apm.sdk import ResolvedConnection
+from synology_apm.cli.errors import EXIT_AUTH, EXIT_ERROR
+from synology_apm.sdk import DEFAULT_PROFILE, OTPIncorrectError, OTPRequiredError, ResolvedConnection
 from synology_apm.sdk.enums import (
     ActivityWorkloadType,
     BackupActivityStatus,
@@ -583,6 +583,173 @@ async def test_get_client_prompts_for_password_when_not_no_input(monkeypatch: py
             async with _h.get_client(mock_ctx):
                 pass
     mock_typer.prompt.assert_called_once_with("Password", hide_input=True)
+
+
+async def test_get_client_passes_stored_device_token_to_apm_client() -> None:
+    """get_client() passes the resolved profile's device_id through to APMClient."""
+    import synology_apm.cli._helpers as _h
+    mock_ctx = MagicMock()
+    mock_ctx.obj = {"host": "h", "username": "u", "password": "p",
+                    "profile": None, "no_input": False, "no_verify_ssl": False}
+
+    mock_apm = AsyncMock()
+    mock_apm.my_server.name = "apm-server-01"
+    mock_apm.my_server.system_version = ""
+    fake_ctx_mgr = AsyncMock()
+    fake_ctx_mgr.__aenter__ = AsyncMock(return_value=mock_apm)
+    fake_ctx_mgr.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch(
+            "synology_apm.cli._helpers.resolve_connection",
+            return_value=ResolvedConnection("h", "u", "p", True, device_id="did-abc"),
+        ),
+        patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr) as mock_client_cls,
+    ):
+        async with _h.get_client(mock_ctx):
+            pass
+
+    mock_client_cls.assert_called_once_with(
+        "h", "u", "p", device_id="did-abc", verify_ssl=True, debug=False,
+    )
+
+
+async def test_get_client_passes_none_when_no_device_token_registered() -> None:
+    """An empty device_id on the resolved profile is passed to APMClient as None, not "" —
+    a no-op string like "" is not a meaningful token, so the SDK's own device_id=None default
+    should apply."""
+    import synology_apm.cli._helpers as _h
+    mock_ctx = MagicMock()
+    mock_ctx.obj = {"host": "h", "username": "u", "password": "p",
+                    "profile": None, "no_input": False, "no_verify_ssl": False}
+
+    mock_apm = AsyncMock()
+    mock_apm.my_server.name = "apm-server-01"
+    mock_apm.my_server.system_version = ""
+    fake_ctx_mgr = AsyncMock()
+    fake_ctx_mgr.__aenter__ = AsyncMock(return_value=mock_apm)
+    fake_ctx_mgr.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch(
+            "synology_apm.cli._helpers.resolve_connection",
+            return_value=ResolvedConnection("h", "u", "p", True),
+        ),
+        patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr) as mock_client_cls,
+    ):
+        async with _h.get_client(mock_ctx):
+            pass
+
+    mock_client_cls.assert_called_once_with(
+        "h", "u", "p", device_id=None, verify_ssl=True, debug=False,
+    )
+
+
+async def test_get_client_otp_required_reports_config_set_hint_and_exits_auth() -> None:
+    """A stale/missing trusted-device token surfaces as an actionable "run config set" message,
+    never as an interactive prompt — ordinary commands never handle two-factor codes themselves.
+    """
+    import synology_apm.cli._helpers as _h
+    mock_ctx = MagicMock()
+    mock_ctx.obj = {"host": "h", "username": "u", "password": "p",
+                    "profile": "auditor-2fa", "no_input": False, "no_verify_ssl": False}
+
+    fake_ctx_mgr = AsyncMock()
+    fake_ctx_mgr.__aenter__ = AsyncMock(side_effect=OTPRequiredError("two-factor code required"))
+
+    with (
+        patch(
+            "synology_apm.cli._helpers.resolve_connection",
+            return_value=ResolvedConnection("h", "u", "p", True, profile="auditor-2fa"),
+        ),
+        patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr),
+        patch("synology_apm.cli._helpers.typer") as mock_typer,
+    ):
+        mock_typer.Exit = typer.Exit
+        with pytest.raises(typer.Exit) as exc_info:
+            async with _h.get_client(mock_ctx):
+                pass  # pragma: no cover
+
+    assert exc_info.value.exit_code == EXIT_AUTH
+    mock_typer.prompt.assert_not_called()
+
+
+async def test_get_client_otp_incorrect_reports_config_set_hint_and_exits_auth() -> None:
+    """Same treatment for OTPIncorrectError (a business-API errorCode collision, see _http.py)."""
+    import synology_apm.cli._helpers as _h
+    mock_ctx = MagicMock()
+    mock_ctx.obj = {"host": "h", "username": "u", "password": "p",
+                    "profile": None, "no_input": False, "no_verify_ssl": False}
+
+    fake_ctx_mgr = AsyncMock()
+    fake_ctx_mgr.__aenter__ = AsyncMock(side_effect=OTPIncorrectError("two-factor code incorrect"))
+
+    with (
+        patch(
+            "synology_apm.cli._helpers.resolve_connection",
+            return_value=ResolvedConnection("h", "u", "p", True),
+        ),
+        patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr),
+        pytest.raises(typer.Exit) as exc_info,
+    ):
+        async with _h.get_client(mock_ctx):
+            pass  # pragma: no cover
+
+    assert exc_info.value.exit_code == EXIT_AUTH
+
+
+async def test_get_client_otp_required_message_includes_profile_flag_for_non_default_profile(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The printed hint includes --profile <name> for a non-default profile, and omits it for
+    the default profile."""
+    import synology_apm.cli._helpers as _h
+    mock_ctx = MagicMock()
+    mock_ctx.obj = {"host": "h", "username": "u", "password": "p",
+                    "profile": "auditor-2fa", "no_input": False, "no_verify_ssl": False}
+
+    fake_ctx_mgr = AsyncMock()
+    fake_ctx_mgr.__aenter__ = AsyncMock(side_effect=OTPRequiredError("two-factor code required"))
+
+    with (
+        patch(
+            "synology_apm.cli._helpers.resolve_connection",
+            return_value=ResolvedConnection("h", "u", "p", True, profile="auditor-2fa"),
+        ),
+        patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr),
+        pytest.raises(typer.Exit),
+    ):
+        async with _h.get_client(mock_ctx):
+            pass  # pragma: no cover
+
+    assert "config set --profile auditor-2fa" in capsys.readouterr().err
+
+
+async def test_get_client_otp_required_message_omits_profile_flag_for_default_profile(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import synology_apm.cli._helpers as _h
+    mock_ctx = MagicMock()
+    mock_ctx.obj = {"host": "h", "username": "u", "password": "p",
+                    "profile": None, "no_input": False, "no_verify_ssl": False}
+
+    fake_ctx_mgr = AsyncMock()
+    fake_ctx_mgr.__aenter__ = AsyncMock(side_effect=OTPRequiredError("two-factor code required"))
+
+    with (
+        patch(
+            "synology_apm.cli._helpers.resolve_connection",
+            return_value=ResolvedConnection("h", "u", "p", True, profile=DEFAULT_PROFILE),
+        ),
+        patch("synology_apm.cli._helpers.APMClient", return_value=fake_ctx_mgr),
+        pytest.raises(typer.Exit),
+    ):
+        async with _h.get_client(mock_ctx):
+            pass  # pragma: no cover
+
+    err = capsys.readouterr().err
+    assert "Run: synology-apm-cli config set" in err
+    assert "--profile" not in err
 
 
 # ── fmt_location_name ─────────────────────────────────────────────────────────

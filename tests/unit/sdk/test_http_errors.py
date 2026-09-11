@@ -90,6 +90,55 @@ async def test_500_raises_api_error() -> None:
         await session.disconnect()
 
     assert exc_info.value.error_code == 500
+    assert exc_info.value.message == "Server error: HTTP 500"
+
+
+async def test_500_message_prefers_detail_message_over_generic_text() -> None:
+    """error.details[0].message (the provider-specific diagnostic, e.g. an auth failure reason)
+    is more useful than the generic 'Server error: HTTP 500' and should be preferred."""
+    session = make_session()
+    async with aiointercept(mock_external_urls=True) as m:
+        await connect_session(m, session)
+        m.get(
+            f"{BASE_URL}/api/v1/workload/device_workload",
+            status=500,
+            payload={
+                "error": {
+                    "code": 500,
+                    "status": "Internal Server Error",
+                    "message": "check storage connect failed",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/api.ErrorDetail",
+                            "errorCode": 3000,
+                            "message": "Invalid access key id or signature.",
+                        }
+                    ],
+                }
+            },
+        )
+        with pytest.raises(APIError) as exc_info:
+            await session.get("/api/v1/workload/device_workload")
+        await session.disconnect()
+
+    assert exc_info.value.error_code == 3000
+    assert exc_info.value.message == "Invalid access key id or signature."
+
+
+async def test_500_message_falls_back_to_top_level_error_message_without_details() -> None:
+    session = make_session()
+    async with aiointercept(mock_external_urls=True) as m:
+        await connect_session(m, session)
+        m.get(
+            f"{BASE_URL}/api/v1/workload/device_workload",
+            status=500,
+            payload={"error": {"code": 500, "message": "scan backup server failed"}},
+        )
+        with pytest.raises(APIError) as exc_info:
+            await session.get("/api/v1/workload/device_workload")
+        await session.disconnect()
+
+    assert exc_info.value.message == "scan backup server failed"
 
 
 async def test_error_detail_code_2003_raises_backup_server_disconnected() -> None:

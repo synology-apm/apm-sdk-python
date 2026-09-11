@@ -239,6 +239,12 @@ _HYPERVISOR_TYPE_DISPLAY: dict[HypervisorType, str] = {
     HypervisorType.HYPERV_STANDALONE:       "Microsoft Hyper-V (Standalone)",
     HypervisorType.HYPERV_SCVMM:           "Microsoft Hyper-V (SCVMM)",
     HypervisorType.HYPERV_FAILOVER_CLUSTER: "Microsoft Hyper-V (Failover Cluster)",
+    HypervisorType.NUTANIX_PRISM_ELEMENT:   "Nutanix (Prism Element)",
+    HypervisorType.NUTANIX_PRISM_CENTRAL:   "Nutanix (Prism Central)",
+    HypervisorType.PROXMOX_NODE:            "Proxmox VE (Node)",
+    HypervisorType.PROXMOX_CLUSTER:         "Proxmox VE (Cluster)",
+    HypervisorType.AWS:                     "Amazon Web Services",
+    HypervisorType.AZURE:                   "Microsoft Azure",
     HypervisorType.UNKNOWN:                 "Unknown",
 }
 

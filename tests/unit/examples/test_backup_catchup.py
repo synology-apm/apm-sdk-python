@@ -576,6 +576,27 @@ async def test_run_failed_backup_table_output_and_exit_code_1(
     assert "Timed out: 0" in summary_line
 
 
+async def test_run_timed_out_backup_table_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A still-running (timed-out) activity renders the '?' marker and 'timed out (still
+    running)' label under table output -- existing timeout coverage is json-output-only."""
+    apm = make_fake_apm()
+    apm.machine.workloads.list.return_value = ([_make_stale_machine_workload()], 1)
+    apm.machine.workloads.backup_now = AsyncMock()
+    patch_make_client(monkeypatch, backup_catchup, apm)
+
+    rc = await run(1, False, True, 0, False, "machine", None, None, "table")
+
+    assert rc == 1
+    out_lines = capsys.readouterr().out.splitlines()
+    result_line = next(ln for ln in out_lines if "CORP-PC-001" in ln)
+    assert "[?]" in result_line
+    assert "timed out (still running)" in result_line
+    summary_line = next(ln for ln in out_lines if "Success:" in ln)
+    assert "Timed out: 1" in summary_line
+
+
 # ── main(): argparse wiring ───────────────────────────────────────────────────
 
 

@@ -60,6 +60,33 @@ class AuthenticationError(APMError):
     """
 
 
+class OTPRequiredError(APMError):
+    """Login requires a two-factor authentication code, and none — or no valid
+    trusted-device registration — was supplied.
+
+    Raised by connect() for an account with two-factor authentication enabled
+    when no trusted device is registered for it yet, or the registered device
+    is no longer recognized (e.g. it was revoked). Only synology-apm-cli's
+    ``config set`` command handles this interactively; every other caller
+    should treat it as a hard failure and point the user at that command.
+
+    A sibling of AuthenticationError (not a subclass): ERROR_CODES keys must
+    have no subclass relationships with each other (classify_error() does an
+    exact type() lookup), so this is intentionally not
+    ``class OTPRequiredError(AuthenticationError)`` even though it is
+    conceptually an authentication failure.
+    """
+
+
+class OTPIncorrectError(APMError):
+    """The supplied two-factor authentication code was incorrect.
+
+    Raised by connect() when an otp_code was supplied but rejected. See
+    OTPRequiredError's docstring for why this is a sibling of
+    AuthenticationError rather than a subclass.
+    """
+
+
 class _ResourceError(APMError):
     """Base for errors that reference a specific resource by type and id.
 
@@ -231,6 +258,24 @@ class RemoteStorageEncryptionMismatchError(_ResourceError):
     """
 
 
+class RemoteStorageAuthenticationError(_ResourceError):
+    """The remote storage provider rejected the given credentials.
+
+    Raised by add() and update() when the storage provider (S3, APV, Azure, etc.) rejects the
+    given credentials — e.g. an invalid access key/secret key, or (for Azure) an invalid
+    Microsoft Entra application tenant ID, client ID, or secret. The message is generally the
+    provider's own diagnostic text (describing, e.g., an invalid key or an unrecognized
+    tenant/application); a generic description is used on the rare path where the provider
+    supplies none.
+
+    Attributes:
+        resource_type: Always "RemoteStorage".
+        resource_id:   For add(), usually the vault/container name; falls back to the endpoint
+                       (or "" for endpoint-free types) when the failure happens before a vault
+                       name is known. For update(), the storage UUID.
+    """
+
+
 class RemoteStorageUnmanagedCatalogError(APMError):
     """The vault contains pre-existing backup catalogs not linked to any plan.
 
@@ -280,12 +325,15 @@ ERROR_CODES: dict[type[APMError], str] = {
     DuplicateWorkloadError: "duplicate_workload",
     PlanNameConflictError: "plan_name_conflict",
     PlanInUseError: "plan_in_use",
+    RemoteStorageAuthenticationError: "remote_storage_authentication_failed",
     RemoteStorageConflictError: "remote_storage_conflict",
     RemoteStorageEncryptionMismatchError: "remote_storage_encryption_mismatch",
     RemoteStorageInUseError: "remote_storage_in_use",
     RemoteStorageUnmanagedCatalogError: "remote_storage_unmanaged_catalog",
     ResourceNotReadyError: "resource_not_ready",
     AuthenticationError: "authentication_error",
+    OTPRequiredError: "otp_required",
+    OTPIncorrectError: "otp_incorrect",
     PermissionDeniedError: "permission_denied",
     NotSupportedError: "not_supported",
     NotManagementServerError: "not_management_server",

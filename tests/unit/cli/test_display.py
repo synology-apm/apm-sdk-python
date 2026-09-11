@@ -290,6 +290,12 @@ def test_fmt_hypervisor_type_all_values() -> None:
     assert fmt_hypervisor_type(HypervisorType.HYPERV_STANDALONE)       == "Microsoft Hyper-V (Standalone)"
     assert fmt_hypervisor_type(HypervisorType.HYPERV_SCVMM)            == "Microsoft Hyper-V (SCVMM)"
     assert fmt_hypervisor_type(HypervisorType.HYPERV_FAILOVER_CLUSTER) == "Microsoft Hyper-V (Failover Cluster)"
+    assert fmt_hypervisor_type(HypervisorType.NUTANIX_PRISM_ELEMENT)   == "Nutanix (Prism Element)"
+    assert fmt_hypervisor_type(HypervisorType.NUTANIX_PRISM_CENTRAL)   == "Nutanix (Prism Central)"
+    assert fmt_hypervisor_type(HypervisorType.PROXMOX_NODE)            == "Proxmox VE (Node)"
+    assert fmt_hypervisor_type(HypervisorType.PROXMOX_CLUSTER)         == "Proxmox VE (Cluster)"
+    assert fmt_hypervisor_type(HypervisorType.AWS)                     == "Amazon Web Services"
+    assert fmt_hypervisor_type(HypervisorType.AZURE)                   == "Microsoft Azure"
     assert fmt_hypervisor_type(HypervisorType.UNKNOWN)                 == "Unknown"
 
 

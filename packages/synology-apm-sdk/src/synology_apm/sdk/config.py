@@ -76,7 +76,12 @@ def set_keyring_password(profile: str, username: str, password: str) -> None:
         raise KeyringUnavailableError(f"Could not save the password to the OS keyring: {exc}") from exc
 
 
-def _get_keyring_password(profile: str, username: str) -> str | None:
+def get_keyring_password(profile: str, username: str) -> str | None:
+    """Read a profile's password from the OS keyring.
+
+    Raises:
+        KeyringUnavailableError: When the OS keyring backend is unavailable or the read fails.
+    """
     try:
         return keyring.get_password(_keyring_service(profile), username)
     except keyring.errors.KeyringError as exc:
@@ -108,6 +113,7 @@ class ProfileConfig:
     password: str = ""
     no_verify_ssl: bool = False
     password_storage: PasswordStorage = PasswordStorage.NONE
+    device_id: str = ""
 
     def is_complete(self) -> bool:
         """Returns True when both host and username are set."""
@@ -162,6 +168,7 @@ def load_config() -> AppConfig:
                 password=stored_password,
                 no_verify_ssl=bool(values.get("no_verify_ssl", False)),
                 password_storage=storage,
+                device_id=values.get("device_id", ""),
             )
     return AppConfig(profiles=profiles)
 
@@ -189,6 +196,8 @@ def save_config(config: AppConfig) -> None:
             section["password_storage"] = profile.password_storage.value
         if profile.no_verify_ssl:
             section["no_verify_ssl"] = True
+        if profile.device_id:
+            section["device_id"] = profile.device_id
         raw[name] = section
 
     # mkstemp creates the file with 0600 regardless of umask; os.replace then
@@ -217,6 +226,10 @@ class ResolvedConnection:
         verify_ssl: Whether to verify the server's TLS certificate.
         profile: Name of the profile consulted to resolve these settings (the caller-supplied
             or environment-selected profile, or :data:`DEFAULT_PROFILE`).
+        device_id: The profile's registered trusted-device id, if any (empty string otherwise).
+            Read directly from the resolved profile — unlike host/username/password/
+            no_verify_ssl, there is no environment-variable or caller-argument override tier
+            for it; see synology-apm-cli's ``config set`` for how a profile registers one.
     """
 
     host: str
@@ -224,6 +237,7 @@ class ResolvedConnection:
     password: str
     verify_ssl: bool
     profile: str = DEFAULT_PROFILE
+    device_id: str = ""
 
     def is_complete(self) -> bool:
         """Returns True when both host and username are set."""
@@ -257,6 +271,13 @@ def resolve_connection(
                        parameters, before they are.
         no_verify_ssl: Whether to skip TLS certificate verification. Falls back to
                        APM_NO_VERIFY_SSL, then the resolved profile's stored setting.
+
+    The returned ``device_id`` (a registered trusted-device token, if any) is read from the
+    resolved profile — there is no caller-argument or environment-variable override tier for
+    it, unlike every other field above — but only when ``host``/``username`` did not end up
+    overridden away from that profile's own stored host/username; a device token registered
+    for one host/account is never carried over to a different one just because a profile was
+    consulted for other settings.
 
     Raises:
         KeyringUnavailableError: When the profile's password is stored in the OS keyring and the
@@ -294,7 +315,7 @@ def resolve_connection(
         or file_profile.password
     )
     if not effective_password and file_profile.password_storage == PasswordStorage.KEYRING:
-        effective_password = _get_keyring_password(effective_profile, file_profile.username) or ""
+        effective_password = get_keyring_password(effective_profile, file_profile.username) or ""
 
     env_no_verify = os.environ.get("APM_NO_VERIFY_SSL", "").strip()
     effective_no_verify = (
@@ -303,6 +324,31 @@ def resolve_connection(
         file_profile.no_verify_ssl
     )
 
-    return ResolvedConnection(
-        effective_host, effective_username, effective_password, not effective_no_verify, effective_profile
+    # A device token only ever applies to the host/account it was registered for — if a
+    # caller-supplied/env-overridden host or username diverges from what's on file for this
+    # profile, the profile's device_id must not be carried over to that different identity.
+    effective_device_id = (
+        file_profile.device_id
+        if effective_host == file_profile.host and effective_username == file_profile.username
+        else ""
     )
+
+    return ResolvedConnection(
+        effective_host, effective_username, effective_password, not effective_no_verify, effective_profile,
+        device_id=effective_device_id,
+    )
+
+
+def save_profile_device_token(profile: str, device_id: str) -> None:
+    """Persist a trusted-device id into the given profile.
+
+    Creates the profile section if it doesn't exist yet. Pass an empty string to
+    clear a previously-registered device token. Not a secret (unlike a
+    password), so this always writes directly into the profile section —
+    no keyring involvement.
+    """
+    cfg = load_config()
+    profile_config = cfg.get_profile(profile)
+    profile_config.device_id = device_id
+    cfg.set_profile(profile, profile_config)
+    save_config(cfg)

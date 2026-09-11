@@ -181,6 +181,69 @@ class TestBuildLifespan:
                     await ctx["apm"].backup_servers.list()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("exc_type", ["OTPRequiredError", "OTPIncorrectError"])
+    async def test_yields_failed_connection_client_on_otp_error(self, exc_type: str) -> None:
+        """A missing/stale trusted-device token degrades gracefully like any other APMError —
+        MCP never prompts for a two-factor code itself (see synology-apm-cli's `config set`
+        for the only place that happens)."""
+        from synology_apm.mcp._server import _FailedConnectionClient, build_lifespan
+        from synology_apm.sdk import ResolvedConnection
+        from synology_apm.sdk import exceptions as sdk_exceptions
+
+        exc = getattr(sdk_exceptions, exc_type)("two-factor authentication required")
+        mock_client = AsyncMock()
+        mock_client.__aenter__.side_effect = exc
+
+        with patch("synology_apm.mcp._server.APMClient", return_value=mock_client):
+            resolved = ResolvedConnection("apm.corp.com", "admin", "secret", True)
+            lifespan = build_lifespan(resolved, debug=False)
+            async with lifespan(cast(FastMCP, None)) as ctx:
+                assert isinstance(ctx["apm"], _FailedConnectionClient)
+                with pytest.raises(type(exc)):
+                    await ctx["apm"].get_site_info()
+
+    @pytest.mark.asyncio
+    async def test_apm_client_receives_device_token_from_resolved_connection(self) -> None:
+        """build_lifespan() passes the resolved profile's device_id through to APMClient, but
+        never an otp_code (MCP never has one to supply)."""
+        from synology_apm.mcp._server import build_lifespan
+        from synology_apm.sdk import ResolvedConnection
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+
+        with patch("synology_apm.mcp._server.APMClient", return_value=mock_client) as mock_client_cls:
+            resolved = ResolvedConnection("apm.corp.com", "admin", "secret", True, device_id="did-abc")
+            lifespan = build_lifespan(resolved, debug=False)
+            async with lifespan(cast(FastMCP, None)):
+                pass
+
+        mock_client_cls.assert_called_once_with(
+            "apm.corp.com", "admin", "secret",
+            device_id="did-abc", verify_ssl=True, debug=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_apm_client_receives_none_when_no_device_token_registered(self) -> None:
+        """An empty device_id on the resolved profile is passed to APMClient as None, not ""."""
+        from synology_apm.mcp._server import build_lifespan
+        from synology_apm.sdk import ResolvedConnection
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+
+        with patch("synology_apm.mcp._server.APMClient", return_value=mock_client) as mock_client_cls:
+            resolved = ResolvedConnection("apm.corp.com", "admin", "secret", True)
+            lifespan = build_lifespan(resolved, debug=False)
+            async with lifespan(cast(FastMCP, None)):
+                pass
+
+        mock_client_cls.assert_called_once_with(
+            "apm.corp.com", "admin", "secret",
+            device_id=None, verify_ssl=True, debug=False,
+        )
+
+    @pytest.mark.asyncio
     async def test_config_error_yields_failed_connection_client_without_connecting(self) -> None:
         """When credentials couldn't be resolved at all (see _config.py::load_credentials()),
         build_lifespan() must skip the real connection attempt entirely -- there's nothing

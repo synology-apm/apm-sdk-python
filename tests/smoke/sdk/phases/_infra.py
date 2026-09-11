@@ -14,10 +14,14 @@ import secrets
 from collections import defaultdict
 
 from synology_apm.sdk import (
+    AccessKeyStorageUpdateRequest,
     AmazonS3ChinaStorageAddRequest,
     AmazonS3StorageAddRequest,
     APMError,
     APVStorageAddRequest,
+    AzureBlobChinaStorageAddRequest,
+    AzureBlobStorageAddRequest,
+    AzureBlobStorageUpdateRequest,
     BackupServer,
     BackupServerRole,
     BackupServerType,
@@ -31,7 +35,6 @@ from synology_apm.sdk import (
     RemoteStorageInUseError,
     RemoteStorageType,
     RemoteStorageUnmanagedCatalogError,
-    RemoteStorageUpdateRequest,
     ResourceNotFoundError,
     RetirementPlan,
     RetirementPlanCreateRequest,
@@ -256,6 +259,8 @@ _STORAGE_TYPE_MAP: dict[str, RemoteStorageType] = {
     "amazon_s3_china": RemoteStorageType.AMAZON_S3_CHINA,
     "c2":             RemoteStorageType.C2_OBJECT_STORAGE,
     "wasabi":         RemoteStorageType.WASABI,
+    "azure_blob":     RemoteStorageType.AZURE_BLOB,
+    "azure_blob_china": RemoteStorageType.AZURE_BLOB_CHINA,
 }
 
 
@@ -270,8 +275,32 @@ def _build_add_request(
     | AmazonS3ChinaStorageAddRequest
     | C2ObjectStorageAddRequest
     | WasabiCloudStorageAddRequest
+    | AzureBlobStorageAddRequest
+    | AzureBlobChinaStorageAddRequest
     | None
 ):
+    if cred.type == "azure_blob":
+        return AzureBlobStorageAddRequest(
+            tenant_id=cred.tenant_id,
+            client_id=cred.client_id,
+            secret=cred.secret,
+            account_name=cred.account_name,
+            vault_name=cred.vault,
+            encryption_enabled=bool(cred.relink_encryption_key),
+            relink_encryption_key=cred.relink_encryption_key,
+            unmanaged_retirement_plan=retirement_plan,
+        )
+    if cred.type == "azure_blob_china":
+        return AzureBlobChinaStorageAddRequest(
+            tenant_id=cred.tenant_id,
+            client_id=cred.client_id,
+            secret=cred.secret,
+            account_name=cred.account_name,
+            vault_name=cred.vault,
+            encryption_enabled=bool(cred.relink_encryption_key),
+            relink_encryption_key=cred.relink_encryption_key,
+            unmanaged_retirement_plan=retirement_plan,
+        )
     if cred.type == "s3_compatible":
         return GenericS3StorageAddRequest(
             access_key=cred.access_key,
@@ -566,12 +595,18 @@ async def _run_one_storage_crud(ctx: SmokeContext, cred: RemoteStorageCred) -> N
         else:
             ctx.skip(DOMAIN, f"infra.remote_storages.check[{label}/fields]", "get did not succeed")
 
-        update_request = RemoteStorageUpdateRequest(
-            access_key=cred.access_key,
-            secret_key=cred.secret_key,
-            endpoint=cred.endpoint,
-            trust_self_signed=cred.trust_self_signed,
-        )
+        update_request: AccessKeyStorageUpdateRequest | AzureBlobStorageUpdateRequest
+        if cred.type in ("azure_blob", "azure_blob_china"):
+            update_request = AzureBlobStorageUpdateRequest(
+                tenant_id=cred.tenant_id, client_id=cred.client_id, secret=cred.secret,
+            )
+        else:
+            update_request = AccessKeyStorageUpdateRequest(
+                access_key=cred.access_key,
+                secret_key=cred.secret_key,
+                endpoint=cred.endpoint,
+                trust_self_signed=cred.trust_self_signed,
+            )
         base = fetched if fetched is not None else add_result.storage
         updated: RemoteStorage | None = await ctx.call(
             DOMAIN, f"infra.remote_storages.update[{label}]",

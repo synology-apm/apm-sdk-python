@@ -80,6 +80,7 @@ from synology_apm.sdk.models.version import VersionLocation, WorkloadVersion
 from synology_apm.sdk.models.workload import (
     FileServerConfig,
     FileServerPathSelector,
+    GWSSharedDriveInfo,
     M365GroupInfo,
     M365Info,
     M365SiteInfo,
@@ -190,6 +191,19 @@ def test_m365_group_info_label() -> None:
         mail="marketing@contoso.com",
     )
     assert info.label == "marketing@contoso.com"
+
+
+def test_gws_shared_drive_info_label() -> None:
+    info = GWSSharedDriveInfo(drive_id="drive-001", drive_name="Marketing Drive")
+    assert info.label == "Marketing Drive"
+
+
+def test_gws_shared_drive_info_to_dict() -> None:
+    info = GWSSharedDriveInfo(drive_id="drive-001", drive_name="Marketing Drive")
+    d = info.to_dict()
+    assert d["drive_id"] == "drive-001"
+    assert d["drive_name"] == "Marketing Drive"
+    assert d["kind"] == "shared_drive"
 
 
 # ── VersionLocation.location_info ─────────────────────────────────────────
@@ -363,6 +377,8 @@ class TestRemoteStorageToDict:
             "remaining_bytes": 9_000_000_000,
             "encryption_enabled": False,
             "vault_name": "MyVault",
+            "account_name": "",
+            "client_id": "",
         }
 
     def test_add_result_nests_storage(self) -> None:
@@ -464,6 +480,22 @@ class TestMachineWorkloadToDict:
         assert d["workload_type"] == "pc"
         assert d["agent_version"] == "1.2.0"
         assert d["ip_address"] == "192.0.2.100"
+
+    def test_inventory_type_serializes_as_enum_value(self) -> None:
+        wl = make_machine_wl(
+            workload_type=MachineWorkloadType.VM,
+            inventory_name="aws-account-01",
+            inventory_type=HypervisorType.AWS,
+        )
+        d = wl.to_dict()
+        assert d["inventory_name"] == "aws-account-01"
+        assert d["inventory_type"] == "aws"
+
+    def test_inventory_type_none_serializes_as_none(self) -> None:
+        wl = make_machine_wl(workload_type=MachineWorkloadType.PC)
+        d = wl.to_dict()
+        assert d["inventory_name"] is None
+        assert d["inventory_type"] is None
 
     def test_fs_config_nested(self) -> None:
         cfg = FileServerConfig(

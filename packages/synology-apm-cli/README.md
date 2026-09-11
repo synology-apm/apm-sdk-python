@@ -63,6 +63,29 @@ synology-apm-cli config clear --yes --quiet   # skip confirmation and success ou
 
 Config is stored in `~/.config/synology-apm/config.toml`.
 
+### Two-factor authentication (TOTP)
+
+If the account has two-factor authentication enabled, `config set` also attempts a real
+connection (whenever a password is available) and, on first use, prompts once for a
+verification code and registers this device as trusted — so future connections (from this CLI
+and from `synology-apm-mcp`, if it shares the same profile) skip the code entirely:
+
+```bash
+synology-apm-cli config set --host apm.corp.com --username admin --save-password keyring
+# Two-factor authentication code: ******
+# ✓ Registered a trusted device for two-factor authentication.
+```
+
+This is the *only* place a verification code is ever requested — every other command fails
+with an actionable message (pointing back at `config set`) if no trusted device is on file, or
+the registered one is no longer valid. `config show` reports whether a profile has one
+registered; to force re-verification (e.g. after revoking trusted devices in DSM) without
+touching the rest of the profile:
+
+```bash
+synology-apm-cli config clear --forget-device --profile lab
+```
+
 ### Environment variables
 
 ```bash

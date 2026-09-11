@@ -4,8 +4,12 @@ Handles APM authentication, `id` session-cookie maintenance, and all REST API re
 APMClient holds one WebAPISession instance; all HTTP operations go through this class.
 
 Authentication flow (connect):
-  1. GET /webapi/entry.cgi — SYNO.API.Auth v6 login: obtain session cookies
-  2. 401 re-auth: automatically redo Step 1 and retry once on any 401 response
+  1. GET /webapi/entry.cgi — SYNO.API.Auth v6 login: obtain session cookies.
+     Optionally carries otp_code (+ enable_device_token) to verify a two-factor
+     code and register a trusted device, or device_id to skip the two-factor
+     code using an already-registered device.
+  2. 401 re-auth: automatically redo Step 1 (reusing device_id, never the
+     original otp_code — see _login_params) and retry once on any 401 response
 """
 from __future__ import annotations
 
@@ -29,6 +33,8 @@ from .exceptions import (
     BackupServerDisconnectedError,
     ConnectionTimeoutError,
     NotSupportedError,
+    OTPIncorrectError,
+    OTPRequiredError,
     PermissionDeniedError,
     ResourceNotFoundError,
 )
@@ -52,6 +58,25 @@ _PERMISSION_DENIED_CODES: frozenset[int] = frozenset({105})
 _NOT_FOUND_CODES: frozenset[int] = frozenset({7000, 14000})
 _DISCONNECTED_SERVER_CODE = 2003
 _BACKUP_SERVER_NOT_FOUND_CODE = 1402
+
+
+def _auth_exception_for_code(
+    code: int | None, message: str, response_body: Any = None
+) -> AuthenticationError | OTPRequiredError | OTPIncorrectError:
+    """Map a SYNO.API.Auth *login-response* error code to the correct auth-failure exception type.
+
+    Only ever called from _do_login()'s own inline failure check — never from the generic
+    _raise_for_error_code() path used for ordinary business-API responses. The OTP-specific
+    distinction is only meaningful for an actual login response: an unrelated business-API
+    call that happens to carry errorCode 403/404 in its body has nothing to do with two-factor
+    authentication, so that path must keep raising plain AuthenticationError for these codes
+    (see _raise_for_error_code()) rather than sharing this helper.
+    """
+    if code == 403:
+        return OTPRequiredError(message, error_code=code, response_body=response_body)
+    if code == 404:
+        return OTPIncorrectError(message, error_code=code, response_body=response_body)
+    return AuthenticationError(message, error_code=code, response_body=response_body)
 
 
 # connect(), _request(), and download_file() each catch this exact tuple and
@@ -100,6 +125,11 @@ class WebAPISession:
               APM requires HTTPS; the SDK prepends the scheme automatically.
         username: Login account.
         password: Login password.
+        otp_code: One-time two-factor authentication code. Only meaningful when
+            registering a new trusted device — not needed once a trusted device
+            has been registered (see device_id).
+        device_id: A previously-obtained trusted-device identifier that lets
+            this login skip the two-factor code.
         verify_ssl: Whether to verify the SSL certificate. Defaults to True.
             Set to False for self-signed certificates in test environments.
         timeout: Per-request timeout in seconds. Defaults to 300.
@@ -111,6 +141,8 @@ class WebAPISession:
         username: str,
         password: str,
         *,
+        otp_code: str | None = None,
+        device_id: str | None = None,
         verify_ssl: bool = True,
         timeout: float = 300.0,
         debug: bool = False,
@@ -118,6 +150,11 @@ class WebAPISession:
         self._base_url = f"https://{host.rstrip('/')}"
         self._username = username
         self._password = password
+        self._otp_code = otp_code
+        self._device_id = device_id
+        # Captured from a login response's "did" when a fresh otp_code-bearing
+        # login registers (or re-confirms) a trusted device.
+        self._new_device_id: str | None = None
         self._verify_ssl = verify_ssl
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._debug = debug
@@ -131,6 +168,16 @@ class WebAPISession:
         self._auth_epoch = 0
 
     # ── Public interface ───────────────────────────────────────────────────
+
+    @property
+    def device_id(self) -> str | None:
+        """The trusted-device id in effect for this session.
+
+        This is the id supplied at construction, or — after a successful
+        otp_code-verified login registered/confirmed one — the id APM issued.
+        None if two-factor authentication with a trusted device is not in use.
+        """
+        return self._new_device_id or self._device_id
 
     async def connect(self) -> None:
         """Perform the login flow and establish the session.
@@ -340,59 +387,92 @@ class WebAPISession:
 
     # ── Login helpers ──────────────────────────────────────────────────────
 
-    async def _do_login(self) -> None:
-        """Perform DSM login and obtain session cookies.
+    def _login_params(self) -> dict[str, str]:
+        """Build the SYNO.API.Auth login query params for the current state.
 
-        Raises:
-            AuthenticationError: Incorrect credentials or account locked.
+        Pure (no I/O) so the per-scenario param shape is directly unit-testable.
+        otp_code (and enable_device_token) are included only when an otp_code is
+        in hand; device_id is included whenever known, regardless — this single
+        rule is what lets both a fresh OTP-verified login and every later
+        device-token-only login (including automatic 401 re-auth, which never
+        has an otp_code to resend) share the same code path.
         """
-        assert self._session is not None
-        url = f"{self._base_url}/webapi/entry.cgi"
         params = {
             "api": "SYNO.API.Auth",
             "version": "6",
             "method": "login",
             "account": self._username,
-            "passwd": "***",
+            "passwd": self._password,
             "session": "webui",
             "client": "browser",
             "enable_syno_token": "yes",
         }
+        if self._otp_code:
+            params["otp_code"] = self._otp_code
+            params["enable_device_token"] = "yes"
+        device_id = self._device_id or self._new_device_id
+        if device_id:
+            params["device_id"] = device_id
+        return params
+
+    async def _do_login(self) -> None:
+        """Perform DSM login and obtain session cookies.
+
+        Raises:
+            AuthenticationError: Incorrect credentials or account locked.
+            OTPRequiredError: Two-factor authentication is required and no
+                otp_code / valid trusted-device id was supplied.
+            OTPIncorrectError: The supplied otp_code was rejected.
+        """
+        assert self._session is not None
+        url = f"{self._base_url}/webapi/entry.cgi"
+        params = self._login_params()
+        had_otp_code = bool(self._otp_code)
 
         req_id = next(self._debug_seq)
         start = time.monotonic()
         if self._debug:
-            _debug_print_request(req_id, "GET", url, params=params)
+            masked = {**params, "passwd": "***"}
+            if "otp_code" in masked:
+                masked["otp_code"] = "***"
+            _debug_print_request(req_id, "GET", url, params=masked)
 
-        async with self._session.get(
-            url,
-            params={**params, "passwd": self._password},
-            ssl=self._ssl_param(),
-        ) as resp:
-            try:
-                data: dict[str, Any] = await resp.json(content_type=None)
-            except Exception as exc:
-                raise APIError(
-                    f"Cannot connect to {self._base_url}: unexpected response format. "
-                    "Verify the host is running Synology ActiveProtect Manager."
-                ) from exc
+        try:
+            async with self._session.get(url, params=params, ssl=self._ssl_param()) as resp:
+                try:
+                    data: dict[str, Any] = await resp.json(content_type=None)
+                except Exception as exc:
+                    raise APIError(
+                        f"Cannot connect to {self._base_url}: unexpected response format. "
+                        "Verify the host is running Synology ActiveProtect Manager."
+                    ) from exc
 
-        if self._debug:
-            _debug_print_response(
-                req_id, resp.status, data,
-                method="GET", url=url, duration=time.monotonic() - start,
-            )
+            if self._debug:
+                _debug_print_response(
+                    req_id, resp.status, data,
+                    method="GET", url=url, duration=time.monotonic() - start,
+                )
 
-        if not data.get("success"):
-            error = data.get("error")
-            raw_code = error.get("code") if isinstance(error, dict) else None
-            code: int | None = raw_code if isinstance(raw_code, int) else None
-            msg = (
-                _SYNO_AUTH_ERROR_MESSAGES[code]
-                if code is not None and code in _SYNO_AUTH_ERROR_MESSAGES
-                else f"Login failed (error code {raw_code})"
-            )
-            raise AuthenticationError(msg, error_code=code, response_body=data)
+            if not data.get("success"):
+                error = data.get("error")
+                raw_code = error.get("code") if isinstance(error, dict) else None
+                code: int | None = raw_code if isinstance(raw_code, int) else None
+                msg = (
+                    _SYNO_AUTH_ERROR_MESSAGES[code]
+                    if code is not None and code in _SYNO_AUTH_ERROR_MESSAGES
+                    else f"Login failed (error code {raw_code})"
+                )
+                raise _auth_exception_for_code(code, msg, response_body=data)
+
+            if had_otp_code:
+                response_data = data.get("data")
+                new_did = response_data.get("did") if isinstance(response_data, dict) else None
+                if new_did and new_did != self._device_id:
+                    self._new_device_id = new_did
+        finally:
+            # otp_code is single-use: clear it so a later automatic 401 re-auth
+            # (which reuses this same _do_login()) never resends it.
+            self._otp_code = None
 
     # ── Request dispatcher ─────────────────────────────────────────────────
 
@@ -499,7 +579,8 @@ class WebAPISession:
                             response_body=body,
                         )
                     raise APIError(
-                        f"Server error: HTTP {resp.status}",
+                        _get_detail_error_message(body)
+                        or _extract_error_message(body, f"Server error: HTTP {resp.status}"),
                         error_code=_detail_code if _detail_code else resp.status,
                         response_body=body,
                     )
@@ -562,7 +643,14 @@ class WebAPISession:
             self._raise_for_error_code(code, msg, response_body=data)
 
     def _raise_for_error_code(self, code: int, message: str, response_body: Any = None) -> None:
-        """Map a known error code to the correct Exception subclass and raise it."""
+        """Map a known error code to the correct Exception subclass and raise it.
+
+        Note: codes 403/404 always raise plain AuthenticationError here, never
+        OTPRequiredError/OTPIncorrectError — this is the generic business-API-response path
+        (see _check_api_error()'s caller), not a login response, so a numeric-code collision
+        with the login-specific two-factor codes must not be misreported as a two-factor
+        failure. Only _do_login() (via _auth_exception_for_code()) makes that distinction.
+        """
         if code in _AUTH_ERROR_CODES:
             raise AuthenticationError(message, error_code=code, response_body=response_body)
 
@@ -618,33 +706,54 @@ async def _safe_json(resp: aiohttp.ClientResponse) -> tuple[Any, bool]:
         return {}, False
 
 
-def _get_detail_error_code(body: Any) -> int | None:
-    """Extract error.details[0].errorCode from an APM error response body, if present."""
+def _get_details_list(body: Any) -> list[Any] | None:
+    """Extract error.details as a list from an APM error response body, if present."""
     if not isinstance(body, dict):
         return None
     error = body.get("error")
     if not isinstance(error, dict):
         return None
     details = error.get("details")
-    if not isinstance(details, list) or not details:
+    return details if isinstance(details, list) else None
+
+
+def _get_first_detail(body: Any) -> dict[str, Any] | None:
+    """Return error.details[0] as a dict from an APM error response body, if present."""
+    details = _get_details_list(body)
+    if not details:
         return None
     first = details[0]
-    if not isinstance(first, dict):
+    return first if isinstance(first, dict) else None
+
+
+def _get_detail_error_code(body: Any) -> int | None:
+    """Extract error.details[0].errorCode from an APM error response body, if present."""
+    first = _get_first_detail(body)
+    if first is None:
         return None
     code = first.get("errorCode")
     return int(code) if isinstance(code, int) else None
 
 
+def _get_detail_error_message(body: Any) -> str | None:
+    """Extract error.details[0].message from an APM error response body, if present.
+
+    This is the provider-specific diagnostic text (e.g. describing an invalid access key or
+    an unrecognized tenant/application) — more specific than error.message (the
+    operation-level text, e.g. "check storage connect failed").
+    """
+    first = _get_first_detail(body)
+    if first is None:
+        return None
+    msg = first.get("message")
+    return str(msg) if msg else None
+
+
 def _get_all_detail_codes(body: Any) -> set[int]:
     """Extract all errorCode values from error.details[*].errorCode."""
-    if not isinstance(body, dict):
+    details = _get_details_list(body)
+    if details is None:
         return set()
-    error = body.get("error")
-    if not isinstance(error, dict):
-        return set()  # pragma: no cover - the API never emits a non-object "error" field
-    details = error.get("details")
-    if not isinstance(details, list):
-        return set()  # pragma: no cover - the API never emits a non-list "details" field
     result: set[int] = set()
     for entry in details:
         if isinstance(entry, dict):

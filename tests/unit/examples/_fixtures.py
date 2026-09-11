@@ -17,6 +17,7 @@ from synology_apm.sdk import (
     FileServerType,
     GWSWorkloadType,
     Hypervisor,
+    HypervisorType,
     M365WorkloadType,
     MachineWorkloadType,
     RemoteStorageStatus,
@@ -149,7 +150,7 @@ def make_machine_workload(
     device_uuid: str | None = "123e4567-e89b-12d3-a456-426614174099",
     ip_address: str | None = "192.0.2.50",
     inventory_name: str | None = None,
-    inventory_type: str | None = None,
+    inventory_type: HypervisorType | None = None,
     fs_config: FileServerConfig | None = None,
 ) -> MachineWorkload:
     """Build a MachineWorkload with sensible defaults."""
@@ -387,6 +388,8 @@ def make_remote_storage(
     remaining_bytes: int | None = 9_663_676_416,
     encryption_enabled: bool = False,
     vault_name: str = "my-bucket",
+    account_name: str = "",
+    client_id: str = "",
 ) -> RemoteStorage:
     """Build a RemoteStorage with sensible defaults."""
     return RemoteStorage(
@@ -400,6 +403,8 @@ def make_remote_storage(
         remaining_bytes=remaining_bytes,
         encryption_enabled=encryption_enabled,
         vault_name=vault_name,
+        account_name=account_name,
+        client_id=client_id,
     )
 
 

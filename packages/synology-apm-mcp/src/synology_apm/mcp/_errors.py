@@ -20,7 +20,10 @@ RECONFIGURE_HINT = (
     "Run `uvx synology-apm-cli config set` to update the connection settings, or if "
     "configured directly via environment variables, fix APM_HOST/APM_USERNAME/"
     "APM_PASSWORD/APM_NO_VERIFY_SSL (or select a different configured profile via "
-    "APM_PROFILE), then restart the MCP server."
+    "APM_PROFILE), then restart the MCP server. If two-factor authentication is "
+    "required, run `uvx synology-apm-cli config set` (with `--profile <name>` for a "
+    "non-default profile) to complete the two-factor prompt and register a trusted "
+    "device, then restart the MCP server."
 )
 """Hint appended to error dicts whose failure mode is "the currently configured
 credentials/connection settings don't work" -- lets the calling agent relay concrete
@@ -28,6 +31,8 @@ next steps to the user instead of just the raw error message."""
 
 _RECONFIGURE_CODES = {
     "authentication_error",
+    "otp_required",
+    "otp_incorrect",
     "not_management_server",
     "connection_timeout",
     "ssl_error",

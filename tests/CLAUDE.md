@@ -22,6 +22,14 @@ Tests must verify **observable behavior**, not internal implementation. The rule
 
 Do not test: `_private` **symbols** (leading-underscore functions, constants, attributes), internal call counts or arguments between methods of the same object, or private state fields. This applies to the SDK, the CLI, and the MCP server.
 
+> **Note:** a private function may be tested directly, as a narrow exception, when it
+> encapsulates non-trivial, branch-heavy pure logic that is impractical to exercise
+> exhaustively through its public caller alone (e.g. `cli/commands/config.py`'s
+> `_resolve_password_decision` and `_verify_connection_and_register_device`) — provided at
+> least one test also exercises it through its public caller, to confirm the wiring itself
+> (right function called, right arguments) rather than only the private function's own logic
+> in isolation.
+
 > **Note:** isinstance-only assertions are acceptable solely for facade property wiring tests
 > (e.g. asserting `client.machine` returns `MachineCollection`) — there the returned collection
 > type is the property's entire contract. Everywhere else, isinstance is not a meaningful

@@ -407,6 +407,12 @@ class HypervisorType(Enum):
     HYPERV_STANDALONE:       Microsoft Hyper-V (Standalone)
     HYPERV_SCVMM:            Microsoft Hyper-V (SCVMM)
     HYPERV_FAILOVER_CLUSTER: Microsoft Hyper-V (Failover Cluster)
+    NUTANIX_PRISM_ELEMENT:   Nutanix (Prism Element)
+    NUTANIX_PRISM_CENTRAL:   Nutanix (Prism Central)
+    PROXMOX_NODE:            Proxmox VE (Node)
+    PROXMOX_CLUSTER:         Proxmox VE (Cluster)
+    AWS:                     Amazon Web Services
+    AZURE:                   Microsoft Azure
     UNKNOWN:                 Unrecognized host type.
     """
     VSPHERE_ESXI             = "vsphere_esxi"
@@ -414,6 +420,12 @@ class HypervisorType(Enum):
     HYPERV_STANDALONE        = "hyperv_standalone"
     HYPERV_SCVMM             = "hyperv_scvmm"
     HYPERV_FAILOVER_CLUSTER  = "hyperv_failover_cluster"
+    NUTANIX_PRISM_ELEMENT    = "nutanix_prism_element"
+    NUTANIX_PRISM_CENTRAL    = "nutanix_prism_central"
+    PROXMOX_NODE             = "proxmox_node"
+    PROXMOX_CLUSTER          = "proxmox_cluster"
+    AWS                      = "aws"
+    AZURE                    = "azure"
     UNKNOWN                  = "unknown"
 
 

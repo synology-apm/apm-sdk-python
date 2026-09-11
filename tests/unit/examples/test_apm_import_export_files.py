@@ -172,6 +172,9 @@ def test_load_rs_credentials_parses_rows(
             "access_key": "AK",
             "secret_key": "SK",
             "relink_encryption_key": expected_relink_key,
+            "tenant_id": "",
+            "client_id": "",
+            "secret": "",
         }
     }
 
@@ -185,6 +188,18 @@ def test_load_rs_credentials_missing_required_column(tmp_path: Path) -> None:
         "s3,https://s3.example.com,MyBucket,AK\n",
     )
     with pytest.raises(ValueError, match="must have a header row"):
+        ie._load_rs_credentials(str(p))
+
+
+def test_load_rs_credentials_empty_vault_name_raises(tmp_path: Path) -> None:
+    """A data row with an empty vault_name raises ValueError naming the row."""
+    p = tmp_path / "empty_vault_rs.csv"
+    _write_cred_csv(
+        p,
+        "storage_type,endpoint,vault_name,access_key,secret_key\n"
+        "s3,https://s3.example.com,,AK,SK\n",
+    )
+    with pytest.raises(ValueError, match="row 2: vault_name must not be empty"):
         ie._load_rs_credentials(str(p))
 
 
@@ -228,6 +243,9 @@ def _sample_rs_creds() -> dict[tuple[str, str, str], dict[str, str]]:
             "access_key": "AK",
             "secret_key": "SK",
             "relink_encryption_key": "EK",
+            "tenant_id": "",
+            "client_id": "",
+            "secret": "",
         }
     }
 

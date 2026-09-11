@@ -58,3 +58,24 @@ trust_self_signed = false                # set true for self-signed TLS certific
 # secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 # vault = "my-test-bucket"
 
+# Azure Blob Storage (registered via an existing Microsoft Entra application; no access_key/
+# secret_key — leave them unset. APM derives the endpoint from the storage account.)
+# [[remote_storage]]
+# type = "azure_blob"
+# name = "smoke-azure"
+# tenant_id = "123e4567-e89b-12d3-a456-426614174020"
+# client_id = "123e4567-e89b-12d3-a456-426614174021"
+# secret = "azure-secret-01"
+# account_name = "azurestorage01"
+# vault = "my-container"                  # container name
+
+# Azure Blob Storage China region — same shape as azure_blob above.
+# [[remote_storage]]
+# type = "azure_blob_china"
+# name = "smoke-azure-cn"
+# tenant_id = "123e4567-e89b-12d3-a456-426614174020"
+# client_id = "123e4567-e89b-12d3-a456-426614174021"
+# secret = "azure-secret-01"
+# account_name = "azurestorage01"
+# vault = "my-container"
+

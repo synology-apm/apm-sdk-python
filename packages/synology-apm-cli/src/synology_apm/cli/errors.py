@@ -45,6 +45,8 @@ EXIT_NOT_SUPPORTED = 5
 # Exit code for each ERROR_CODES classification that isn't the EXIT_ERROR default.
 _EXIT_CODE_BY_CODE: dict[str, int] = {
     "authentication_error": EXIT_AUTH,
+    "otp_required": EXIT_AUTH,
+    "otp_incorrect": EXIT_AUTH,
     "not_management_server": EXIT_CONNECT,
     "backup_server_disconnected": EXIT_CONNECT,
     "connection_timeout": EXIT_CONNECT,
@@ -73,6 +75,8 @@ def _not_found_message(exc: APMError) -> tuple[str, str]:
 # here; every other code defaults to (exc.message, "") in _message_for.
 _MESSAGE_BUILDERS: dict[str, Callable[[APMError], tuple[str, str]]] = {
     "authentication_error": lambda exc: (f"Authentication failed: {exc.message}", ""),
+    "otp_required": lambda exc: (f"Two-factor authentication required: {exc.message}", ""),
+    "otp_incorrect": lambda exc: (f"Two-factor authentication failed: {exc.message}", ""),
     "not_found": _not_found_message,
     "permission_denied": lambda exc: (f"Permission denied: {exc.message}", ""),
     "not_supported": lambda exc: (f"Not supported: {exc.message}", ""),
@@ -156,6 +160,16 @@ def abortable() -> Iterator[None]:
         raise typer.Exit(code=EXIT_CANCEL) from None
 
 
+def config_set_hint(profile: str) -> str:
+    """Return the `config set` command line to run for `profile`.
+
+    Omits `--profile` for the default profile. Shared wording for every "go run config set
+    (again)" hint — do not hand-roll the --profile suffix logic at each call site.
+    """
+    profile_flag = "" if profile == DEFAULT_PROFILE else f" --profile {profile}"
+    return f"synology-apm-cli config set{profile_flag}"
+
+
 def missing_config_hint(profile: str = DEFAULT_PROFILE) -> NoReturn:
     """Display a hint when connection settings are missing and exit."""
     err_console.print(f"[red]✗[/red] Connection settings not configured for profile '{profile}'")
@@ -167,9 +181,8 @@ def missing_config_hint(profile: str = DEFAULT_PROFILE) -> NoReturn:
         err_console.print("  Select one with --profile <name> or APM_PROFILE=<name>, or configure this one:")
         err_console.print()
 
-    profile_flag = "" if profile == DEFAULT_PROFILE else f" --profile {profile}"
     err_console.print("  Run first (interactive wizard):")
-    err_console.print(f"    synology-apm-cli config set{profile_flag}")
+    err_console.print(f"    {config_set_hint(profile)}")
     err_console.print()
     err_console.print("  Or set environment variables:")
     err_console.print("    export APM_HOST=apm.corp.com")

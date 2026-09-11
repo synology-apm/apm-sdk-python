@@ -153,6 +153,70 @@ def test_parse_m365_rule_entries_collab_error_notes_succeeded_services() -> None
     )
 
 
+def test_parse_m365_rule_entries_collab_error_group_exchange_and_mysite() -> None:
+    """Same aggregation as the sharepoint/teams case above, for group_exchange/mysite."""
+    bs = make_backup_server(namespace="ns-apm-server-01")
+    data = {
+        "m365_auto_backup_rules": [
+            {
+                "tenant_ref": "tenant-1",
+                "user_rules": [],
+                "collab_services": {
+                    "group_exchange": {"backup_server_ref": "server-99", "plan_ref": "plan-2"},
+                    "mysite": {"backup_server_ref": "server-1", "plan_ref": "plan-99"},
+                },
+            }
+        ]
+    }
+
+    _, collab_entries = ie._parse_m365_rule_entries(
+        data, {"server-1": bs}, _M365_PLANS_BY_NAME, _PLAN_NAME_BY_REF,
+        {"tenant-1": _TENANT_UUID},
+    )
+
+    assert len(collab_entries) == 1
+    ce = collab_entries[0]
+    assert ce.group_exchange is None
+    assert ce.mysite is None
+    assert ce.parse_error == (
+        f"backup_server_ref 'server-99' not found (tenant '{_TENANT_UUID}' group_exchange); "
+        "plan_ref 'plan-99' not found in protection_plans section"
+    )
+
+
+def test_parse_m365_rule_entries_skips_non_dict_tenant_entry() -> None:
+    data: dict[str, Any] = {"m365_auto_backup_rules": ["not-a-dict"]}
+
+    rule_entries, collab_entries = ie._parse_m365_rule_entries(
+        data, {}, _M365_PLANS_BY_NAME, _PLAN_NAME_BY_REF, {}
+    )
+
+    assert rule_entries == []
+    assert collab_entries == []
+
+
+def test_parse_m365_rule_entries_skips_entry_without_tenant_ref_or_id() -> None:
+    """A tenant block with neither tenant_ref nor tenant_id is skipped entirely."""
+    data = _m365_rules_data(tenant_ref="", tenant_id="")
+
+    rule_entries, collab_entries = ie._parse_m365_rule_entries(
+        data, {}, _M365_PLANS_BY_NAME, _PLAN_NAME_BY_REF, {}
+    )
+
+    assert rule_entries == []
+    assert collab_entries == []
+
+
+def test_parse_m365_rule_entries_skips_non_dict_user_rule() -> None:
+    data = _m365_rules_data(user_rules=["not-a-dict"])
+
+    rule_entries, _ = ie._parse_m365_rule_entries(
+        data, {}, _M365_PLANS_BY_NAME, _PLAN_NAME_BY_REF, {"tenant-1": _TENANT_UUID}
+    )
+
+    assert rule_entries == []
+
+
 # ── _execute_m365_rules ───────────────────────────────────────────────────────
 
 
@@ -371,6 +435,53 @@ async def test_execute_m365_rules_create_failure_is_recorded_per_rule() -> None:
     ]
 
 
+async def test_execute_m365_rules_overwrite_failure_is_recorded_per_rule() -> None:
+    """update() raising APMError is recorded as a failed overwrite, not raised (only the
+    create-failure path is covered above)."""
+    existing_rule = M365AutoBackupRule(
+        uid="123e4567-e89b-12d3-a456-426614174011",
+        namespace="ns-apm-server-01",
+        tenant_id=_TENANT_UUID,
+        plan_id=_M365_PLAN_UUID,
+        exchange_group_ids=(),
+        onedrive_group_ids=(),
+        chat_group_ids=(),
+    )
+    apm = make_fake_apm()
+    apm.m365.auto_backup_rules.list = AsyncMock(
+        return_value=_empty_rules_result(rules=(existing_rule,))
+    )
+    apm.m365.auto_backup_rules.update = AsyncMock(side_effect=APMError("plan locked"))
+
+    results = await ie._execute_m365_rules(
+        apm, _TENANT_UUID, [_make_rule_entry()], [],
+        "overwrite", asyncio.Semaphore(5), asyncio.Event(),
+    )
+
+    assert [(r.action, r.result, r.error_msg) for r in results] == [
+        ("overwrite", "failed", "plan locked"),
+    ]
+
+
+async def test_execute_m365_rules_collab_update_failure_is_recorded() -> None:
+    """update_collab_settings() raising APMError is recorded as a failed overwrite, not
+    raised."""
+    apm = make_fake_apm()
+    apm.m365.auto_backup_rules.list = AsyncMock(return_value=_empty_rules_result())
+    apm.m365.auto_backup_rules.update_collab_settings = AsyncMock(
+        side_effect=APMError("collab service unavailable")
+    )
+
+    results = await ie._execute_m365_rules(
+        apm, _TENANT_UUID, [], [_make_collab_entry()],
+        "overwrite", asyncio.Semaphore(5), asyncio.Event(),
+    )
+
+    assert [(r.action, r.result, r.error_msg) for r in results] == [
+        ("overwrite", "failed", "collab service unavailable"),
+    ]
+
+
 # ── _compute_m365_dry_actions ─────────────────────────────────────────────────
 
 
@@ -428,3 +539,8 @@ def test_compute_m365_dry_actions_collab_states() -> None:
     assert ie._compute_m365_dry_actions(
         [], [_make_collab_entry(parse_error="plan_ref is required")], without_active, "skip"
     ) == [(_TENANT_UUID, "m365_collab_services", "error")]
+    # Tenant missing from the existing-rules prefetch → unknown (mirrors the rule-side case
+    # in test_compute_m365_dry_actions_rule_states).
+    assert ie._compute_m365_dry_actions([], [_make_collab_entry()], {}, "skip") == [
+        (_TENANT_UUID, "m365_collab_services", "unknown")
+    ]

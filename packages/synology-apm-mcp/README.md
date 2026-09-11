@@ -28,6 +28,11 @@ To use a name other than `default`, pass `--profile <name>` and select it with t
 `APM_PROFILE` environment variable (see Environment Variables below) or `synology-apm-mcp
 --profile <name>`.
 
+If the account has two-factor authentication enabled, `config set` also prompts once for a
+verification code and registers this device as trusted for the profile — the MCP server itself
+never handles a two-factor code; it only ever uses whatever trusted device `config set` already
+registered for the profile it's pointed at. See "Troubleshooting" below.
+
 ## Claude Desktop (Cowork)
 
 **Prerequisite:** the Claude desktop app (Cowork).
@@ -147,14 +152,18 @@ Each line is a JSON object:
 
 The server always starts, whether or not it can actually reach APM: no connection settings
 found at all, an invalid or expired password, an unreachable host, a self-signed
-certificate without `APM_NO_VERIFY_SSL` set, or a target that is not the primary APM
-management server all print a diagnostic line to stderr (visible when running
+certificate without `APM_NO_VERIFY_SSL` set, a target that is not the primary APM
+management server, or a two-factor-enabled account with no valid trusted device registered
+for the profile, all print a diagnostic line to stderr (visible when running
 `synology-apm-mcp` directly, or in the host application's MCP server logs, e.g. Claude
 Desktop's Developer settings) but do not stop the process. Every tool call then returns a
 JSON error describing the failure together with a hint to reconfigure: re-run `uvx
 synology-apm-cli config set`, fix the `APM_HOST`/`APM_USERNAME`/`APM_PASSWORD`/
 `APM_NO_VERIFY_SSL` environment variables directly, or select a different configured profile
-via `APM_PROFILE`, then restart the MCP server.
+via `APM_PROFILE`, then restart the MCP server. For the two-factor case specifically, the MCP
+server never prompts for a code itself — run `uvx synology-apm-cli config set` (with
+`--profile <name>` for a non-default profile) once to complete the two-factor prompt and
+register a trusted device, then restart the MCP server.
 
 The one case that does exit immediately at startup is an unrecognized `APM_MCP_MODE` value
 — that is a deployment misconfiguration, not a credentials problem, and there is no

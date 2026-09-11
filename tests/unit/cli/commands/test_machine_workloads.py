@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from synology_apm.sdk.enums import (
+    HypervisorType,
     MachineWorkloadType,
     RetentionType,
     ScheduleFrequency,
@@ -274,6 +275,25 @@ def test_machine_get_json_output() -> None:
     data = json.loads(result.output)
     assert isinstance(data, dict)
     assert data["workload_id"] == "wl-id-001"
+
+
+def test_machine_get_json_output_inventory_type_is_enum_value() -> None:
+    """inventory_type serializes as the HypervisorType enum's value (not a raw API string) in
+    JSON output -- regression guard for the str -> HypervisorType field-type conversion."""
+    wl = dataclasses.replace(
+        SAMPLE_WL,
+        inventory_name="aws-account-01",
+        inventory_type=HypervisorType.AWS,
+    )
+    mock_apm = make_mock_client()
+    mock_apm.machine.workloads.get_by_name.return_value = wl
+
+    result = invoke_cli(mock_apm, ["machine", "get", "CORP-PC-001", "-o", "json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["inventory_name"] == "aws-account-01"
+    assert data["inventory_type"] == "aws"
 
 
 def test_machine_backup_success() -> None:
@@ -765,7 +785,7 @@ def test_machine_get_shows_optional_detail_fields() -> None:
     wl = dataclasses.replace(
         SAMPLE_WL,
         inventory_name="esxi1.example.com",
-        inventory_type="ESXi",
+        inventory_type=HypervisorType.VSPHERE_ESXI,
         device_uuid="9c2ee5c9-7d47-4c4a-8a3f-3f0a26b7e0aa",
         ip_address="192.0.2.55",
         verify_status=VerifyStatus.SUCCESS,
@@ -778,7 +798,7 @@ def test_machine_get_shows_optional_detail_fields() -> None:
 
     assert result.exit_code == 0, result.output
     host_line = next(line for line in result.output.splitlines() if "Host:" in line)
-    assert "esxi1.example.com (ESXi)" in host_line
+    assert "VMware vSphere (ESXi) / esxi1.example.com" in host_line
     uuid_line = next(line for line in result.output.splitlines() if "Device UUID:" in line)
     assert "9c2ee5c9-7d47-4c4a-8a3f-3f0a26b7e0aa" in uuid_line
     ip_line = next(line for line in result.output.splitlines() if "IP:" in line)
@@ -786,3 +806,21 @@ def test_machine_get_shows_optional_detail_fields() -> None:
     assert "Verification:" in result.output
     copy_line = next(line for line in result.output.splitlines() if "Copy Size:" in line)
     assert "1.0 GB" in copy_line
+
+
+def test_machine_get_host_row_without_inventory_type() -> None:
+    """The Host row renders the bare inventory name, with no "<type> / " prefix, when
+    inventory_type is None (inventory_name populated without a recognized hypervisor type)."""
+    wl = dataclasses.replace(
+        SAMPLE_WL,
+        inventory_name="unlinked-host",
+        inventory_type=None,
+    )
+    mock_apm = make_mock_client()
+    mock_apm.machine.workloads.get_by_name.return_value = wl
+
+    result = invoke_cli(mock_apm, ["machine", "get", "CORP-PC-001"])
+
+    assert result.exit_code == 0, result.output
+    host_line = next(line for line in result.output.splitlines() if "Host:" in line)
+    assert host_line.split("Host:", 1)[1].strip() == "unlinked-host"

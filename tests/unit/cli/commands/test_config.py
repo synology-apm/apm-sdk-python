@@ -1,15 +1,40 @@
 """Unit tests for synology_apm.cli.commands.config — the `config` Typer command group."""
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import keyring.errors
 import pytest
 
-from synology_apm.cli.commands.config import PasswordDecision, _resolve_password_decision
+from synology_apm.cli.commands.config import (
+    PasswordDecision,
+    _resolve_password_decision,
+    _verify_connection_and_register_device,
+)
 from synology_apm.cli.main import app
-from synology_apm.sdk import DEFAULT_PROFILE, AppConfig, PasswordStorage, ProfileConfig
+from synology_apm.sdk import (
+    DEFAULT_PROFILE,
+    AppConfig,
+    KeyringUnavailableError,
+    PasswordStorage,
+    ProfileConfig,
+)
+from synology_apm.sdk.exceptions import AuthenticationError, OTPIncorrectError, OTPRequiredError
 from tests.unit.cli.conftest import runner
+
+
+def _fake_apm_client(device_id: str | None = None, *, raises: BaseException | None = None) -> AsyncMock:
+    """Build a fake `async with APMClient(...) as apm:` result — either yielding a stub
+    `apm` whose `.device_id` is `device_id`, or raising `raises` from `__aenter__`."""
+    ctx_mgr = AsyncMock()
+    if raises is not None:
+        ctx_mgr.__aenter__ = AsyncMock(side_effect=raises)
+    else:
+        mock_apm = MagicMock()
+        mock_apm.device_id = device_id
+        ctx_mgr.__aenter__ = AsyncMock(return_value=mock_apm)
+    ctx_mgr.__aexit__ = AsyncMock(return_value=None)
+    return ctx_mgr
 
 # ── _resolve_password_decision (pure password/storage transition logic) ────
 
@@ -205,7 +230,8 @@ def test_config_set_shows_password_plaintext_warning() -> None:
     """config set with a saved password should warn about plaintext storage."""
     cfg = AppConfig()
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
-         patch("synology_apm.cli.commands.config.save_config"):
+         patch("synology_apm.cli.commands.config.save_config"), \
+         patch("synology_apm.cli.commands.config._verify_connection_and_register_device", return_value=("", "")):
         result = runner.invoke(
             app,
             ["config", "set", "--host", "h", "--username", "u", "--save-password", "plaintext"],
@@ -258,7 +284,8 @@ def test_config_set_save_password_keyring() -> None:
     cfg = AppConfig()
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
-         patch("synology_apm.sdk.config.keyring.set_password") as mock_set:
+         patch("synology_apm.sdk.config.keyring.set_password") as mock_set, \
+         patch("synology_apm.cli.commands.config._verify_connection_and_register_device", return_value=("", "")):
         result = runner.invoke(
             app,
             ["config", "set", "--host", "h", "--username", "u", "--save-password", "keyring"],
@@ -282,7 +309,8 @@ def test_config_set_migrates_keyring_to_plaintext() -> None:
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
-         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete:
+         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete, \
+         patch("synology_apm.cli.commands.config._verify_connection_and_register_device", return_value=("", "")):
         result = runner.invoke(
             app,
             ["config", "set", "--host", "h", "--username", "u", "--save-password", "plaintext"],
@@ -305,7 +333,8 @@ def test_config_set_migrates_plaintext_to_keyring() -> None:
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
-         patch("synology_apm.sdk.config.keyring.set_password") as mock_set:
+         patch("synology_apm.sdk.config.keyring.set_password") as mock_set, \
+         patch("synology_apm.cli.commands.config._verify_connection_and_register_device", return_value=("", "")):
         result = runner.invoke(
             app,
             ["config", "set", "--host", "h", "--username", "u", "--save-password", "keyring"],
@@ -329,7 +358,9 @@ def test_config_set_blank_password_keeps_existing_keyring_entry() -> None:
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
          patch("synology_apm.cli.commands.config.save_config") as mock_save, \
          patch("synology_apm.sdk.config.keyring.set_password") as mock_set, \
-         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete:
+         patch("synology_apm.sdk.config.keyring.delete_password") as mock_delete, \
+         patch("synology_apm.cli.commands.config.get_keyring_password", return_value="s3cr3t") as mock_get, \
+         patch("synology_apm.cli.commands.config._verify_connection_and_register_device", return_value=("", "")):
         result = runner.invoke(
             app,
             ["config", "set", "--host", "newhost", "--profile", "default"],
@@ -338,6 +369,7 @@ def test_config_set_blank_password_keeps_existing_keyring_entry() -> None:
     assert result.exit_code == 0
     mock_set.assert_not_called()
     mock_delete.assert_not_called()
+    mock_get.assert_called_once_with("default", "u")
     saved: AppConfig = mock_save.call_args[0][0]
     profile = saved.get_profile("default")
     assert profile.password_storage == PasswordStorage.KEYRING
@@ -514,6 +546,76 @@ def test_config_set_no_input_saves_without_password() -> None:
 # ── config set prompt hint for saved plaintext password ────────────────────
 
 
+def test_config_set_keyring_password_fetch_failure_skips_validation() -> None:
+    """If the keyring can't be read back to test the connection with, config set still saves
+    the profile instead of crashing — the connection-validation step is best-effort."""
+    cfg = AppConfig()
+    cfg.set_profile(
+        "default",
+        ProfileConfig(host="h", username="u", password_storage=PasswordStorage.KEYRING),
+    )
+    with (
+        patch("synology_apm.cli.commands.config.load_config", return_value=cfg),
+        patch("synology_apm.cli.commands.config.save_config") as mock_save,
+        patch(
+            "synology_apm.cli.commands.config.get_keyring_password",
+            side_effect=KeyringUnavailableError("keyring locked"),
+        ),
+        patch("synology_apm.cli.commands.config.APMClient") as mock_client_cls,
+    ):
+        result = runner.invoke(app, ["config", "set", "--host", "h", "--username", "u"], input="\nn\n")
+    assert result.exit_code == 0, result.output
+    assert "Settings saved" in result.output
+    mock_client_cls.assert_not_called()
+    mock_save.assert_called_once()
+
+
+def test_config_set_wires_into_verify_connection_with_correct_arguments() -> None:
+    """config set calls _verify_connection_and_register_device with exactly the values it
+    resolved (host/username/password/SSL setting/no_input) and the profile's existing
+    ProfileConfig — this is the "public caller" wiring test tests/CLAUDE.md requires
+    alongside directly testing that private helper's own branch logic."""
+    existing = ProfileConfig(host="old-h", username="old-u", device_id="did-existing")
+    cfg = AppConfig(profiles={DEFAULT_PROFILE: existing})
+    with (
+        patch("synology_apm.cli.commands.config.load_config", return_value=cfg),
+        patch("synology_apm.cli.commands.config.save_config"),
+        patch(
+            "synology_apm.cli.commands.config._verify_connection_and_register_device",
+            return_value=("", ""),
+        ) as mock_verify,
+    ):
+        result = runner.invoke(
+            app,
+            ["config", "set", "--host", "h", "--username", "u"],
+            input="secret\ny\n",  # password, skip SSL verification = yes
+        )
+    assert result.exit_code == 0, result.output
+    mock_verify.assert_called_once_with(
+        host="h", username="u", password="secret", verify_ssl=False, existing=existing, no_input=False,
+    )
+
+
+def test_config_set_prints_verify_status_when_present() -> None:
+    """config set prints _verify_connection_and_register_device's status line when non-empty."""
+    cfg = AppConfig()
+    with (
+        patch("synology_apm.cli.commands.config.load_config", return_value=cfg),
+        patch("synology_apm.cli.commands.config.save_config"),
+        patch(
+            "synology_apm.cli.commands.config._verify_connection_and_register_device",
+            return_value=("did-abc", "✓ Connection verified."),
+        ),
+    ):
+        result = runner.invoke(
+            app,
+            ["config", "set", "--host", "h", "--username", "u"],
+            input="secret\nn\n",
+        )
+    assert result.exit_code == 0, result.output
+    assert "✓ Connection verified." in result.output
+
+
 def test_config_set_prompt_hint_for_saved_plaintext_password() -> None:
     """The password prompt offers to keep the previously saved plaintext password."""
     cfg = AppConfig()
@@ -525,7 +627,8 @@ def test_config_set_prompt_hint_for_saved_plaintext_password() -> None:
         ),
     )
     with patch("synology_apm.cli.commands.config.load_config", return_value=cfg), \
-         patch("synology_apm.cli.commands.config.save_config") as mock_save:
+         patch("synology_apm.cli.commands.config.save_config") as mock_save, \
+         patch("synology_apm.cli.commands.config._verify_connection_and_register_device", return_value=("", "")):
         result = runner.invoke(app, ["config", "set"], input="\nn\n")  # keep password, keep SSL
     assert result.exit_code == 0, result.output
     assert "leave blank to keep the saved password" in result.output
@@ -578,3 +681,292 @@ def test_config_show_plaintext_saved_password_status() -> None:
         result = runner.invoke(app, ["config", "show"])
     assert result.exit_code == 0, result.output
     assert "saved, plaintext" in result.output
+
+
+# ── config show — 2FA trusted-device status ────────────────────────────────
+
+
+def test_config_show_registered_device() -> None:
+    """config show reports a registered trusted device."""
+    cfg = AppConfig(profiles={
+        DEFAULT_PROFILE: ProfileConfig(host="h", username="u", device_id="did-abc"),
+    })
+    with patch("synology_apm.cli.commands.config.load_config", return_value=cfg):
+        result = runner.invoke(app, ["config", "show"])
+    assert result.exit_code == 0
+    assert "2FA device" in result.output
+    assert "registered" in result.output
+
+
+def test_config_show_no_registered_device() -> None:
+    """config show reports no registered trusted device when none is on file."""
+    cfg = AppConfig(profiles={DEFAULT_PROFILE: ProfileConfig(host="h", username="u")})
+    with patch("synology_apm.cli.commands.config.load_config", return_value=cfg):
+        result = runner.invoke(app, ["config", "show"])
+    assert result.exit_code == 0
+    assert "not registered" in result.output
+
+
+# ── config clear --forget-device ────────────────────────────────────────────
+
+
+def _cfg_with_default_profile() -> AppConfig:
+    return AppConfig(profiles={DEFAULT_PROFILE: ProfileConfig(host="h", username="u", device_id="did-abc")})
+
+
+def test_config_clear_forget_device_clears_only_device_fields() -> None:
+    """config clear --forget-device clears device_id, leaving host/username/password intact."""
+    with patch("synology_apm.cli.commands.config.load_config", return_value=_cfg_with_default_profile()), \
+         patch("synology_apm.cli.commands.config.save_profile_device_token") as mock_save_token:
+        result = runner.invoke(app, ["config", "clear", "--forget-device"])
+    assert result.exit_code == 0, result.output
+    assert "Trusted-device registration cleared" in result.output
+    mock_save_token.assert_called_once_with(DEFAULT_PROFILE, "")
+
+
+def test_config_clear_forget_device_no_confirmation_needed() -> None:
+    """--forget-device skips the usual clear confirmation prompt (low-stakes, reversible)."""
+    with patch("synology_apm.cli.commands.config.load_config", return_value=_cfg_with_default_profile()), \
+         patch("synology_apm.cli.commands.config.save_profile_device_token") as mock_save_token:
+        result = runner.invoke(app, ["config", "clear", "--forget-device"])  # no input supplied
+    assert result.exit_code == 0, result.output
+    mock_save_token.assert_called_once()
+
+
+def test_config_clear_forget_device_quiet_produces_no_output() -> None:
+    """--forget-device --quiet suppresses the success message, like the other clear variants."""
+    with patch("synology_apm.cli.commands.config.load_config", return_value=_cfg_with_default_profile()), \
+         patch("synology_apm.cli.commands.config.save_profile_device_token") as mock_save_token:
+        result = runner.invoke(app, ["config", "clear", "--forget-device", "--quiet"])
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == ""
+    mock_save_token.assert_called_once()
+
+
+def test_config_clear_forget_device_nonexistent_profile_shows_warning() -> None:
+    """--forget-device for a profile that was never configured warns and never fabricates
+    a phantom profile entry (must not call save_profile_device_token at all)."""
+    with patch("synology_apm.cli.commands.config.load_config", return_value=AppConfig()), \
+         patch("synology_apm.cli.commands.config.save_profile_device_token") as mock_save_token:
+        result = runner.invoke(app, ["config", "clear", "--forget-device", "--profile", "ghost"])
+    assert result.exit_code == 0, result.output
+    assert "Profile 'ghost' does not exist" in result.output
+    mock_save_token.assert_not_called()
+
+
+def test_config_clear_forget_device_rejects_all_flag() -> None:
+    """--forget-device combined with --all is rejected rather than silently ignored."""
+    with patch("synology_apm.cli.commands.config.load_config", return_value=AppConfig()), \
+         patch("synology_apm.cli.commands.config.save_config") as mock_save:
+        result = runner.invoke(app, ["config", "clear", "--forget-device", "--all"])
+    assert result.exit_code != 0
+    mock_save.assert_not_called()
+
+
+# ── _verify_connection_and_register_device ─────────────────────────────────
+# Tested directly (a private helper, but complex enough to warrant it — mirroring
+# this file's existing precedent for _resolve_password_decision): it is the one
+# place synology-apm-cli ever handles a two-factor code.
+
+
+async def test_verify_connection_skips_entirely_under_no_input() -> None:
+    """--no-input never attempts a connection, and reuses the existing device token
+    when the host/username are unchanged."""
+    existing = ProfileConfig(host="h", username="u", device_id="did-abc")
+    with patch("synology_apm.cli.commands.config.APMClient") as mock_cls:
+        device_id, status = await _verify_connection_and_register_device(
+            host="h", username="u", password="p", verify_ssl=True, existing=existing, no_input=True,
+        )
+    assert (device_id, status) == ("did-abc", "")
+    mock_cls.assert_not_called()
+
+
+async def test_verify_connection_skips_entirely_with_no_password() -> None:
+    """No password available to test with also skips the connection attempt entirely."""
+    existing = ProfileConfig(host="h", username="u")
+    with patch("synology_apm.cli.commands.config.APMClient") as mock_cls:
+        device_id, status = await _verify_connection_and_register_device(
+            host="h", username="u", password="", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert (device_id, status) == ("", "")
+    mock_cls.assert_not_called()
+
+
+async def test_verify_connection_skips_entirely_with_no_password_and_changed_identity() -> None:
+    """When skipped (no password) *and* host/username differ from `existing`, the old device
+    token is never carried forward — unlike the same-identity case above."""
+    existing = ProfileConfig(host="old-host", username="u", device_id="did-abc")
+    with patch("synology_apm.cli.commands.config.APMClient") as mock_cls:
+        device_id, status = await _verify_connection_and_register_device(
+            host="new-host", username="u", password="", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert (device_id, status) == ("", "")
+    mock_cls.assert_not_called()
+
+
+async def test_verify_connection_trial_otp_incorrect_falls_through_to_prompt() -> None:
+    """A stored device_id that gets rejected as OTPIncorrectError (not just OTPRequiredError)
+    on the trial connect also falls through to the interactive OTP-registration path."""
+    existing = ProfileConfig(host="h", username="u", device_id="did-stale")
+    with (
+        patch(
+            "synology_apm.cli.commands.config.APMClient",
+            side_effect=[
+                _fake_apm_client(raises=OTPIncorrectError("stale device rejected")),
+                _fake_apm_client("did-new"),
+            ],
+        ),
+        patch("synology_apm.cli.commands.config.typer.prompt", return_value="123456") as mock_prompt,
+    ):
+        device_id, status = await _verify_connection_and_register_device(
+            host="h", username="u", password="p", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert device_id == "did-new"
+    assert "Registered a trusted device" in status
+    mock_prompt.assert_called_once()
+
+
+async def test_verify_connection_success_no_otp_needed() -> None:
+    """A successful connection with no two-factor challenge reports "Connection verified"."""
+    existing = ProfileConfig(host="h", username="u", device_id="did-abc")
+    with patch(
+        "synology_apm.cli.commands.config.APMClient", return_value=_fake_apm_client("did-abc"),
+    ) as mock_cls:
+        device_id, status = await _verify_connection_and_register_device(
+            host="h", username="u", password="p", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert device_id == "did-abc"
+    assert "Connection verified" in status
+    mock_cls.assert_called_once_with(
+        "h", "u", "p", otp_code=None, device_id="did-abc", verify_ssl=True,
+    )
+
+
+async def test_verify_connection_does_not_reuse_device_id_when_host_changed() -> None:
+    """A stored device_id is never sent when the host differs from the existing profile's."""
+    existing = ProfileConfig(host="old-host", username="u", device_id="did-abc")
+    with patch(
+        "synology_apm.cli.commands.config.APMClient", return_value=_fake_apm_client("did-new"),
+    ) as mock_cls:
+        await _verify_connection_and_register_device(
+            host="new-host", username="u", password="p", verify_ssl=True, existing=existing, no_input=False,
+        )
+    mock_cls.assert_called_once_with(
+        "new-host", "u", "p", otp_code=None, device_id=None, verify_ssl=True,
+    )
+
+
+async def test_verify_connection_otp_required_prompts_and_registers_device() -> None:
+    """OTPRequiredError on the trial connection prompts once, then registers a new device."""
+    existing = ProfileConfig(host="h", username="u")
+    with (
+        patch(
+            "synology_apm.cli.commands.config.APMClient",
+            side_effect=[
+                _fake_apm_client(raises=OTPRequiredError("two-factor code required")),
+                _fake_apm_client("did-new"),
+            ],
+        ),
+        patch("synology_apm.cli.commands.config.typer.prompt", return_value="123456") as mock_prompt,
+    ):
+        device_id, status = await _verify_connection_and_register_device(
+            host="h", username="u", password="p", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert device_id == "did-new"
+    assert "Registered a trusted device" in status
+    mock_prompt.assert_called_once_with("Two-factor authentication code")
+
+
+async def test_verify_connection_otp_incorrect_retries_then_succeeds() -> None:
+    """A wrong code re-prompts; a subsequent correct code registers the device."""
+    existing = ProfileConfig(host="h", username="u")
+    with (
+        patch(
+            "synology_apm.cli.commands.config.APMClient",
+            side_effect=[
+                _fake_apm_client(raises=OTPRequiredError("two-factor code required")),
+                _fake_apm_client(raises=OTPIncorrectError("wrong code")),
+                _fake_apm_client("did-new"),
+            ],
+        ),
+        patch("synology_apm.cli.commands.config.typer.prompt", side_effect=["000000", "123456"]) as mock_prompt,
+    ):
+        device_id, status = await _verify_connection_and_register_device(
+            host="h", username="u", password="p", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert device_id == "did-new"
+    assert "Registered a trusted device" in status
+    assert mock_prompt.call_count == 2
+
+
+async def test_verify_connection_otp_incorrect_exhausts_attempts() -> None:
+    """Repeated OTPIncorrectError gives up after the configured attempt limit, without raising."""
+    existing = ProfileConfig(host="h", username="u")
+    with (
+        patch(
+            "synology_apm.cli.commands.config.APMClient",
+            side_effect=[
+                _fake_apm_client(raises=OTPRequiredError("two-factor code required")),
+                _fake_apm_client(raises=OTPIncorrectError("wrong code")),
+                _fake_apm_client(raises=OTPIncorrectError("wrong code")),
+                _fake_apm_client(raises=OTPIncorrectError("wrong code")),
+            ],
+        ),
+        patch("synology_apm.cli.commands.config.typer.prompt", return_value="000000"),
+    ):
+        result = await _verify_connection_and_register_device(
+            host="h", username="u", password="p", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert result == ("", "")
+
+
+async def test_verify_connection_unrelated_error_same_identity_preserves_existing_token() -> None:
+    """An unrelated connection failure (e.g. bad password) for the same host/username preserves
+    the previously-registered device token rather than discarding it."""
+    existing = ProfileConfig(host="h", username="u", device_id="did-abc")
+    with patch(
+        "synology_apm.cli.commands.config.APMClient",
+        return_value=_fake_apm_client(raises=AuthenticationError("bad password")),
+    ):
+        device_id, status = await _verify_connection_and_register_device(
+            host="h", username="u", password="wrong", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert device_id == "did-abc"
+    assert status == ""
+
+
+async def test_verify_connection_otp_retry_unrelated_error_stops_immediately() -> None:
+    """An unrelated APMError raised *during* an OTP-code retry (not the initial trial connect)
+    stops the retry loop immediately rather than being mistaken for another incorrect code."""
+    existing = ProfileConfig(host="h", username="u")
+    with (
+        patch(
+            "synology_apm.cli.commands.config.APMClient",
+            side_effect=[
+                _fake_apm_client(raises=OTPRequiredError("two-factor code required")),
+                _fake_apm_client(raises=AuthenticationError("account disabled")),
+            ],
+        ),
+        patch("synology_apm.cli.commands.config.typer.prompt", return_value="123456") as mock_prompt,
+    ):
+        device_id, status = await _verify_connection_and_register_device(
+            host="h", username="u", password="p", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert device_id == ""
+    assert status != ""
+    mock_prompt.assert_called_once()
+
+
+async def test_verify_connection_unrelated_error_different_identity_clears_token() -> None:
+    """An unrelated connection failure for a changed host/username never carries the old
+    (inapplicable) device token forward."""
+    existing = ProfileConfig(host="old-host", username="u", device_id="did-abc")
+    with patch(
+        "synology_apm.cli.commands.config.APMClient",
+        return_value=_fake_apm_client(raises=AuthenticationError("bad password")),
+    ):
+        device_id, status = await _verify_connection_and_register_device(
+            host="new-host", username="u", password="wrong", verify_ssl=True, existing=existing, no_input=False,
+        )
+    assert device_id == ""
+    assert status != ""

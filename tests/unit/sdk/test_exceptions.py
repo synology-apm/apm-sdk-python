@@ -7,7 +7,10 @@ from synology_apm.sdk.exceptions import (
     ERROR_CODES,
     APIError,
     APMError,
+    AuthenticationError,
     InvalidOperationError,
+    OTPIncorrectError,
+    OTPRequiredError,
     PlanInUseError,
     RemoteStorageUnmanagedCatalogError,
     ResourceNotFoundError,
@@ -110,3 +113,14 @@ def test_classify_error_returns_code_for_classified_exception() -> None:
 def test_classify_error_returns_none_for_unclassified_exception() -> None:
     assert classify_error(APIError("unexpected")) is None
     assert classify_error(APMError("generic")) is None
+
+
+def test_classify_error_distinguishes_otp_errors_from_authentication_error() -> None:
+    """OTPRequiredError/OTPIncorrectError are siblings of AuthenticationError (not subclasses —
+    see their docstrings), each classified individually rather than falling into
+    AuthenticationError's classification."""
+    assert classify_error(AuthenticationError("bad password")) == "authentication_error"
+    assert classify_error(OTPRequiredError("two-factor code required")) == "otp_required"
+    assert classify_error(OTPIncorrectError("two-factor code incorrect")) == "otp_incorrect"
+    assert not issubclass(OTPRequiredError, AuthenticationError)
+    assert not issubclass(OTPIncorrectError, AuthenticationError)

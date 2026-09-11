@@ -8,6 +8,7 @@ from typing import Any
 from ..enums import (
     FileServerType,
     GWSWorkloadType,
+    HypervisorType,
     M365WorkloadType,
     MachineWorkloadType,
     VerifyStatus,
@@ -88,8 +89,10 @@ class MachineWorkload(Workload):
         verify_status:   Most recent backup verification result (PS/VM only); None for PC/FS.
         device_uuid:     Device UUID (PC/PS/VM); None for FS.
         ip_address:      IP address reported by the agent (PC/PS); None for VM and FS.
-        inventory_name:  Hypervisor inventory name where the VM resides (VM only); None otherwise.
-        inventory_type:  Hypervisor type, e.g. ESXi / HyperV (VM only); None otherwise.
+        inventory_name:  Hypervisor inventory name where the VM resides (VM only, and only when
+                         linked to a hypervisor inventory); None otherwise.
+        inventory_type:  Hypervisor type of the inventory the VM resides in (VM only, and only
+                         when linked to a hypervisor inventory); None otherwise.
         fs_config:       File server connection and scope config (FS only); None for PC/PS/VM.
     """
     workload_type: MachineWorkloadType
@@ -98,7 +101,7 @@ class MachineWorkload(Workload):
     device_uuid: str | None = field(default=None, kw_only=True)
     ip_address: str | None = field(default=None, kw_only=True)
     inventory_name: str | None = field(default=None, kw_only=True)
-    inventory_type: str | None = field(default=None, kw_only=True)
+    inventory_type: HypervisorType | None = field(default=None, kw_only=True)
     fs_config: FileServerConfig | None = field(default=None, kw_only=True)
 
 

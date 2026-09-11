@@ -754,6 +754,18 @@ def test_remove_quietly_does_not_raise_for_missing_file() -> None:
     _remove_quietly("/nonexistent/path/that/does/not/exist.tmp")
 
 
+def test_remove_quietly_swallows_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An OSError from os.remove() (e.g. a permission failure) is swallowed, not raised."""
+    path = tmp_path / "locked_file.txt"
+    path.write_text("data")
+
+    def _raise(_: str) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(os, "remove", _raise)
+    _remove_quietly(str(path))  # must not raise
+
+
 # ── Progress ───────────────────────────────────────────────────────────────────
 
 
@@ -857,6 +869,65 @@ async def test_prompt_yes_no_reads_from_fd_backed_stdin(
         reader.close()
 
 
+async def test_prompt_yes_no_fd_backed_readline_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-EOFError/KeyboardInterrupt failure from the fd add_reader path's readline() is
+    forwarded to the caller via fut.set_exception, not swallowed."""
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"y\n")
+    os.close(write_fd)
+    reader = os.fdopen(read_fd)
+
+    def _raise() -> str:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(reader, "readline", _raise)
+    monkeypatch.setattr("sys.stdin", reader)
+    try:
+        with pytest.raises(ValueError, match="boom"):
+            await prompt_yes_no("Continue? [y/N] ")
+    finally:
+        reader.close()
+
+
+async def test_prompt_yes_no_fd_backed_eof_error_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An EOFError from the fd add_reader path's readline() is forwarded via fut.set_exception
+    and then caught at the await, returning False rather than propagating."""
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"y\n")
+    os.close(write_fd)
+    reader = os.fdopen(read_fd)
+
+    def _raise() -> str:
+        raise EOFError
+
+    monkeypatch.setattr(reader, "readline", _raise)
+    monkeypatch.setattr("sys.stdin", reader)
+    try:
+        assert await prompt_yes_no("Continue? [y/N] ") is False
+    finally:
+        reader.close()
+
+
+async def test_prompt_yes_no_executor_fallback_interrupt_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KeyboardInterrupt/EOFError from the non-fd executor-fallback readline() is caught,
+    not propagated -- returns False (existing tests only cover readline() returning normally)."""
+    class _RaisingStdin:
+        def fileno(self) -> int:
+            raise io.UnsupportedOperation("fileno")
+
+        def readline(self) -> str:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("sys.stdin", _RaisingStdin())
+    assert await prompt_yes_no("Continue? [y/N] ") is False
+
+
 # ── register_interrupt / unregister_interrupt ──────────────────────────────────
 
 
@@ -879,3 +950,43 @@ async def test_unregister_interrupt_removes_sigint_handler() -> None:
     unregister_interrupt(loop)
     # The loop-level handler is gone: removing again reports nothing to remove.
     assert loop.remove_signal_handler(signal.SIGINT) is False
+
+
+async def test_register_interrupt_windows_fallback_sets_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When loop.add_signal_handler is unavailable (Windows), register_interrupt falls back to
+    signal.signal + call_soon_threadsafe -- a real SIGINT still ends up setting the event."""
+    loop = asyncio.get_running_loop()
+    event = asyncio.Event()
+
+    def _raise(sig: int, callback: object) -> None:
+        raise NotImplementedError
+
+    monkeypatch.setattr(loop, "add_signal_handler", _raise)
+    register_interrupt(loop, event)
+    try:
+        os.kill(os.getpid(), signal.SIGINT)
+        await asyncio.wait_for(event.wait(), timeout=2.0)
+    finally:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    assert event.is_set()
+
+
+async def test_unregister_interrupt_windows_fallback_resets_default_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When loop.remove_signal_handler is unavailable (Windows), unregister_interrupt falls
+    back to signal.signal(SIGINT, default_int_handler)."""
+    loop = asyncio.get_running_loop()
+
+    def _raise(sig: int) -> bool:
+        raise NotImplementedError
+
+    monkeypatch.setattr(loop, "remove_signal_handler", _raise)
+    old_handler = signal.signal(signal.SIGINT, lambda *_: None)
+    try:
+        unregister_interrupt(loop)
+        assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    finally:
+        signal.signal(signal.SIGINT, old_handler)

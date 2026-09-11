@@ -8,9 +8,11 @@ from typing import Any
 import typer
 
 from synology_apm.cli.errors import (
+    EXIT_AUTH,
     EXIT_ERROR,
     _dynamic_console,
     apm_error_handler,
+    config_set_hint,
     err_console,
     handle_keyring_error,
     missing_config_hint,
@@ -18,7 +20,13 @@ from synology_apm.cli.errors import (
 from synology_apm.cli.errors import (
     abortable as _abortable,
 )
-from synology_apm.sdk import APMClient, KeyringUnavailableError, resolve_connection
+from synology_apm.sdk import (
+    APMClient,
+    KeyringUnavailableError,
+    OTPIncorrectError,
+    OTPRequiredError,
+    resolve_connection,
+)
 
 _spinner_console = _dynamic_console(stderr=True)
 
@@ -62,15 +70,31 @@ async def get_client(ctx: typer.Context) -> AsyncIterator[APMClient]:
             err_console.print("[red]✗[/red] Password is required. Set APM_PASSWORD or use a config profile.")
             raise typer.Exit(code=EXIT_ERROR)
         eff_password = typer.prompt("Password", hide_input=True)
-    async with APMClient(
-        eff_host, eff_username, eff_password,
-        verify_ssl=resolved.verify_ssl,
-        debug=_debug_mode,
-    ) as apm:
-        server = apm.my_server
-        version_str = f" ({server.system_version})" if server.system_version else ""
-        err_console.print(f"[dim]Connected to {server.name}{version_str}[/dim]")
-        yield apm
+    try:
+        async with APMClient(
+            eff_host, eff_username, eff_password,
+            device_id=resolved.device_id or None,
+            verify_ssl=resolved.verify_ssl,
+            debug=_debug_mode,
+        ) as apm:
+            server = apm.my_server
+            version_str = f" ({server.system_version})" if server.system_version else ""
+            err_console.print(f"[dim]Connected to {server.name}{version_str}[/dim]")
+            yield apm
+    except (OTPRequiredError, OTPIncorrectError):
+        # Ordinary commands never prompt for a two-factor code — only `config set`
+        # does (see commands/config.py). A missing/stale/rejected trusted-device
+        # token here always means "go complete that flow again". Both exception types
+        # are caught defensively (mirroring _verify_connection_and_register_device's
+        # trial-connect handling): only OTPRequiredError is actually reachable via this
+        # otp_code-less path today, but neither has been independently verified against
+        # a real APM 2FA account, so this errs toward catching both rather than assuming.
+        err_console.print(
+            "[red]✗[/red] Two-factor authentication is required and this profile has no "
+            "valid trusted-device registration."
+        )
+        err_console.print(f"  Run: {config_set_hint(resolved.profile)}")
+        raise typer.Exit(code=EXIT_AUTH) from None
 
 
 @contextlib.asynccontextmanager

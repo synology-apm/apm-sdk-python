@@ -20,7 +20,7 @@ async def run(ctx: SmokeContext) -> None:
             "log.activity.list", "log.activity.list[filtered]", "log.drive.list",
             "log.connection.list", "log.system.list",
             "log.drive.check[real_total]", "log.activity.check[hardcoded_total_none]",
-            "log.connection.check[hardcoded_total_none]", "log.system.check[hardcoded_total_none]",
+            "log.connection.check[real_total]", "log.system.check[real_total]",
         ):
             ctx.skip(DOMAIN, step, "No DP-type backup server found")
         return
@@ -41,10 +41,10 @@ async def run(ctx: SmokeContext) -> None:
     connection_result = await ctx.call(
         DOMAIN, "log.connection.list", lambda: apm.logs.list_connection(server, limit=25)
     )
-    _connection_entries, connection_total = connection_result if connection_result is not None else ([], None)
+    connection_entries, connection_total = connection_result if connection_result is not None else ([], None)
 
     system_result = await ctx.call(DOMAIN, "log.system.list", lambda: apm.logs.list_system(server, limit=25))
-    _system_entries, system_total = system_result if system_result is not None else ([], None)
+    system_entries, system_total = system_result if system_result is not None else ([], None)
 
     ctx.check(
         DOMAIN, "log.drive.check[real_total]",
@@ -56,10 +56,14 @@ async def run(ctx: SmokeContext) -> None:
         note="list_activity() always reports total is None (no server-side total for activity logs).",
     )
     ctx.check(
-        DOMAIN, "log.connection.check[hardcoded_total_none]", connection_total is None,
-        note="list_connection() always reports total is None (no server-side total).",
+        DOMAIN, "log.connection.check[real_total]",
+        (connection_total == 0 and len(connection_entries) == 0)
+        or (connection_total is not None and connection_total > 0),
+        note="list_connection() reports a real server-side total: either 0 with no entries, or > 0.",
     )
     ctx.check(
-        DOMAIN, "log.system.check[hardcoded_total_none]", system_total is None,
-        note="list_system() always reports total is None (no server-side total).",
+        DOMAIN, "log.system.check[real_total]",
+        (system_total == 0 and len(system_entries) == 0)
+        or (system_total is not None and system_total > 0),
+        note="list_system() reports a real server-side total: either 0 with no entries, or > 0.",
     )

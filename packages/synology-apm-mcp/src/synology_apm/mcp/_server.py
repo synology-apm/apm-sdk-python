@@ -79,9 +79,12 @@ def build_lifespan(
     """Build the lifespan callable used by run(): a persistent APMClient connection, or --
     if config_error is already known (no usable credentials were found, so a real connect
     would only fail) or the initial connect fails (bad credentials, unreachable host, SSL
-    error, or the host is not the primary APM management server) -- a placeholder that turns
-    every subsequent tool/resource call into a structured JSON error instead of crashing the
-    server at startup.
+    error, the host is not the primary APM management server, or two-factor authentication
+    is required/failed and no valid trusted device is on file for this profile) -- a
+    placeholder that turns every subsequent tool/resource call into a structured JSON error
+    instead of crashing the server at startup. MCP never prompts for a two-factor code
+    itself; it only ever supplies whatever trusted-device id the resolved profile
+    already has on file (registered via synology-apm-cli's ``config set``).
     """
 
     @asynccontextmanager
@@ -92,6 +95,7 @@ def build_lifespan(
         try:
             async with APMClient(
                 resolved.host, resolved.username, resolved.password,
+                device_id=resolved.device_id or None,
                 verify_ssl=resolved.verify_ssl, debug=debug,
             ) as apm:
                 yield {"apm": apm}

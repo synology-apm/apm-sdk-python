@@ -24,6 +24,10 @@ class RemoteStorage:
         remaining_bytes:     Remaining available space in bytes. None when unavailable.
         encryption_enabled:  True when client-side encryption is enabled for this storage.
         vault_name:          Bucket or vault name. Empty for storage types that do not report it.
+        account_name:        Storage account name. Only meaningful for AZURE_BLOB and
+                              AZURE_BLOB_CHINA; empty for all other storage types.
+        client_id:           Application (client) ID used to authenticate. Only meaningful for
+                              AZURE_BLOB and AZURE_BLOB_CHINA; empty for all other storage types.
     """
     storage_id:         str
     name:               str
@@ -35,6 +39,8 @@ class RemoteStorage:
     remaining_bytes:    int | None
     encryption_enabled: bool = False
     vault_name:         str = ""
+    account_name:       str = ""
+    client_id:          str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe dict representation."""
@@ -156,7 +162,59 @@ class WasabiCloudStorageAddRequest(_S3VendorStorageAddRequest):
 
 
 @dataclass(frozen=True)
-class RemoteStorageUpdateRequest:
+class _AzureBlobStorageAddRequestBase:
+    """Shared fields for registering a new Azure Blob Storage remote storage device using a
+    Microsoft Entra application (service principal) — see tenant_id, client_id, and secret.
+
+    If pre-existing backup catalogs are found in the container, add() raises
+    RemoteStorageUnmanagedCatalogError unless unmanaged_retirement_plan is set.
+    """
+    tenant_id:                 str
+    client_id:                 str
+    secret:                    str
+    account_name:              str
+    vault_name:                str
+    encryption_enabled:          bool = False
+    relink_encryption_key:       str = ""
+    unmanaged_retirement_plan:   RetirementPlan | None = None
+
+
+@dataclass(frozen=True)
+class AzureBlobStorageAddRequest(_AzureBlobStorageAddRequestBase):
+    """Parameters for registering a new Azure Blob Storage remote storage device.
+
+    See _AzureBlobStorageAddRequestBase for the shared field contract.
+    """
+
+
+@dataclass(frozen=True)
+class AzureBlobChinaStorageAddRequest(_AzureBlobStorageAddRequestBase):
+    """Parameters for registering a new Azure Blob Storage (China region) remote storage device.
+
+    See _AzureBlobStorageAddRequestBase for the shared field contract.
+    """
+
+
+@dataclass(frozen=True)
+class AzureBlobStorageUpdateRequest:
+    """Updated credentials for an Azure Blob Storage remote storage device (AZURE_BLOB or
+    AZURE_BLOB_CHINA), using a Microsoft Entra application.
+
+    The storage account and container are immutable once set at registration and are not part
+    of this request.
+
+    Attributes:
+        tenant_id: Azure AD tenant ID.
+        client_id: Application (client) ID.
+        secret:    Client secret.
+    """
+    tenant_id: str
+    client_id: str
+    secret:    str
+
+
+@dataclass(frozen=True)
+class AccessKeyStorageUpdateRequest:
     """Updated credentials for a remote storage device (APV, S3 Compatible, Amazon S3, C2 Object Storage, or Wasabi).
 
     Display name, storage type, and encryption settings are immutable once set at registration.

@@ -548,6 +548,26 @@ async def test_run_no_workloads_returns_zero_without_csv(
     assert list(tmp_path.iterdir()) == []
 
 
+async def test_run_keyboard_interrupt_before_classification_force_interrupts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A KeyboardInterrupt raised before any job is classified (e.g. Ctrl+C during the initial
+    workload listing, before register_interrupt() is active) force-interrupts with no jobs or
+    skips recorded, returning 1 without writing a CSV."""
+    apm = make_fake_apm()
+    apm.machine.workloads.list = AsyncMock(side_effect=KeyboardInterrupt)
+    patch_make_client(monkeypatch, evv, apm)
+
+    rc = await evv.run(
+        workload_type_filter="all", output_dir=str(tmp_path), keyword=None,
+        namespace=None, dry_run=False, yes=True, concurrency=2, csv_path=None,
+    )
+
+    assert rc == 1
+    assert "Force-interrupted." in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize(
     "type_filter,expected_types",
     [
@@ -643,6 +663,37 @@ async def test_run_declined_confirmation_cancels(
     assert "Cancelled." in capsys.readouterr().err
     apm.download_file.assert_not_awaited()
     assert not (tmp_path / "report.csv").exists()
+
+
+async def test_run_keyboard_interrupt_after_classification_marks_jobs_interrupted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A KeyboardInterrupt raised after jobs are already classified (but before
+    register_interrupt() is active, e.g. at the download confirmation prompt) marks every job
+    without an outcome as force-interrupted, and still writes the CSV report."""
+    wl = make_machine_workload(name="vm-web-01")
+    apm = make_fake_apm()
+    apm.machine.workloads.list.return_value = ([wl], 1)
+    apm.machine.workloads.get_latest_version = AsyncMock(
+        return_value=make_workload_version(verify_status=VerifyStatus.SUCCESS)
+    )
+    apm.download_file = AsyncMock()
+    patch_make_client(monkeypatch, evv, apm)
+    monkeypatch.setattr(evv, "prompt_yes_no", AsyncMock(side_effect=KeyboardInterrupt))
+    csv_path = tmp_path / "report.csv"
+
+    rc = await evv.run(
+        workload_type_filter="all", output_dir=str(tmp_path), keyword=None,
+        namespace=None, dry_run=False, yes=False, concurrency=2, csv_path=str(csv_path),
+    )
+
+    assert rc == 1
+    assert "Force-interrupted." in capsys.readouterr().err
+    apm.download_file.assert_not_awaited()
+    with open(csv_path, newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert rows[0]["status"] == "interrupted"
+    assert rows[0]["note"] == "force-interrupted by user"
 
 
 async def test_run_happy_path_auto_names_csv_and_returns_zero(

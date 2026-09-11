@@ -15,6 +15,8 @@ from synology_apm.sdk import (
     AmazonS3ChinaStorageAddRequest,
     AmazonS3StorageAddRequest,
     APVStorageAddRequest,
+    AzureBlobChinaStorageAddRequest,
+    AzureBlobStorageAddRequest,
     C2ObjectStorageAddRequest,
     GenericS3StorageAddRequest,
     WasabiCloudStorageAddRequest,
@@ -229,6 +231,54 @@ class TestBuildStorageRequest:
         )
         assert req.unmanaged_retirement_plan is plan
 
+    def test_azure_blob(self) -> None:
+        from synology_apm.mcp.tools.infra import _build_storage_request
+        req = _build_storage_request(
+            "azure_blob", "", "", "my-container", "", False, "", False,
+            tenant_id="tenant-1", client_id="client-1", azure_secret="secret-1", account_name="acct-1",
+        )
+        assert isinstance(req, AzureBlobStorageAddRequest)
+        assert req.tenant_id == "tenant-1"
+        assert req.client_id == "client-1"
+        assert req.secret == "secret-1"
+        assert req.account_name == "acct-1"
+        assert req.vault_name == "my-container"
+
+    def test_azure_blob_china(self) -> None:
+        from synology_apm.mcp.tools.infra import _build_storage_request
+        req = _build_storage_request(
+            "azure_blob_china", "", "", "my-container", "", False, "", False,
+            tenant_id="tenant-1", client_id="client-1", azure_secret="secret-1", account_name="acct-1",
+        )
+        assert isinstance(req, AzureBlobChinaStorageAddRequest)
+
+    def test_non_azure_missing_access_key_raises(self) -> None:
+        """Only the actually-missing field is named, not both unconditionally."""
+        from synology_apm.mcp.tools.infra import _build_storage_request
+        with pytest.raises(ValueError, match=r"s3_compatible requires: access_key\.$"):
+            _build_storage_request("s3_compatible", "", "secret", "vault", "ep:8080", False, "", False)
+
+    def test_non_azure_missing_secret_key_raises(self) -> None:
+        from synology_apm.mcp.tools.infra import _build_storage_request
+        with pytest.raises(ValueError, match=r"amazon_s3 requires: secret_key\.$"):
+            _build_storage_request("amazon_s3", "key", "", "vault", "", False, "", False)
+
+    def test_non_azure_missing_both_credentials_raises(self) -> None:
+        from synology_apm.mcp.tools.infra import _build_storage_request
+        with pytest.raises(ValueError, match=r"amazon_s3 requires: access_key, secret_key\.$"):
+            _build_storage_request("amazon_s3", "", "", "vault", "", False, "", False)
+
+    def test_azure_blob_missing_fields_raises(self) -> None:
+        from synology_apm.mcp.tools.infra import _build_storage_request
+        with pytest.raises(
+            ValueError,
+            match=r"azure_blob requires: client_id, azure_secret, account_name",
+        ):
+            _build_storage_request(
+                "azure_blob", "", "", "my-container", "", False, "", False,
+                tenant_id="tenant-1",
+            )
+
 
 class TestAddRemoteStorage:
     @pytest.mark.asyncio
@@ -325,6 +375,30 @@ class TestAddRemoteStorage:
         assert entry["params"] == {"storage_type": "s3_compatible"}
         assert entry["outcome"] == "ok"
 
+    @pytest.mark.asyncio
+    async def test_azure_storage_builds_azure_add_request(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
+        from synology_apm.sdk import RemoteStorageAddResult
+
+        storage = make_remote_storage(storage_id="stor-new")
+        mock_apm.remote_storages.add.return_value = RemoteStorageAddResult(storage=storage, encryption_key=None)
+
+        await call_tool(
+            admin_server, "add_remote_storage", mock_ctx,
+            storage_type="azure_blob",
+            vault_name="my-container",
+            tenant_id="tenant-1", client_id="client-1", azure_secret="secret-1", account_name="acct-1",
+        )
+
+        (request,), _ = mock_apm.remote_storages.add.call_args
+        assert isinstance(request, AzureBlobStorageAddRequest)
+        assert request.tenant_id == "tenant-1"
+        assert request.client_id == "client-1"
+        assert request.secret == "secret-1"
+        assert request.account_name == "acct-1"
+        assert request.vault_name == "my-container"
+
 
 class TestUpdateRemoteStorage:
     @pytest.mark.asyncio
@@ -368,6 +442,62 @@ class TestUpdateRemoteStorage:
         assert entry["tool"] == "update_remote_storage"
         assert entry["params"] == {"storage_id": "stor-001"}
         assert entry["outcome"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_azure_storage_builds_azure_update_request(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
+        from synology_apm.sdk import AzureBlobStorageUpdateRequest, RemoteStorageType
+
+        storage = make_remote_storage(storage_type=RemoteStorageType.AZURE_BLOB)
+        mock_apm.remote_storages.get.return_value = storage
+        mock_apm.remote_storages.update.return_value = storage
+
+        await call_tool(
+            admin_server, "update_remote_storage", mock_ctx,
+            storage_id="stor-001", tenant_id="tenant-1", client_id="client-1", azure_secret="secret-1",
+        )
+
+        (_, request), _ = mock_apm.remote_storages.update.call_args
+        assert isinstance(request, AzureBlobStorageUpdateRequest)
+        assert request.tenant_id == "tenant-1"
+        assert request.client_id == "client-1"
+        assert request.secret == "secret-1"
+
+    @pytest.mark.asyncio
+    async def test_non_azure_missing_credentials_raises(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
+        """Omitting access_key/secret_key for a non-Azure storage must fail loudly rather
+        than silently wiping its live credentials with empty strings."""
+        storage = make_remote_storage()
+        mock_apm.remote_storages.get.return_value = storage
+
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(admin_server, "update_remote_storage", mock_ctx, storage_id="stor-001")
+
+        parsed = json.loads(str(exc_info.value))
+        assert parsed["error"] == "invalid_argument"
+        mock_apm.remote_storages.update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_azure_storage_missing_fields_raises(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP
+    ) -> None:
+        from synology_apm.sdk import RemoteStorageType
+
+        storage = make_remote_storage(storage_type=RemoteStorageType.AZURE_BLOB)
+        mock_apm.remote_storages.get.return_value = storage
+
+        with pytest.raises(ToolError) as exc_info:
+            await call_tool(
+                admin_server, "update_remote_storage", mock_ctx,
+                storage_id="stor-001", tenant_id="tenant-1",
+            )
+
+        parsed = json.loads(str(exc_info.value))
+        assert parsed["error"] == "invalid_argument"
+        mock_apm.remote_storages.update.assert_not_called()
 
 
 class TestDeleteRemoteStorage:

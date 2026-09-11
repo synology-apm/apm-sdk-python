@@ -10,6 +10,7 @@ test_apm_import_export_import_flow_conflicts.py.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from datetime import time
@@ -23,6 +24,8 @@ import yaml
 
 from synology_apm.sdk import (
     APMError,
+    GWSAutoBackupRuleListResult,
+    GWSPlanCreateRequest,
     M365AutoBackupRule,
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
@@ -33,6 +36,7 @@ from synology_apm.sdk import (
     ProtectionRetentionPolicy,
     ProtectionSchedule,
     RemoteStorageAddResult,
+    RemoteStorageConflictError,
     ResourceNotFoundError,
     RetentionType,
     RetirementPlanCreateRequest,
@@ -124,12 +128,16 @@ async def test_execute_one_create_dispatches_by_request_type() -> None:
     apm = make_fake_apm()
     apm.machine.plans.create = AsyncMock()
     apm.m365.plans.create = AsyncMock()
+    apm.gws.plans.create = AsyncMock()
     apm.retirement_plans.create = AsyncMock()
     apm.tiering_plans.create = AsyncMock()
 
     machine_req = _machine_req()
     m365_req = M365PlanCreateRequest(
         name="M365 Daily Backup", retention=_RETENTION, schedule=_SCHEDULE
+    )
+    gws_req = GWSPlanCreateRequest(
+        name="GWS Daily Backup", retention=_RETENTION, schedule=_SCHEDULE
     )
     retirement_req = RetirementPlanCreateRequest(name="Compliance Retention", retention_days=365)
     tiering_req = TieringPlanCreateRequest(
@@ -139,13 +147,14 @@ async def test_execute_one_create_dispatches_by_request_type() -> None:
         daily_check_time=time(20, 0),
     )
 
-    for req in (machine_req, m365_req, retirement_req, tiering_req):
+    for req in (machine_req, m365_req, gws_req, retirement_req, tiering_req):
         entry = _make_import_entry(request=req)
         result = await ie._execute_one(apm, entry, "create", None)
         assert (result.result, result.error_msg) == ("ok", "")
 
     apm.machine.plans.create.assert_awaited_once_with(machine_req)
     apm.m365.plans.create.assert_awaited_once_with(m365_req)
+    apm.gws.plans.create.assert_awaited_once_with(gws_req)
     apm.retirement_plans.create.assert_awaited_once_with(retirement_req)
     apm.tiering_plans.create.assert_awaited_once_with(tiering_req)
 
@@ -160,6 +169,40 @@ async def test_execute_one_overwrite_updates_with_existing_id() -> None:
 
     assert (result.result, result.error_msg) == ("ok", "")
     apm.machine.plans.update.assert_awaited_once_with(_MACHINE_PLAN_UUID, req)
+
+
+async def test_execute_one_overwrite_dispatches_by_request_type() -> None:
+    """Overwrite (update) dispatch for m365/gws/retirement/tiering -- machine's own update
+    dispatch is covered by test_execute_one_overwrite_updates_with_existing_id above."""
+    apm = make_fake_apm()
+    apm.m365.plans.update = AsyncMock()
+    apm.gws.plans.update = AsyncMock()
+    apm.retirement_plans.update = AsyncMock()
+    apm.tiering_plans.update = AsyncMock()
+
+    m365_req = M365PlanCreateRequest(
+        name="M365 Daily Backup", retention=_RETENTION, schedule=_SCHEDULE
+    )
+    gws_req = GWSPlanCreateRequest(
+        name="GWS Daily Backup", retention=_RETENTION, schedule=_SCHEDULE
+    )
+    retirement_req = RetirementPlanCreateRequest(name="Compliance Retention", retention_days=365)
+    tiering_req = TieringPlanCreateRequest(
+        name="Tier Old Versions",
+        tiering_after_days=30,
+        destination=make_remote_storage(),
+        daily_check_time=time(20, 0),
+    )
+
+    for req in (m365_req, gws_req, retirement_req, tiering_req):
+        entry = _make_import_entry(request=req)
+        result = await ie._execute_one(apm, entry, "overwrite", _MACHINE_PLAN_UUID)
+        assert (result.result, result.error_msg) == ("ok", "")
+
+    apm.m365.plans.update.assert_awaited_once_with(_MACHINE_PLAN_UUID, m365_req)
+    apm.gws.plans.update.assert_awaited_once_with(_MACHINE_PLAN_UUID, gws_req)
+    apm.retirement_plans.update.assert_awaited_once_with(_MACHINE_PLAN_UUID, retirement_req)
+    apm.tiering_plans.update.assert_awaited_once_with(_MACHINE_PLAN_UUID, tiering_req)
 
 
 async def test_execute_one_resolved_name_replaces_uuid_in_request_name() -> None:
@@ -205,6 +248,55 @@ async def test_execute_one_apm_error_maps_to_failed() -> None:
     assert (result.result, result.error_msg) == ("failed", "backend busy")
 
 
+async def test_execute_one_value_error_maps_to_failed() -> None:
+    """A bare ValueError from the SDK call (not APMError/PlanNameConflictError) is still
+    reported as a failure rather than propagating."""
+    apm = make_fake_apm()
+    apm.machine.plans.create = AsyncMock(side_effect=ValueError("invalid field combination"))
+    entry = _make_import_entry(request=_machine_req())
+
+    result = await ie._execute_one(apm, entry, "create", None)
+
+    assert (result.result, result.error_msg) == ("failed", "invalid field combination")
+
+
+# ── _status_line / _result_cell ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("result", "error_msg", "ok_warning", "expected"),
+    [
+        ("ok", "", False, "ok"),
+        ("ok", "relink required", True, "ok (warning: relink required)"),
+        ("ok", "relink required", False, "ok"),
+        ("failed", "backend busy", False, "failed: backend busy"),
+        ("skipped", "", False, "skipped"),
+    ],
+    ids=["ok", "ok-with-warning", "ok-warning-not-requested", "failed", "skipped-fallback"],
+)
+def test_status_line_formats_by_result(
+    result: str, error_msg: str, ok_warning: bool, expected: str
+) -> None:
+    assert ie._status_line(result, error_msg, ok_warning=ok_warning) == expected
+
+
+@pytest.mark.parametrize(
+    ("result", "error_msg", "ok_warning", "expected"),
+    [
+        ("ok", "", False, "ok"),
+        ("ok", "relink required", True, "ok (warning: relink required)"),
+        ("ok", "relink required", False, "ok"),
+        ("failed", "backend busy", False, "failed: backend busy"),
+        ("skipped", "", False, "skipped"),
+    ],
+    ids=["ok", "ok-with-warning", "ok-warning-not-requested", "failed", "skipped-fallback"],
+)
+def test_result_cell_formats_by_result(
+    result: str, error_msg: str, ok_warning: bool, expected: str
+) -> None:
+    assert ie._result_cell(result, error_msg, ok_warning=ok_warning) == expected
+
+
 # ── _autodetect_and_load_credentials ──────────────────────────────────────────
 
 
@@ -245,6 +337,7 @@ def test_autodetect_credentials_discovers_sibling_files(
     assert rs_creds == {
         ("s3_compatible", "https://s3.example.com:443", "my-bucket"): {
             "access_key": "AK", "secret_key": "SK", "relink_encryption_key": "",
+            "tenant_id": "", "client_id": "", "secret": "",
         }
     }
     assert rs_path == str(tmp_path / "config.storage-credentials.csv")
@@ -309,6 +402,114 @@ async def test_fetch_import_index_returns_all_six_lists() -> None:
     assert apm.machine.workloads.list.await_args.kwargs["workload_types"] == [
         MachineWorkloadType.FS
     ]
+
+
+# ── _build_plan_name_by_ref ─────────────────────────────────────────────────────
+
+
+def test_build_plan_name_by_ref_skips_entry_missing_ref_key_or_name_or_id() -> None:
+    data: dict[str, Any] = {
+        "protection_plans": [
+            {"ref_key": "", "name_or_id": "Daily Backup"},
+            {"ref_key": "plan-1", "name_or_id": ""},
+        ]
+    }
+
+    assert ie._build_plan_name_by_ref(data, []) == {}
+
+
+def test_build_plan_name_by_ref_resolves_uuid_to_stub_name() -> None:
+    stub = make_protection_plan(plan_id=_MACHINE_PLAN_UUID, name="Daily Backup")
+    data: dict[str, Any] = {
+        "protection_plans": [{"ref_key": "plan-1", "name_or_id": _MACHINE_PLAN_UUID}]
+    }
+
+    assert ie._build_plan_name_by_ref(data, [stub]) == {"plan-1": "Daily Backup"}
+
+
+def test_build_plan_name_by_ref_unmatched_uuid_is_omitted() -> None:
+    data: dict[str, Any] = {
+        "protection_plans": [{"ref_key": "plan-1", "name_or_id": _MACHINE_PLAN_UUID}]
+    }
+
+    assert ie._build_plan_name_by_ref(data, []) == {}
+
+
+def test_build_plan_name_by_ref_uses_name_as_is() -> None:
+    data: dict[str, Any] = {
+        "protection_plans": [{"ref_key": "plan-1", "name_or_id": "Daily Backup"}]
+    }
+
+    assert ie._build_plan_name_by_ref(data, []) == {"plan-1": "Daily Backup"}
+
+
+# ── _report_parse_errors ─────────────────────────────────────────────────────────
+
+
+def test_report_parse_errors_prints_every_section_with_blank_line_separators(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every category's parse errors are printed, and a blank line separates each populated
+    section from the previous one -- this function is never exercised end-to-end by
+    run_import (every scenario there either has no parse errors or aborts earlier)."""
+    plan_entry = _make_import_entry(name="Daily Backup", parse_error="bad retention")
+    fs_entry = ie._FsEntry(
+        host_ip="10.0.0.10", backup_server_ref="server-1", resolved_namespace="ns-1",
+        plan_name="Daily Backup", raw={}, parse_error="host_ip is required",
+    )
+    rs_entry = ie._RsEntry(
+        name_or_id="tiering-remote", ref_key="storage-1", endpoint="", vault_name="my-bucket",
+        storage_type_str="s3_compatible", raw={}, parse_error="endpoint is required",
+    )
+    m365_rule = ie._M365RuleEntry(
+        tenant_id=_TENANT_UUID, kind="m365_user_rule", backup_server_ref="server-1",
+        resolved_namespace="", plan_ref="plan-2", resolved_plan_id="",
+        exchange_groups=[], onedrive_groups=[], chat_groups=[], raw={},
+        parse_error="plan_ref is required",
+    )
+    m365_collab = ie._M365CollabEntry(
+        tenant_id=_TENANT_UUID, group_exchange=None, mysite=None, sharepoint=None, teams=None,
+        parse_error="backup_server_ref is required",
+    )
+    gws_rule = ie._GWSRuleEntry(
+        domain="gwsdemo.example.com", kind="gws_user_rule", backup_server_ref="server-1",
+        resolved_namespace="", plan_ref="plan-2", resolved_plan_id="",
+        mail_groups=[], calendar_groups=[], contact_groups=[], drive_groups=[], raw={},
+        parse_error="plan_ref is required",
+    )
+    gws_collab = ie._GWSCollabEntry(
+        domain="gwsdemo.example.com", shared_drive_specified=True, shared_drive=None,
+        shared_drive_parse_error="backup_server_ref is required",
+        include_unlicensed_accounts=None, include_archived_accounts=None,
+    )
+
+    ie._report_parse_errors(
+        [plan_entry], [fs_entry], [rs_entry], [m365_rule], [m365_collab], [gws_rule], [gws_collab],
+    )
+
+    err = capsys.readouterr().err
+    assert "1 plan parse error:" in err
+    assert "bad retention" in err
+    assert "1 file server parse error:" in err
+    assert "host_ip is required" in err
+    assert "1 remote storage parse error:" in err
+    assert "endpoint is required" in err
+    assert "[m365_user_rule]" in err and "plan_ref is required" in err
+    assert "[m365_collab]" in err and "backup_server_ref is required" in err
+    assert "[gws_user_rule]" in err
+    assert "[gws_collab]" in err
+    # Every section after the first (plan/fs/rs/m365/gws) is preceded by exactly one blank
+    # separator line -- verifies _report_parse_errors' printed-flag bookkeeping directly.
+    lines = err.splitlines()
+    section_starts = [
+        next(i for i, ln in enumerate(lines) if marker in ln)
+        for marker in (
+            "plan parse error:", "file server parse error:", "remote storage parse error:",
+            "[m365_user_rule]", "[gws_user_rule]",
+        )
+    ]
+    assert section_starts == sorted(section_starts)  # sections appear in the expected order
+    assert all(lines[i - 1] == "" for i in section_starts[1:])
 
 
 # ── _print_dry_run_plan ───────────────────────────────────────────────────────
@@ -504,8 +705,7 @@ async def test_run_import_full_pipeline_happy_path(
     apm.backup_servers.list = AsyncMock(return_value=([bs], 1))
     apm.remote_storages.list = AsyncMock(return_value=([], 0))
     apm.machine.plans.list = AsyncMock(return_value=([machine_stub], 1))
-    # Second call is the Phase 7 refresh that must see the plan created in Phase 6.
-    apm.m365.plans.list = AsyncMock(side_effect=[([], 0), ([m365_stub], 1)])
+    apm.m365.plans.list = AsyncMock(return_value=([], 0))
     apm.machine.workloads.list = AsyncMock(return_value=([], 0))
     apm.retirement_plans.get_by_name = AsyncMock(side_effect=ResourceNotFoundError(
         "not found", resource_type="RetirementPlan", resource_id="Compliance Retention"
@@ -517,7 +717,9 @@ async def test_run_import_full_pipeline_happy_path(
         storage=created_rs, encryption_key="NEWKEY123", relink_warning=None
     ))
     apm.machine.plans.update = AsyncMock()
-    apm.m365.plans.create = AsyncMock()
+    # Phase 7 resolves the M365 rule's plan_id from this create() return value directly
+    # (no re-fetch of the plan list), so it must return the real created plan.
+    apm.m365.plans.create = AsyncMock(return_value=m365_stub)
     apm.retirement_plans.create = AsyncMock()
     apm.tiering_plans.create = AsyncMock()
     apm.machine.workloads.add_file_server = AsyncMock()
@@ -706,6 +908,381 @@ async def test_run_import_unresolved_remote_storage_ref_aborts(
     assert exit_code == 1
     err = capsys.readouterr().err
     assert "1 unresolved remote storage reference(s):" in err
+
+
+async def test_run_import_credential_load_error_returns_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed explicit --fs-credentials file aborts the import before any APM
+    connection is made (_autodetect_and_load_credentials returning None)."""
+    input_path = _write_import_yaml(tmp_path, {})
+    bad_creds = tmp_path / "bad.csv"
+    bad_creds.write_text("wrong,header\n", encoding="utf-8")
+
+    exit_code = await ie.run_import(
+        input_path, on_conflict="skip", dry_run=False, yes=True,
+        fs_credentials_path=str(bad_creds),
+    )
+
+    assert exit_code == 1
+    assert "Error loading fs-credentials file" in capsys.readouterr().err
+
+
+async def test_run_import_saas_and_gws_domain_ref_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Malformed saas_tenants/gws_domains entries print their own ref-map-build warnings."""
+    input_path = _write_import_yaml(tmp_path, {
+        "saas_tenants": [{"ref_key": "tenant-1"}],  # missing tenant_id
+        "gws_domains": [{"ref_key": "domain-1"}],   # missing domain
+    })
+    apm = make_fake_apm()
+    patch_make_client(monkeypatch, ie, apm)
+
+    exit_code = await ie.run_import(input_path, on_conflict="skip", dry_run=False, yes=True)
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "Warning: saas_tenants: saas_tenants ref_key='tenant-1' missing 'tenant_id'" in err
+    assert "Warning: gws_domains: gws_domains ref_key='domain-1' missing 'domain'" in err
+
+
+async def test_run_import_interrupt_mid_flight_skips_remaining_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interrupt fired right as Phase 4 begins (before any RS/plan/FS SDK call) causes
+    all three to skip rather than proceed -- covers the interrupted.is_set() guard in each
+    of _run_rs/_run_plan/_run_fs, which the standalone execute-function tests never exercise
+    at the run_import level."""
+    input_path = _write_import_yaml(tmp_path, {
+        "remote_storages": [_rs_yaml_entry()],
+        "protection_plans": [_machine_plan_yaml()],
+        "file_servers": [_fs_raw()],
+    })
+    _write_fs_creds(tmp_path / "config.fs-credentials.csv")
+    _write_rs_creds(tmp_path / "config.storage-credentials.csv")
+
+    apm = make_fake_apm()
+    apm.backup_servers.list = AsyncMock(return_value=([], 0))
+    apm.remote_storages.list = AsyncMock(return_value=([], 0))
+    apm.machine.plans.list = AsyncMock(return_value=([], 0))
+    apm.m365.plans.list = AsyncMock(return_value=([], 0))
+    apm.machine.workloads.list = AsyncMock(return_value=([], 0))
+    apm.machine.plans.create = AsyncMock()
+    apm.remote_storages.add = AsyncMock()
+    apm.machine.workloads.add_file_server = AsyncMock()
+    patch_make_client(monkeypatch, ie, apm)
+
+    def _fake_register_interrupt(loop: Any, event: asyncio.Event) -> None:
+        event.set()
+
+    monkeypatch.setattr(ie, "register_interrupt", _fake_register_interrupt)
+    monkeypatch.setattr(ie, "unregister_interrupt", lambda loop: None)
+
+    exit_code = await ie.run_import(
+        input_path, on_conflict="skip", dry_run=False, yes=True, concurrency=2
+    )
+
+    assert exit_code == 0
+    apm.remote_storages.add.assert_not_awaited()
+    apm.machine.plans.create.assert_not_awaited()
+    apm.machine.workloads.add_file_server.assert_not_awaited()
+
+
+async def test_run_import_m365_prefetch_failure_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failure fetching existing M365 rules during the dry-run prefetch (phase 3c) warns
+    per-tenant rather than aborting -- distinct from the export-side and execution-phase
+    (_execute_m365_rules) fetch-failure cases, which are tested separately."""
+    input_path = _write_import_yaml(tmp_path, {
+        "saas_tenants": [{"ref_key": "tenant-1", "tenant_id": _TENANT_UUID}],
+        "backup_servers": [{"ref_key": "server-1", "name_or_id": "apm-server-01"}],
+        "protection_plans": [{
+            "ref_key": "plan-2", "name_or_id": "M365 Daily Backup", "type": "m365",
+            "retention": {"type": "keep_versions", "versions": 10},
+            "schedule": {"frequency": "daily", "start_time": "03:00", "weekdays": []},
+        }],
+        "m365_auto_backup_rules": [{
+            "tenant_ref": "tenant-1",
+            "user_rules": [{"backup_server_ref": "server-1", "plan_ref": "plan-2"}],
+        }],
+    })
+    bs = make_backup_server(name="apm-server-01", namespace="ns-apm-server-01")
+    m365_stub = make_protection_plan(
+        plan_id=_M365_PLAN_UUID, name="M365 Daily Backup", category=WorkloadCategory.M365
+    )
+    apm = make_fake_apm()
+    apm.backup_servers.list = AsyncMock(return_value=([bs], 1))
+    apm.remote_storages.list = AsyncMock(return_value=([], 0))
+    apm.machine.plans.list = AsyncMock(return_value=([], 0))
+    apm.m365.plans.list = AsyncMock(return_value=([m365_stub], 1))
+    apm.machine.workloads.list = AsyncMock(return_value=([], 0))
+    apm.m365.auto_backup_rules.list = AsyncMock(side_effect=APMError("tenant offline"))
+    patch_make_client(monkeypatch, ie, apm)
+
+    exit_code = await ie.run_import(
+        input_path, on_conflict="overwrite", dry_run=True, yes=True, concurrency=2
+    )
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert f"could not fetch existing rules for tenant '{_TENANT_UUID}'" in err
+
+
+def _rs_backed_machine_plan_yaml() -> dict[str, Any]:
+    return _machine_plan_yaml(backup_copy={
+        "destination_type": "remote_storage",
+        "destination_ref": "storage-1",
+        "retention": {"type": "keep_days", "days": 7},
+        "schedule": {"frequency": "after_backup", "start_time": None, "weekdays": []},
+    })
+
+
+async def test_run_import_rs_creation_fallback_locates_storage_after_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_interrupt: None,
+) -> None:
+    """When add() fails with a conflict (another client registered the same storage
+    concurrently), the fallback re-fetch still locates it by name, so a dependent plan's
+    deferred backup_copy destination resolves correctly instead of being left unresolved."""
+    input_path = _write_import_yaml(tmp_path, {
+        "remote_storages": [_rs_yaml_entry()],
+        "protection_plans": [_rs_backed_machine_plan_yaml()],
+    })
+    _write_rs_creds(tmp_path / "config.storage-credentials.csv")
+    machine_stub = make_protection_plan(plan_id=_MACHINE_PLAN_UUID, name="Daily Backup")
+    found_rs = make_remote_storage(name="tiering-remote")
+
+    apm = make_fake_apm()
+    apm.backup_servers.list = AsyncMock(return_value=([], 0))
+    apm.remote_storages.list = AsyncMock(side_effect=[([], 0), ([found_rs], 1)])
+    apm.machine.plans.list = AsyncMock(return_value=([machine_stub], 1))
+    apm.m365.plans.list = AsyncMock(return_value=([], 0))
+    apm.machine.workloads.list = AsyncMock(return_value=([], 0))
+    apm.remote_storages.add = AsyncMock(side_effect=RemoteStorageConflictError(
+        "already registered", resource_type="RemoteStorage", resource_id="tiering-remote"
+    ))
+    apm.machine.plans.update = AsyncMock()
+    patch_make_client(monkeypatch, ie, apm)
+
+    exit_code = await ie.run_import(
+        input_path, on_conflict="overwrite", dry_run=False, yes=True, concurrency=2
+    )
+
+    assert exit_code == 1  # the RS entry itself still failed, even though the plan resolved
+    update_args = apm.machine.plans.update.await_args.args
+    assert update_args[1].backup_copy is not None
+    assert update_args[1].backup_copy.destination is found_rs
+
+
+async def test_run_import_plan_action_flips_to_error_when_rs_never_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_interrupt: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When RS creation fails and the fallback re-fetch still can't find a match, a dependent
+    plan's deferred backup_copy resolution fails too -- its action flips to "error" (via the
+    post-RS-creation re-parse) rather than the plan silently going through without its
+    backup_copy."""
+    input_path = _write_import_yaml(tmp_path, {
+        "remote_storages": [_rs_yaml_entry()],
+        "protection_plans": [_rs_backed_machine_plan_yaml()],
+    })
+    _write_rs_creds(tmp_path / "config.storage-credentials.csv")
+    machine_stub = make_protection_plan(plan_id=_MACHINE_PLAN_UUID, name="Daily Backup")
+
+    apm = make_fake_apm()
+    apm.backup_servers.list = AsyncMock(return_value=([], 0))
+    apm.remote_storages.list = AsyncMock(side_effect=[([], 0), ([], 0)])
+    apm.machine.plans.list = AsyncMock(return_value=([machine_stub], 1))
+    apm.m365.plans.list = AsyncMock(return_value=([], 0))
+    apm.machine.workloads.list = AsyncMock(return_value=([], 0))
+    apm.remote_storages.add = AsyncMock(side_effect=RemoteStorageConflictError(
+        "already registered", resource_type="RemoteStorage", resource_id="tiering-remote"
+    ))
+    apm.machine.plans.update = AsyncMock()
+    patch_make_client(monkeypatch, ie, apm)
+
+    exit_code = await ie.run_import(
+        input_path, on_conflict="overwrite", dry_run=False, yes=True, concurrency=2
+    )
+
+    assert exit_code == 1
+    apm.machine.plans.update.assert_not_awaited()
+    err = capsys.readouterr().err
+    assert "[error] 'Daily Backup'" in err
+
+
+async def test_run_import_fs_and_rs_overwrite_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_interrupt: None,
+) -> None:
+    """When the target server already has a matching FS workload and RS (matched by UUID),
+    both are updated rather than created -- no run_import test previously populated
+    existing_fs/existing_rs_by_name from a non-empty live list, so this path was only ever
+    unit-tested at the helper-function level (_build_fs_requests/_execute_one_fs, RS
+    action-selection)."""
+    rs_uuid = "123e4567-e89b-12d3-a456-426614174099"
+    input_path = _write_import_yaml(tmp_path, {
+        "backup_servers": [{"ref_key": "server-1", "name_or_id": "apm-server-01"}],
+        "protection_plans": [_machine_plan_yaml()],
+        "file_servers": [_fs_raw()],
+        "remote_storages": [_rs_yaml_entry(name_or_id=rs_uuid)],
+    })
+    _write_fs_creds(tmp_path / "config.fs-credentials.csv")
+    _write_rs_creds(tmp_path / "config.storage-credentials.csv")
+
+    bs = make_backup_server(name="apm-server-01", namespace="ns-apm-server-01")
+    machine_stub = make_protection_plan(plan_id=_MACHINE_PLAN_UUID, name="Daily Backup")
+    existing_fs_wl = make_machine_workload(
+        workload_type=MachineWorkloadType.FS,
+        namespace="ns-apm-server-01",
+        fs_config=make_file_server_config(host_ip="10.0.0.10"),
+        plan=machine_stub,
+    )
+    existing_rs = make_remote_storage(storage_id=rs_uuid, name="tiering-remote")
+
+    apm = make_fake_apm()
+    apm.backup_servers.list = AsyncMock(return_value=([bs], 1))
+    apm.remote_storages.list = AsyncMock(return_value=([existing_rs], 1))
+    apm.machine.plans.list = AsyncMock(return_value=([machine_stub], 1))
+    apm.m365.plans.list = AsyncMock(return_value=([], 0))
+    apm.machine.workloads.list = AsyncMock(return_value=([existing_fs_wl], 1))
+    apm.machine.plans.update = AsyncMock()
+    apm.machine.workloads.update_file_server = AsyncMock()
+    apm.remote_storages.update = AsyncMock()
+    patch_make_client(monkeypatch, ie, apm)
+
+    exit_code = await ie.run_import(
+        input_path, on_conflict="overwrite", dry_run=False, yes=True, concurrency=2
+    )
+
+    assert exit_code == 0
+    apm.machine.workloads.update_file_server.assert_awaited_once()
+    assert apm.machine.workloads.update_file_server.await_args.args[0] is existing_fs_wl
+    apm.remote_storages.update.assert_awaited_once()
+    assert apm.remote_storages.update.await_args.args[0] is existing_rs
+
+
+async def test_run_import_gws_full_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_interrupt: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """GWS-flavored variant of test_run_import_full_pipeline_happy_path (gws_domains +
+    gws_auto_backup_rules instead of saas_tenants + m365_auto_backup_rules) -- no other
+    run_import test supplies these sections at all, so the GWS existing-rules prefetch
+    (phase 3c) and GWS rule execution (phase 8) were previously unreachable."""
+    gws_plan_uuid = "123e4567-e89b-12d3-a456-426614174003"
+    input_path = _write_import_yaml(tmp_path, {
+        "backup_servers": [{"ref_key": "server-1", "name_or_id": "apm-server-01"}],
+        "protection_plans": [{
+            "ref_key": "plan-2",
+            "name_or_id": "GWS Daily Backup",
+            "type": "gws",
+            "retention": {"type": "keep_versions", "versions": 10},
+            "schedule": {"frequency": "daily", "start_time": "03:00", "weekdays": []},
+        }],
+        "gws_domains": [{"ref_key": "domain-1", "domain": "gwsdemo.example.com"}],
+        "gws_auto_backup_rules": [{
+            "domain_ref": "domain-1",
+            "user_rules": [{
+                "backup_server_ref": "server-1",
+                "plan_ref": "plan-2",
+                "mail_groups": [_GROUP_UUID],
+            }],
+            "collab_services": {
+                "shared_drive": {"backup_server_ref": "server-1", "plan_ref": "plan-2"},
+            },
+        }],
+    })
+
+    bs = make_backup_server(name="apm-server-01", namespace="ns-apm-server-01")
+    gws_stub = make_protection_plan(
+        plan_id=gws_plan_uuid, name="GWS Daily Backup", category=WorkloadCategory.GWS
+    )
+
+    apm = make_fake_apm()
+    apm.backup_servers.list = AsyncMock(return_value=([bs], 1))
+    apm.remote_storages.list = AsyncMock(return_value=([], 0))
+    apm.machine.plans.list = AsyncMock(return_value=([], 0))
+    apm.m365.plans.list = AsyncMock(return_value=([], 0))
+    apm.gws.plans.list = AsyncMock(return_value=([], 0))
+    apm.machine.workloads.list = AsyncMock(return_value=([], 0))
+    # Phase 8 resolves the GWS rule's plan_id from this create() return value directly
+    # (no re-fetch of the plan list), mirroring the M365 happy-path test.
+    apm.gws.plans.create = AsyncMock(return_value=gws_stub)
+    apm.gws.auto_backup_rules.list = AsyncMock(return_value=GWSAutoBackupRuleListResult(
+        rules=(), shared_drive_setting=None,
+        include_unlicensed_accounts=False, include_archived_accounts=False,
+    ))
+    apm.gws.auto_backup_rules.create = AsyncMock()
+    apm.gws.auto_backup_rules.update_collab_settings = AsyncMock()
+    patch_make_client(monkeypatch, ie, apm)
+
+    exit_code = await ie.run_import(
+        input_path, on_conflict="overwrite", dry_run=False, yes=True, concurrency=2
+    )
+
+    assert exit_code == 0
+    assert apm.gws.plans.create.await_args.args[0].name == "GWS Daily Backup"
+    apm.gws.auto_backup_rules.create.assert_awaited_once_with(
+        domain="gwsdemo.example.com",
+        namespace="ns-apm-server-01",
+        plan_id=gws_plan_uuid,
+        mail_group_ids=[_GROUP_UUID],
+        calendar_group_ids=[],
+        contact_group_ids=[],
+        drive_group_ids=[],
+    )
+    collab_kwargs = apm.gws.auto_backup_rules.update_collab_settings.await_args.kwargs
+    assert collab_kwargs["shared_drive"].plan_id == gws_plan_uuid
+    err = capsys.readouterr().err
+    assert "Checking existing GWS auto-backup rules..." in err
+    assert "GWS gws_user_rule" in err
+    assert "GWS gws_shared_drive" in err
+
+
+async def test_run_import_gws_prefetch_failure_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """GWS-flavored variant of test_run_import_m365_prefetch_failure_warns: a failure fetching
+    existing GWS rules during the dry-run prefetch (phase 3c) warns per-domain rather than
+    aborting."""
+    input_path = _write_import_yaml(tmp_path, {
+        "backup_servers": [{"ref_key": "server-1", "name_or_id": "apm-server-01"}],
+        "protection_plans": [{
+            "ref_key": "plan-2", "name_or_id": "GWS Daily Backup", "type": "gws",
+            "retention": {"type": "keep_versions", "versions": 10},
+            "schedule": {"frequency": "daily", "start_time": "03:00", "weekdays": []},
+        }],
+        "gws_domains": [{"ref_key": "domain-1", "domain": "gwsdemo.example.com"}],
+        "gws_auto_backup_rules": [{
+            "domain_ref": "domain-1",
+            "user_rules": [{"backup_server_ref": "server-1", "plan_ref": "plan-2"}],
+        }],
+    })
+    bs = make_backup_server(name="apm-server-01", namespace="ns-apm-server-01")
+    gws_stub = make_protection_plan(
+        plan_id="123e4567-e89b-12d3-a456-426614174003", name="GWS Daily Backup",
+        category=WorkloadCategory.GWS,
+    )
+    apm = make_fake_apm()
+    apm.backup_servers.list = AsyncMock(return_value=([bs], 1))
+    apm.remote_storages.list = AsyncMock(return_value=([], 0))
+    apm.machine.plans.list = AsyncMock(return_value=([], 0))
+    apm.m365.plans.list = AsyncMock(return_value=([], 0))
+    apm.gws.plans.list = AsyncMock(return_value=([gws_stub], 1))
+    apm.machine.workloads.list = AsyncMock(return_value=([], 0))
+    apm.gws.auto_backup_rules.list = AsyncMock(side_effect=APMError("domain offline"))
+    patch_make_client(monkeypatch, ie, apm)
+
+    exit_code = await ie.run_import(
+        input_path, on_conflict="overwrite", dry_run=True, yes=True, concurrency=2
+    )
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "could not fetch existing rules for domain 'gwsdemo.example.com'" in err
 
 
 async def test_run_import_invalid_yaml_returns_one(

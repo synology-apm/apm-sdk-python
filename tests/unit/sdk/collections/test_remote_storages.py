@@ -13,6 +13,7 @@ from synology_apm.sdk.collections.remote_storages import (
 from synology_apm.sdk.enums import RemoteStorageStatus, RemoteStorageType
 from synology_apm.sdk.exceptions import (
     APIError,
+    RemoteStorageAuthenticationError,
     RemoteStorageConflictError,
     RemoteStorageEncryptionMismatchError,
     RemoteStorageInUseError,
@@ -20,9 +21,10 @@ from synology_apm.sdk.exceptions import (
     ResourceNotFoundError,
 )
 from synology_apm.sdk.models.remote_storage import (
+    AccessKeyStorageUpdateRequest,
+    AzureBlobStorageUpdateRequest,
     GenericS3StorageAddRequest,
     RemoteStorage,
-    RemoteStorageUpdateRequest,
 )
 from synology_apm.sdk.models.retirement_plan import RetirementPlan
 from tests.unit.sdk.conftest import (
@@ -604,6 +606,124 @@ async def test_add_s3_encryption_mismatch_raises() -> None:
     assert_resource_error(exc_info, resource_type="RemoteStorage", resource_id="tiering-remote")
 
 
+async def test_add_s3_authentication_error_raises() -> None:
+    """error_code 3000 is a generic provider-credential-rejection signal — observed identically
+    for S3-compatible (SignatureDoesNotMatch), APV, and Azure Blob Storage against a real APM.
+    This covers the failure surfacing at the final create call."""
+    session = make_session()
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        if "region_cert" in path:
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
+        if "support_virtual_host" in path:
+            return {"supportVirtualHost": True}
+        if "storage_connection/remote" in path:
+            return {"connections": []}
+        if path == "/api/v1/external_storage":
+            raise APIError(
+                "Invalid access key id or signature. [S3 Error: SignatureDoesNotMatch: "
+                "The request signature we calculated does not match the signature you provided.]",
+                error_code=3000,
+            )
+        return {}
+
+    with patched_session(session, post=fake_post):
+        collection = RemoteStorageCollection(session)
+        req = GenericS3StorageAddRequest(
+            access_key="ak", secret_key="sk",
+            vault_name="tiering-remote", endpoint="https://s3.example.com:443",
+        )
+        with pytest.raises(RemoteStorageAuthenticationError) as exc_info:
+            await collection.add(req)
+
+    assert_resource_error(exc_info, resource_type="RemoteStorage", resource_id="tiering-remote")
+    assert "SignatureDoesNotMatch" in exc_info.value.message
+
+
+async def test_add_s3_authentication_error_at_catalog_check_raises() -> None:
+    """Credential verification can also fail at the catalog pre-flight call
+    (storage_connection/remote) — confirmed live for Azure/Amazon-S3-family types, which have no
+    earlier pre-flight of their own. Must still be caught and remapped, not just the final create
+    call — this is the actual gap found and fixed after the generic add() handling was added."""
+    session = make_session()
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        if "region_cert" in path:
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
+        if "support_virtual_host" in path:
+            return {"supportVirtualHost": True}
+        if "storage_connection/remote" in path:
+            raise APIError("Invalid access key id or signature.", error_code=3000)
+        return {}
+
+    with patched_session(session, post=fake_post):
+        collection = RemoteStorageCollection(session)
+        req = GenericS3StorageAddRequest(
+            access_key="ak", secret_key="sk",
+            vault_name="tiering-remote", endpoint="https://s3.example.com:443",
+        )
+        with pytest.raises(RemoteStorageAuthenticationError) as exc_info:
+            await collection.add(req)
+
+    assert_resource_error(exc_info, resource_type="RemoteStorage", resource_id="tiering-remote")
+
+
+async def test_add_s3_authentication_error_at_preflight_raises() -> None:
+    """Credential verification can fail even earlier, inside _build_add_body()'s own pre-flight
+    fetch (region_cert) — before a vault name from the response body is available, so the
+    fallback must use request.vault_name instead of body["vaultName"]."""
+    session = make_session()
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        if "region_cert" in path:
+            raise APIError("Invalid access key id or signature.", error_code=3000)
+        return {}
+
+    with patched_session(session, post=fake_post):
+        collection = RemoteStorageCollection(session)
+        req = GenericS3StorageAddRequest(
+            access_key="ak", secret_key="sk",
+            vault_name="tiering-remote", endpoint="https://s3.example.com:443",
+        )
+        with pytest.raises(RemoteStorageAuthenticationError) as exc_info:
+            await collection.add(req)
+
+    assert_resource_error(exc_info, resource_type="RemoteStorage", resource_id="tiering-remote")
+
+
+async def test_add_s3_post_creation_get_failure_not_misclassified_as_auth_error() -> None:
+    """A failure in the trailing get() (run after the storage was already successfully created)
+    must propagate as a plain error, not be reinterpreted as a credential rejection — even if it
+    happens to carry error_code 3000 for an unrelated reason."""
+    session = make_session()
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        if "region_cert" in path:
+            return {"region": "us-east-1", "certificate": {"cert": ""}}
+        if "support_virtual_host" in path:
+            return {"supportVirtualHost": True}
+        if "storage_connection/remote" in path:
+            return {"connections": []}
+        if path == "/api/v1/external_storage":
+            return {"id": STORAGE_ID, "encryptionKey": ""}
+        return {}
+
+    async def fake_get(path: str, **kw: Any) -> dict[str, Any]:
+        raise APIError("unrelated failure", error_code=3000)
+
+    with patched_session(session, post=fake_post, get=fake_get):
+        collection = RemoteStorageCollection(session)
+        req = GenericS3StorageAddRequest(
+            access_key="ak", secret_key="sk",
+            vault_name="tiering-remote", endpoint="https://s3.example.com:443",
+        )
+        with pytest.raises(APIError) as exc_info:
+            await collection.add(req)
+
+    assert not isinstance(exc_info.value, RemoteStorageAuthenticationError)
+    assert exc_info.value.error_code == 3000
+
+
 async def test_add_s3_other_error_reraises() -> None:
     session = make_session()
 
@@ -869,7 +989,7 @@ async def test_update_no_trust_self_signed_posts_minimal_body() -> None:
     storage = _make_storage(RemoteStorageType.S3_COMPATIBLE)
     with patched_session(session, post=fake_post, get=fake_get):
         collection = RemoteStorageCollection(session)
-        req = RemoteStorageUpdateRequest(
+        req = AccessKeyStorageUpdateRequest(
             access_key="new-ak", secret_key="new-sk",
             endpoint="https://s3.example.com:443",
             trust_self_signed=False,
@@ -906,7 +1026,7 @@ async def test_update_s3_trust_self_signed_includes_cert() -> None:
     storage = _make_storage(RemoteStorageType.S3_COMPATIBLE)
     with patched_session(session, post=fake_post, get=fake_get):
         collection = RemoteStorageCollection(session)
-        req = RemoteStorageUpdateRequest(
+        req = AccessKeyStorageUpdateRequest(
             access_key="new-ak", secret_key="new-sk",
             endpoint="https://s3.example.com:443",
             trust_self_signed=True,
@@ -934,7 +1054,7 @@ async def test_update_s3_trust_self_signed_ca_endpoint_omits_cert() -> None:
     storage = _make_storage(RemoteStorageType.S3_COMPATIBLE)
     with patched_session(session, post=fake_post, get=fake_get):
         collection = RemoteStorageCollection(session)
-        req = RemoteStorageUpdateRequest(
+        req = AccessKeyStorageUpdateRequest(
             access_key="new-ak", secret_key="new-sk",
             endpoint="https://s3.example.com:443",
             trust_self_signed=True,
@@ -962,7 +1082,7 @@ async def test_update_apv_trust_self_signed_fetches_cert() -> None:
     storage = _make_storage(RemoteStorageType.ACTIVE_PROTECT_VAULT)
     with patched_session(session, post=fake_post, get=fake_get):
         collection = RemoteStorageCollection(session)
-        req = RemoteStorageUpdateRequest(
+        req = AccessKeyStorageUpdateRequest(
             access_key="new-ak", secret_key="new-sk",
             endpoint="apv.example.com:5888",
             trust_self_signed=True,
@@ -995,7 +1115,7 @@ async def test_update_apv_no_trust_self_signed_skips_cert_fetch() -> None:
     storage = _make_storage(RemoteStorageType.ACTIVE_PROTECT_VAULT)
     with patched_session(session, post=fake_post, get=fake_get):
         collection = RemoteStorageCollection(session)
-        req = RemoteStorageUpdateRequest(
+        req = AccessKeyStorageUpdateRequest(
             access_key="new-ak", secret_key="new-sk",
             endpoint="apv.example.com:5888",
             trust_self_signed=False,
@@ -1037,7 +1157,7 @@ async def test_update_endpoint_free_omits_endpoint(storage_type: RemoteStorageTy
     storage = _make_storage(storage_type)
     with patched_session(session, post=fake_post, get=fake_get):
         collection = RemoteStorageCollection(session)
-        req = RemoteStorageUpdateRequest(access_key="new-ak", secret_key="new-sk")
+        req = AccessKeyStorageUpdateRequest(access_key="new-ak", secret_key="new-sk")
         await collection.update(storage, req)
 
     assert not region_cert_called
@@ -1060,13 +1180,121 @@ async def test_update_returns_refreshed_storage() -> None:
     storage = _make_storage(RemoteStorageType.S3_COMPATIBLE)
     with patched_session(session, post=fake_post, get=fake_get):
         collection = RemoteStorageCollection(session)
-        req = RemoteStorageUpdateRequest(
+        req = AccessKeyStorageUpdateRequest(
             access_key="new-ak", secret_key="new-sk", endpoint="https://s3.example.com:443"
         )
         result = await collection.update(storage, req)
 
     assert result.storage_id == STORAGE_ID
     assert result.name == "DSM-Storage"
+
+
+async def test_update_authentication_error_raises() -> None:
+    session = make_session()
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        if path == "/api/v1/external_storage/update":
+            raise APIError("Invalid access key id or signature.", error_code=3000)
+        return {}
+
+    storage = _make_storage(RemoteStorageType.S3_COMPATIBLE)
+    with patched_session(session, post=fake_post):
+        collection = RemoteStorageCollection(session)
+        req = AccessKeyStorageUpdateRequest(
+            access_key="new-ak", secret_key="new-sk", endpoint="https://s3.example.com:443"
+        )
+        with pytest.raises(RemoteStorageAuthenticationError) as exc_info:
+            await collection.update(storage, req)
+
+    assert_resource_error(exc_info, resource_type="RemoteStorage", resource_id=STORAGE_ID)
+
+
+async def test_update_authentication_error_at_preflight_raises() -> None:
+    """trust_self_signed=True makes _build_update_body() fetch the cert/region pre-flight before
+    the update() POST is even sent — credential failures there must be caught too, not just at
+    the final POST call."""
+    session = make_session()
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        if "region_cert" in path:
+            raise APIError("Invalid access key id or signature.", error_code=3000)
+        return {}
+
+    storage = _make_storage(RemoteStorageType.S3_COMPATIBLE)
+    with patched_session(session, post=fake_post):
+        collection = RemoteStorageCollection(session)
+        req = AccessKeyStorageUpdateRequest(
+            access_key="new-ak", secret_key="new-sk",
+            endpoint="https://s3.example.com:443", trust_self_signed=True,
+        )
+        with pytest.raises(RemoteStorageAuthenticationError) as exc_info:
+            await collection.update(storage, req)
+
+    assert_resource_error(exc_info, resource_type="RemoteStorage", resource_id=STORAGE_ID)
+
+
+async def test_update_azure_request_against_non_azure_storage_raises_value_error() -> None:
+    """An AzureBlobStorageUpdateRequest against a non-Azure storage must fail fast with a clear
+    SDK-level error instead of silently building an azureInfo body with empty account_name/
+    vault_name and sending it to a provider that doesn't expect that shape."""
+    session = make_session()
+    storage = _make_storage(RemoteStorageType.S3_COMPATIBLE)
+
+    with patched_session(session):
+        collection = RemoteStorageCollection(session)
+        req = AzureBlobStorageUpdateRequest(tenant_id="t", client_id="c", secret="s")
+        with pytest.raises(ValueError, match="Cannot update s3_compatible storage"):
+            await collection.update(storage, req)
+
+
+async def test_update_access_key_request_against_azure_storage_raises_value_error() -> None:
+    """The reverse mismatch — an AccessKeyStorageUpdateRequest against an Azure storage — must
+    also fail fast rather than POSTing {accessKey, secretKey} to Azure's reauth endpoint."""
+    session = make_session()
+    storage = _make_storage(RemoteStorageType.AZURE_BLOB)
+
+    with patched_session(session):
+        collection = RemoteStorageCollection(session)
+        req = AccessKeyStorageUpdateRequest(access_key="ak", secret_key="sk")
+        with pytest.raises(ValueError, match="Cannot update azure_blob storage"):
+            await collection.update(storage, req)
+
+
+@pytest.mark.parametrize(
+    "storage_type", [RemoteStorageType.S3_COMPATIBLE, RemoteStorageType.ACTIVE_PROTECT_VAULT]
+)
+async def test_update_missing_endpoint_raises_value_error(storage_type: RemoteStorageType) -> None:
+    """S3_COMPATIBLE and ACTIVE_PROTECT_VAULT require endpoint for update() — omitting it must
+    fail fast with a clear SDK-level error instead of silently sending a body with no endpoint
+    to a provider that requires one."""
+    session = make_session()
+    storage = _make_storage(storage_type)
+
+    with patched_session(session):
+        collection = RemoteStorageCollection(session)
+        req = AccessKeyStorageUpdateRequest(access_key="ak", secret_key="sk")
+        with pytest.raises(ValueError, match="requires endpoint"):
+            await collection.update(storage, req)
+
+
+async def test_update_other_error_reraises() -> None:
+    session = make_session()
+
+    async def fake_post(path: str, json: Any = None, **kw: Any) -> dict[str, Any]:
+        if path == "/api/v1/external_storage/update":
+            raise APIError("some other error", error_code=3001)
+        return {}
+
+    storage = _make_storage(RemoteStorageType.S3_COMPATIBLE)
+    with patched_session(session, post=fake_post):
+        collection = RemoteStorageCollection(session)
+        req = AccessKeyStorageUpdateRequest(
+            access_key="new-ak", secret_key="new-sk", endpoint="https://s3.example.com:443"
+        )
+        with pytest.raises(APIError) as exc_info:
+            await collection.update(storage, req)
+
+    assert exc_info.value.error_code == 3001
 
 
 # ── delete() ───────────────────────────────────────────────────────────────

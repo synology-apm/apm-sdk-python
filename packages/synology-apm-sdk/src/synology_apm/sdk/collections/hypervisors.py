@@ -15,6 +15,12 @@ _HOST_TYPE_MAP: dict[str, HypervisorType] = {
     "HyperV":          HypervisorType.HYPERV_STANDALONE,
     "SCVMM":           HypervisorType.HYPERV_SCVMM,
     "FailoverCluster": HypervisorType.HYPERV_FAILOVER_CLUSTER,
+    "NutanixPE":       HypervisorType.NUTANIX_PRISM_ELEMENT,
+    "NutanixPC":       HypervisorType.NUTANIX_PRISM_CENTRAL,
+    "ProxmoxNode":     HypervisorType.PROXMOX_NODE,
+    "ProxmoxCluster":  HypervisorType.PROXMOX_CLUSTER,
+    "AWS":             HypervisorType.AWS,
+    "Azure":           HypervisorType.AZURE,
 }
 
 
@@ -89,3 +95,16 @@ def _parse_hypervisor(raw: dict[str, Any]) -> Hypervisor:
         port=int(spec.get("portWebapi") or 0),
         version=spec.get("version") or "",
     )
+
+
+def _parse_optional_host_type(raw: str | None) -> HypervisorType | None:
+    """Convert a raw inventory host-type string to HypervisorType, for callers where the
+    value is optional (e.g. a workload's hypervisor inventory link).
+
+    "" and the API's "NONE" sentinel both mean "not linked to any hypervisor inventory" and
+    parse as None; any other unrecognized string still parses as HypervisorType.UNKNOWN
+    (a hypervisor type is present, just not one this SDK version recognizes).
+    """
+    if not raw or raw == "NONE":
+        return None
+    return _HOST_TYPE_MAP.get(raw, HypervisorType.UNKNOWN)

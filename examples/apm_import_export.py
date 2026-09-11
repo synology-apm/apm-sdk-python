@@ -40,7 +40,8 @@ workloads; existing workloads are updated without a password change if absent.
 Remote storage credentials are not stored in this file. Import auto-discovers
 <stem>.storage-credentials.csv (override: --storage-credentials). Required to
 create or update remote storages; skipped if absent. endpoint is empty for
-endpoint-free types (amazon_s3, amazon_s3_china, c2_object_storage, wasabi).
+endpoint-free types (amazon_s3, amazon_s3_china, c2_object_storage, wasabi, azure_blob,
+azure_blob_china).
 
 Export generates pre-populated CSV credential templates by default;
 suppress with --no-credentials-template.
@@ -81,11 +82,15 @@ from _common import (
 )
 
 from synology_apm.sdk import (
+    AccessKeyStorageUpdateRequest,
     AmazonS3ChinaStorageAddRequest,
     AmazonS3StorageAddRequest,
     APMClient,
     APMError,
     APVStorageAddRequest,
+    AzureBlobChinaStorageAddRequest,
+    AzureBlobStorageAddRequest,
+    AzureBlobStorageUpdateRequest,
     BackupCopyConfig,
     BackupServer,
     C2ObjectStorageAddRequest,
@@ -98,12 +103,10 @@ from synology_apm.sdk import (
     FileServerUpdateRequest,
     GenericS3StorageAddRequest,
     GFSRetention,
-    GWSAutoBackupRule,
     GWSAutoBackupRuleListResult,
     GWSDomainInfo,
     GWSPlanCreateRequest,
     GWSSharedDriveSetting,
-    M365AutoBackupRule,
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
     M365PlanCreateRequest,
@@ -131,7 +134,6 @@ from synology_apm.sdk import (
     RemoteStorageInUseError,
     RemoteStorageType,
     RemoteStorageUnmanagedCatalogError,
-    RemoteStorageUpdateRequest,
     ResourceNotFoundError,
     RetentionType,
     RetirementPlan,
@@ -157,6 +159,16 @@ _IMPORTABLE_RS_TYPES: set[RemoteStorageType] = {
     RemoteStorageType.AMAZON_S3_CHINA,
     RemoteStorageType.C2_OBJECT_STORAGE,
     RemoteStorageType.WASABI,
+    RemoteStorageType.AZURE_BLOB,
+    RemoteStorageType.AZURE_BLOB_CHINA,
+}
+# Azure types have no access_key/secret_key — they authenticate via a Microsoft Entra application
+# (tenant_id/client_id/secret) instead; account_name is non-secret and travels in the YAML entry,
+# while tenant_id/client_id/secret travel in the storage-credentials CSV like other types'
+# access_key/secret_key.
+_AZURE_RS_TYPES: set[RemoteStorageType] = {
+    RemoteStorageType.AZURE_BLOB,
+    RemoteStorageType.AZURE_BLOB_CHINA,
 }
 
 _WEEKDAY_NAMES: dict[WeekDay, str] = {
@@ -323,11 +335,14 @@ _COMMENT_REMOTE_STORAGES: list[str] = [
     "  endpoint       — connection address. Present for active_protect_vault (host:port)",
     "                   and s3_compatible (https://... URL with port).",
     "                   Not included for endpoint-free types (amazon_s3, amazon_s3_china,",
-    "                   c2_object_storage, wasabi) — see endpoint in per-entry comment.",
+    "                   c2_object_storage, wasabi, azure_blob, azure_blob_china) — see endpoint",
+    "                   in per-entry comment.",
     "  storage_type   — storage type value (active_protect_vault, s3_compatible, etc.).",
     "  encryption_enabled — true if client-side encryption is enabled.",
-    "  vault_name     — bucket name (S3) or vault name (APV; exported as-is, informational — the APV",
-    "                   server provides the authoritative value at import time).",
+    "  vault_name     — bucket name (S3), vault name (APV), or container name (Azure Blob Storage);",
+    "                   exported as-is, informational — the server provides the authoritative value",
+    "                   at import time.",
+    "  account_name   — Azure storage account name. Only present for azure_blob/azure_blob_china.",
     "  trust_self_signed  — true to auto-fetch and trust the endpoint's self-signed certificate.",
     "                       Present for active_protect_vault and s3_compatible only.",
     "                       Endpoint-free types (amazon_s3, etc.) use CA-signed public endpoints.",
@@ -335,16 +350,20 @@ _COMMENT_REMOTE_STORAGES: list[str] = [
     "Informational comment per entry (name_or_id UUID, endpoint, type) is not read on import.",
     "",
     "Import: active_protect_vault, s3_compatible, amazon_s3, amazon_s3_china, c2_object_storage,",
-    "  and wasabi types are supported (all imported natively).",
+    "  wasabi, azure_blob, and azure_blob_china types are supported (all imported natively).",
     "  amazon_s3 / amazon_s3_china / c2_object_storage / wasabi: imported via native endpoint-free path",
     "  (no endpoint or trust_self_signed needed); endpoint in this file is informational only (in comment).",
+    "  azure_blob / azure_blob_china: also endpoint-free; registered using a Microsoft Entra",
+    "  application's tenant_id/client_id/secret, supplied via --storage-credentials (see below).",
     "  Supply credentials via --storage-credentials (CSV columns: storage_type, endpoint, vault_name,",
-    "  access_key, secret_key, relink_encryption_key).",
+    "  access_key, secret_key, relink_encryption_key, tenant_id, client_id, secret). access_key/secret_key",
+    "  are used for every type except azure_blob/azure_blob_china, which use tenant_id/client_id/secret",
+    "  instead (the Microsoft Entra application's tenant ID, application/client ID, and client secret).",
     "  Credential lookup key is (storage_type, endpoint, vault_name) — portable across APM instances.",
     "  storage_type disambiguates entries with the same vault name across different services",
     "  (e.g. amazon_s3 vs wasabi with the same bucket name).",
-    "  For amazon_s3 / amazon_s3_china / c2_object_storage / wasabi, endpoint column must be '' (empty)",
-    "  in the CSV — matches the absent endpoint field in the YAML.",
+    "  For amazon_s3 / amazon_s3_china / c2_object_storage / wasabi / azure_blob / azure_blob_china,",
+    "  endpoint column must be '' (empty) in the CSV — matches the absent endpoint field in the YAML.",
     "  relink_encryption_key: blank for first-time registration. After a successful create of an",
     "  encrypted vault, the import tool renames the CSV to <file>.<timestamp>.bak, then overwrites",
     "  relink_encryption_key with the newly issued key so the CSV is ready for the next re-add.",
@@ -544,7 +563,7 @@ def _ser_remote_storage(rs: RemoteStorage, ref_key: str) -> dict[str, Any]:
         f"endpoint: {rs.endpoint} | type: {original_type.value}"
     )
     if original_type not in _IMPORTABLE_RS_TYPES:
-        # Azure / unknown — export for ref resolution only; import not supported.
+        # Unknown — export for ref resolution only; import not supported.
         return {
             "ref_key": ref_key,
             "name_or_id": rs.name,
@@ -554,6 +573,19 @@ def _ser_remote_storage(rs: RemoteStorage, ref_key: str) -> dict[str, Any]:
             "vault_name": rs.vault_name,
             "trust_self_signed": False,
             "_comment": comment_base + " | import: not supported for this type",
+        }
+    if original_type in _AZURE_RS_TYPES:
+        # Azure Blob Storage / Azure Blob Storage China — endpoint-free, plus the non-secret
+        # storage account name (tenant_id/client_id/secret travel in the storage-credentials CSV).
+        return {
+            "ref_key": ref_key,
+            "name_or_id": rs.name,
+            "storage_type": original_type.value,
+            "encryption_enabled": rs.encryption_enabled,
+            "vault_name": rs.vault_name,
+            "account_name": rs.account_name,
+            "_comment": comment_base + " | import: Microsoft Entra application credentials required "
+                                        "(see --storage-credentials)",
         }
     if original_type not in _ENDPOINT_REQUIRED_TYPES:
         # Endpoint-free importable types (Amazon S3, Amazon S3 China, C2, Wasabi).
@@ -990,10 +1022,14 @@ def _build_ref_map(
     return ref_map, errors
 
 
-def _build_saas_tenant_ref_map(
-    yaml_entries: list[dict[str, Any]],
+def _build_id_ref_map(
+    section: str, id_field: str, yaml_entries: list[dict[str, Any]],
 ) -> tuple[dict[str, str], list[str]]:
-    """Build {ref_key: tenant_id} from the saas_tenants YAML section."""
+    """Build {ref_key: <id_field value>} directly from a flat YAML section.
+
+    Unlike _build_ref_map, this resolves no live inventory — it just reads `id_field` straight
+    off each YAML entry (used for saas_tenants/gws_domains, which are plain ref tables).
+    """
     ref_map: dict[str, str] = {}
     errors: list[str] = []
     seen: set[str] = set()
@@ -1001,45 +1037,33 @@ def _build_saas_tenant_ref_map(
         if not isinstance(entry, dict):
             continue
         ref_key = str(entry.get("ref_key", ""))
-        tenant_id = str(entry.get("tenant_id", ""))
+        id_value = str(entry.get(id_field, ""))
         if not ref_key:
-            errors.append("saas_tenants entry missing 'ref_key'")
+            errors.append(f"{section} entry missing 'ref_key'")
             continue
         if ref_key in seen:
-            errors.append(f"duplicate saas_tenants ref_key={ref_key!r}")
+            errors.append(f"duplicate {section} ref_key={ref_key!r}")
             continue
-        if not tenant_id:
-            errors.append(f"saas_tenants ref_key={ref_key!r} missing 'tenant_id'")
+        if not id_value:
+            errors.append(f"{section} ref_key={ref_key!r} missing '{id_field}'")
             continue
         seen.add(ref_key)
-        ref_map[ref_key] = tenant_id
+        ref_map[ref_key] = id_value
     return ref_map, errors
+
+
+def _build_saas_tenant_ref_map(
+    yaml_entries: list[dict[str, Any]],
+) -> tuple[dict[str, str], list[str]]:
+    """Build {ref_key: tenant_id} from the saas_tenants YAML section."""
+    return _build_id_ref_map("saas_tenants", "tenant_id", yaml_entries)
 
 
 def _build_gws_domain_ref_map(
     yaml_entries: list[dict[str, Any]],
 ) -> tuple[dict[str, str], list[str]]:
     """Build {ref_key: domain} from the gws_domains YAML section."""
-    ref_map: dict[str, str] = {}
-    errors: list[str] = []
-    seen: set[str] = set()
-    for entry in yaml_entries:
-        if not isinstance(entry, dict):
-            continue
-        ref_key = str(entry.get("ref_key", ""))
-        domain = str(entry.get("domain", ""))
-        if not ref_key:
-            errors.append("gws_domains entry missing 'ref_key'")
-            continue
-        if ref_key in seen:
-            errors.append(f"duplicate gws_domains ref_key={ref_key!r}")
-            continue
-        if not domain:
-            errors.append(f"gws_domains ref_key={ref_key!r} missing 'domain'")
-            continue
-        seen.add(ref_key)
-        ref_map[ref_key] = domain
-    return ref_map, errors
+    return _build_id_ref_map("gws_domains", "domain", yaml_entries)
 
 
 def _resolve_backup_copy(
@@ -1102,15 +1126,9 @@ def _parse_protection_request(
         if bc_d else None
     )
 
-    if plan_type == "m365":
-        return M365PlanCreateRequest(
-            name=name, retention=retention, schedule=schedule,
-            description=description, is_immutable=is_immutable,
-            backup_copy=backup_copy, run_schedule_by_controller_time=run_ctrl,
-        )
-
-    if plan_type == "gws":
-        return GWSPlanCreateRequest(
+    if plan_type in ("m365", "gws"):
+        cls = M365PlanCreateRequest if plan_type == "m365" else GWSPlanCreateRequest
+        return cls(
             name=name, retention=retention, schedule=schedule,
             description=description, is_immutable=is_immutable,
             backup_copy=backup_copy, run_schedule_by_controller_time=run_ctrl,
@@ -1304,7 +1322,10 @@ class _RsEntry:
         | AmazonS3ChinaStorageAddRequest
         | C2ObjectStorageAddRequest
         | WasabiCloudStorageAddRequest
-        | RemoteStorageUpdateRequest
+        | AzureBlobStorageAddRequest
+        | AzureBlobChinaStorageAddRequest
+        | AccessKeyStorageUpdateRequest
+        | AzureBlobStorageUpdateRequest
         | None
     ) = None
 
@@ -1349,7 +1370,8 @@ class _M365CollabEntry:
 
 
 @dataclass
-class _M365RuleResult:
+class _RuleResult:
+    """Per-item result for M365 or GWS auto-backup-rule/collab-setting execution."""
     label: str
     kind: str
     action: str
@@ -1383,16 +1405,6 @@ class _GWSCollabEntry:
     include_archived_accounts: bool | None    # None = not specified in this import; leave unchanged
 
 
-@dataclass
-class _GWSRuleResult:
-    label: str
-    kind: str
-    action: str
-    result: str
-    error_msg: str
-
-
-_RuleResult = _M365RuleResult | _GWSRuleResult
 
 
 # ── Export ───────────────────────────────────────────────────────────────────
@@ -1496,6 +1508,7 @@ def _write_storage_credentials_csv(path: str, rows: list[tuple[str, str, str]]) 
             fieldnames=[
                 "storage_type", "endpoint", "vault_name",
                 "access_key", "secret_key", "relink_encryption_key",
+                "tenant_id", "client_id", "secret",
             ],
         )
         w2.writeheader()
@@ -1503,7 +1516,92 @@ def _write_storage_credentials_csv(path: str, rows: list[tuple[str, str, str]]) 
             w2.writerow({
                 "storage_type": storage_type, "endpoint": endpoint, "vault_name": vault_name,
                 "access_key": "", "secret_key": "", "relink_encryption_key": "",
+                "tenant_id": "", "client_id": "", "secret": "",
             })
+
+
+async def _fetch_export_index(
+    apm: APMClient, sem: asyncio.Semaphore,
+) -> tuple[
+    list[BackupServer], list[RemoteStorage],
+    list[ProtectionPlan], list[ProtectionPlan], list[ProtectionPlan],
+    list[RetirementPlan], list[TieringPlan], list[MachineWorkload],
+]:
+    """Fetch all read-only index data needed for an export, in parallel.
+
+    Returns (backup_servers, remote_storages, machine_plans, m365_plans, gws_plans,
+    retirement_plans, tiering_plans, fs_workloads) — plan lists carry full detail (not stubs).
+    Each fetch prints its own "done" progress line as soon as it completes — since the fetches
+    run concurrently, a "Fetching X..." line per category printed only at the *start* would
+    give no sense of progress; printing on completion does, in whatever order they finish.
+    """
+    async def _fetch_bs() -> list[BackupServer]:
+        items, _ = await paginate(lambda limit, offset: apm.backup_servers.list(limit=limit, offset=offset))
+        print(f"  Backup servers: {len(items)} found.", file=sys.stderr)
+        return items
+
+    async def _fetch_rs() -> list[RemoteStorage]:
+        items, _ = await apm.remote_storages.list()
+        print(f"  Remote storages: {len(items)} found.", file=sys.stderr)
+        return items
+
+    async def _fetch_plan_category(
+        label: str,
+        list_fn: Callable[[int, int], Awaitable[tuple[list[ProtectionPlan], int | None]]],
+        get_fn: Callable[[str], Awaitable[ProtectionPlan]],
+    ) -> list[ProtectionPlan]:
+        stubs, _ = await paginate(list_fn)
+        plans = await _fetch_protection_details(apm, stubs, sem, get_fn)
+        print(f"  {label} protection plans: {len(plans)} found.", file=sys.stderr)
+        return plans
+
+    async def _fetch_retirement() -> list[RetirementPlan]:
+        items, _ = await paginate(lambda limit, offset: apm.retirement_plans.list(limit=limit, offset=offset))
+        print(f"  Retirement plans: {len(items)} found.", file=sys.stderr)
+        return items
+
+    async def _fetch_tiering() -> list[TieringPlan]:
+        items, _ = await paginate(lambda limit, offset: apm.tiering_plans.list(limit=limit, offset=offset))
+        print(f"  Tiering plans: {len(items)} found.", file=sys.stderr)
+        return items
+
+    async def _fetch_fs() -> list[MachineWorkload]:
+        items, _ = await paginate(lambda limit, offset: apm.machine.workloads.list(
+            workload_types=[MachineWorkloadType.FS], limit=limit, offset=offset
+        ))
+        print(f"  File Server workloads: {len(items)} found.", file=sys.stderr)
+        return items
+
+    print("Fetching index...", file=sys.stderr)
+    (
+        bs_list, rs_list,
+        (machine_plans, m365_plans, gws_plans),
+        ret_plans, tier_plans, fs_workloads,
+    ) = await asyncio.gather(
+        _fetch_bs(),
+        _fetch_rs(),
+        asyncio.gather(
+            _fetch_plan_category(
+                "Machine",
+                lambda limit, offset: apm.machine.plans.list(limit=limit, offset=offset),
+                apm.machine.plans.get,
+            ),
+            _fetch_plan_category(
+                "M365",
+                lambda limit, offset: apm.m365.plans.list(limit=limit, offset=offset),
+                apm.m365.plans.get,
+            ),
+            _fetch_plan_category(
+                "GWS",
+                lambda limit, offset: apm.gws.plans.list(limit=limit, offset=offset),
+                apm.gws.plans.get,
+            ),
+        ),
+        _fetch_retirement(),
+        _fetch_tiering(),
+        _fetch_fs(),
+    )
+    return bs_list, rs_list, machine_plans, m365_plans, gws_plans, ret_plans, tier_plans, fs_workloads
 
 
 async def run_export(
@@ -1537,11 +1635,10 @@ async def run_export(
     rs_data: list[dict[str, Any]] = []
 
     async with make_client(profile=profile) as apm:
-        print("Fetching backup server and remote storage registry...", file=sys.stderr)
-        bs_list, _ = await paginate(
-            lambda limit, offset: apm.backup_servers.list(limit=limit, offset=offset)
-        )
-        rs_list, _ = await apm.remote_storages.list()
+        (
+            bs_list, rs_list, machine_plans, m365_plans, gws_plans,
+            ret_plans, tier_plans, fs_workloads,
+        ) = await _fetch_export_index(apm, sem)
 
         bs_ref_keys: dict[str, str] = {}
         for idx, bs in enumerate(bs_list, 1):
@@ -1555,27 +1652,6 @@ async def run_export(
             rs_ref_keys[rs.name] = rk
             rs_data.append(_ser_remote_storage(rs, rk))
 
-        print("Fetching machine protection plans...", file=sys.stderr)
-        machine_stubs, _ = await paginate(
-            lambda limit, offset: apm.machine.plans.list(limit=limit, offset=offset)
-        )
-        print(f"  Fetching details for {len(machine_stubs)} machine plan(s)...", file=sys.stderr)
-        machine_plans = await _fetch_protection_details(apm, machine_stubs, sem, apm.machine.plans.get)
-
-        print("Fetching M365 protection plans...", file=sys.stderr)
-        m365_stubs, _ = await paginate(
-            lambda limit, offset: apm.m365.plans.list(limit=limit, offset=offset)
-        )
-        print(f"  Fetching details for {len(m365_stubs)} M365 plan(s)...", file=sys.stderr)
-        m365_plans = await _fetch_protection_details(apm, m365_stubs, sem, apm.m365.plans.get)
-
-        print("Fetching GWS protection plans...", file=sys.stderr)
-        gws_stubs, _ = await paginate(
-            lambda limit, offset: apm.gws.plans.list(limit=limit, offset=offset)
-        )
-        print(f"  Fetching details for {len(gws_stubs)} GWS plan(s)...", file=sys.stderr)
-        gws_plans = await _fetch_protection_details(apm, gws_stubs, sem, apm.gws.plans.get)
-
         all_plans = machine_plans + m365_plans + gws_plans
         # Key by plan_id to guarantee a unique ref per plan even when names collide.
         plan_ref_by_id: dict[str, str] = {p.plan_id: f"plan-{idx}" for idx, p in enumerate(all_plans, 1)}
@@ -1585,24 +1661,9 @@ async def run_export(
             for p in all_plans
         ]
 
-        print("Fetching retirement plans...", file=sys.stderr)
-        ret_plans, _ = await paginate(
-            lambda limit, offset: apm.retirement_plans.list(limit=limit, offset=offset)
-        )
         retirement_data = [_ser_retirement_plan(p) for p in ret_plans]
-
-        print("Fetching tiering plans...", file=sys.stderr)
-        tier_plans, _ = await paginate(
-            lambda limit, offset: apm.tiering_plans.list(limit=limit, offset=offset)
-        )
         tiering_data = [_ser_tiering_plan(p, rs_ref_keys) for p in tier_plans]
 
-        print("Fetching File Server workloads...", file=sys.stderr)
-        fs_workloads, _ = await paginate(
-            lambda limit, offset: apm.machine.workloads.list(
-                workload_types=[MachineWorkloadType.FS], limit=limit, offset=offset
-            )
-        )
         fs_data = [d for wl in fs_workloads if (d := _ser_file_server(wl, bs_ref_keys, plan_ref_by_id))]
         print(f"  {len(fs_data)} File Server workload(s) found.", file=sys.stderr)
 
@@ -1761,6 +1822,9 @@ class _ImportResult:
     action: str   # "create" | "overwrite" | "skip" | "error"
     result: str   # "ok" | "skipped" | "failed"
     error_msg: str
+    # plan_id of a newly created M365/GWS plan — lets Phase 7/8 resolve rules against it
+    # without a full re-fetch of the plan list (mirrors _RsResult.created_storage).
+    created_plan_id: str | None = None
 
 
 # ·· Loaders
@@ -1831,9 +1895,12 @@ def _load_fs_credentials(path: str) -> dict[tuple[str, str], str]:
 def _load_rs_credentials(path: str) -> dict[tuple[str, str, str], dict[str, str]]:
     """Load a remote storage credential CSV.
 
-    Returns {(storage_type, endpoint, vault_name): {access_key, secret_key, relink_encryption_key}}.
+    Returns {(storage_type, endpoint, vault_name): {access_key, secret_key,
+    relink_encryption_key, tenant_id, client_id, secret}}.
     Required columns: storage_type, endpoint, vault_name, access_key, secret_key.
-    Optional column: relink_encryption_key (defaults to "" if missing or blank).
+    Optional columns: relink_encryption_key, tenant_id, client_id, secret (Azure Blob Storage /
+    Azure Blob Storage China use tenant_id/client_id/secret instead of access_key/secret_key;
+    default to "" if missing or blank).
     """
     result: dict[tuple[str, str, str], dict[str, str]] = {}
     rows = _read_credential_rows(
@@ -1848,12 +1915,18 @@ def _load_rs_credentials(path: str) -> dict[tuple[str, str, str], dict[str, str]
         access_key   = (row.get("access_key") or "").strip()
         secret_key   = (row.get("secret_key") or "").strip()
         relink_key   = (row.get("relink_encryption_key") or "").strip()
+        tenant_id    = (row.get("tenant_id") or "").strip()
+        client_id    = (row.get("client_id") or "").strip()
+        azure_secret = (row.get("secret") or "").strip()
         if not vault_name:
             raise ValueError(f"storage-credentials file row {i}: vault_name must not be empty")
         result[(storage_type, endpoint, vault_name)] = {
             "access_key": access_key,
             "secret_key": secret_key,
             "relink_encryption_key": relink_key,
+            "tenant_id": tenant_id,
+            "client_id": client_id,
+            "secret": azure_secret,
         }
     _warn_if_world_readable(path, "storage-credentials")
     return result
@@ -1881,6 +1954,7 @@ def _write_rs_credentials(
             fh, fieldnames=[
                 "storage_type", "endpoint", "vault_name",
                 "access_key", "secret_key", "relink_encryption_key",
+                "tenant_id", "client_id", "secret",
             ]
         )
         writer.writeheader()
@@ -1892,6 +1966,9 @@ def _write_rs_credentials(
                 "access_key":            vals.get("access_key", ""),
                 "secret_key":            vals.get("secret_key", ""),
                 "relink_encryption_key": vals.get("relink_encryption_key", ""),
+                "tenant_id":             vals.get("tenant_id", ""),
+                "client_id":             vals.get("client_id", ""),
+                "secret":                vals.get("secret", ""),
             })
     os.replace(path, bak_path)
     os.replace(tmp_path, path)
@@ -2170,13 +2247,14 @@ async def _execute_one(
         req = replace(req, name=entry.resolved_name)
 
     try:
+        created_plan_id: str | None = None
         if action == "create":
             if isinstance(req, MachinePlanCreateRequest):
                 await apm.machine.plans.create(req)
             elif isinstance(req, M365PlanCreateRequest):
-                await apm.m365.plans.create(req)
+                created_plan_id = (await apm.m365.plans.create(req)).plan_id
             elif isinstance(req, GWSPlanCreateRequest):
-                await apm.gws.plans.create(req)
+                created_plan_id = (await apm.gws.plans.create(req)).plan_id
             elif isinstance(req, RetirementPlanCreateRequest):
                 await apm.retirement_plans.create(req)
             else:
@@ -2193,7 +2271,9 @@ async def _execute_one(
                 await apm.retirement_plans.update(plan_id, req)
             else:
                 await apm.tiering_plans.update(plan_id, req)
-        return _ImportResult(entry=entry, action=action, result="ok", error_msg="")
+        return _ImportResult(
+            entry=entry, action=action, result="ok", error_msg="", created_plan_id=created_plan_id,
+        )
     except PlanNameConflictError as e:
         return _ImportResult(entry=entry, action=action, result="failed", error_msg=f"name conflict: {e}")
     except APMError as e:
@@ -2245,8 +2325,8 @@ def _build_final_rows(
 ) -> list[tuple[str, str, str, str]]:
     """Build the rows of the final summary table across all four result categories.
 
-    rule_results carries both M365 (_M365RuleResult) and GWS (_GWSRuleResult)
-    auto-backup-rule results; kind distinguishes the individual row types.
+    rule_results carries both M365 and GWS auto-backup-rule results (both are _RuleResult);
+    kind distinguishes the individual row types.
     """
     return [
         (ir.entry.name, ir.entry.subtype or ir.entry.kind, ir.action,
@@ -2373,6 +2453,10 @@ def _build_rs_add_request(
     relink_key: str,
     encryption_enabled: bool,
     trust_self_signed: bool,
+    tenant_id: str = "",
+    client_id: str = "",
+    azure_secret: str = "",
+    account_name: str = "",
 ) -> (
     GenericS3StorageAddRequest
     | APVStorageAddRequest
@@ -2380,12 +2464,28 @@ def _build_rs_add_request(
     | AmazonS3ChinaStorageAddRequest
     | C2ObjectStorageAddRequest
     | WasabiCloudStorageAddRequest
+    | AzureBlobStorageAddRequest
+    | AzureBlobChinaStorageAddRequest
 ):
     """Build the add request for an importable remote storage type.
 
     ActiveProtect Vault and S3-compatible take a caller-supplied endpoint and
     trust_self_signed; the endpoint-free types (Amazon S3 / S3 China / C2 / Wasabi) do not.
+    Azure Blob Storage / Azure Blob Storage China use a Microsoft Entra application
+    (tenant_id/client_id/azure_secret) and a storage account name instead of access_key/secret_key.
     """
+    if storage_type == RemoteStorageType.AZURE_BLOB:
+        return AzureBlobStorageAddRequest(
+            tenant_id=tenant_id, client_id=client_id, secret=azure_secret,
+            account_name=account_name, vault_name=vault_name,
+            encryption_enabled=encryption_enabled, relink_encryption_key=relink_key,
+        )
+    if storage_type == RemoteStorageType.AZURE_BLOB_CHINA:
+        return AzureBlobChinaStorageAddRequest(
+            tenant_id=tenant_id, client_id=client_id, secret=azure_secret,
+            account_name=account_name, vault_name=vault_name,
+            encryption_enabled=encryption_enabled, relink_encryption_key=relink_key,
+        )
     if storage_type == RemoteStorageType.ACTIVE_PROTECT_VAULT:
         return APVStorageAddRequest(
             access_key=access_key, secret_key=secret_key,
@@ -2491,7 +2591,7 @@ async def _execute_one_rs(
         return _RsResult(entry=entry, action=action, result="failed", error_msg="no request built")
     try:
         if action == "create":
-            if isinstance(req, RemoteStorageUpdateRequest):
+            if isinstance(req, AccessKeyStorageUpdateRequest | AzureBlobStorageUpdateRequest):
                 return _RsResult(entry=entry, action=action, result="failed",
                                  error_msg="internal error: wrong request type for create")
             add_result = await apm.remote_storages.add(req)
@@ -2505,7 +2605,7 @@ async def _execute_one_rs(
             if existing_storage is None:
                 return _RsResult(entry=entry, action=action, result="failed",
                                  error_msg="existing storage not found")
-            if not isinstance(req, RemoteStorageUpdateRequest):
+            if not isinstance(req, AccessKeyStorageUpdateRequest | AzureBlobStorageUpdateRequest):
                 return _RsResult(entry=entry, action=action, result="failed",
                                  error_msg="internal error: wrong request type for update")
             await apm.remote_storages.update(existing_storage, req)
@@ -2521,6 +2621,11 @@ async def _execute_one_rs(
                              "re-add manually via the SDK and pass unmanaged_retirement_plan"
                          ))
     except APMError as e:
+        return _RsResult(entry=entry, action=action, result="failed", error_msg=str(e))
+    except ValueError as e:
+        # update() raises ValueError when the request type doesn't match the storage's real
+        # type (e.g. a stale/hand-edited YAML entry whose storage_type disagrees with the
+        # matched existing storage) — one bad entry must not abort the whole batch.
         return _RsResult(entry=entry, action=action, result="failed", error_msg=str(e))
 
 
@@ -2546,8 +2651,13 @@ def _select_rs_actions(
         access_key = rs_cred.get("access_key", "")
         secret_key = rs_cred.get("secret_key", "")
         relink_key = rs_cred.get("relink_encryption_key", "")
+        tenant_id = rs_cred.get("tenant_id", "")
+        client_id = rs_cred.get("client_id", "")
+        azure_secret = rs_cred.get("secret", "")
+        account_name = str(rse.raw.get("account_name", ""))
         encryption_enabled = bool(rse.raw.get("encryption_enabled", False))
         trust_self_signed = bool(rse.raw.get("trust_self_signed", False))
+        is_azure = storage_type in _AZURE_RS_TYPES
         # Match an existing storage by UUID or name.
         if _is_uuid(rse.name_or_id):
             match_rs = existing_rs.get(rse.name_or_id)
@@ -2557,11 +2667,17 @@ def _select_rs_actions(
             action = "overwrite" if on_conflict == "overwrite" else "skip"
             rs_actions[_rs_key(rse)] = action
             if action == "overwrite":
-                rse.request = RemoteStorageUpdateRequest(
-                    access_key=access_key,
-                    secret_key=secret_key,
-                    endpoint=rse.endpoint,
-                    trust_self_signed=trust_self_signed,
+                rse.request = (
+                    AzureBlobStorageUpdateRequest(
+                        tenant_id=tenant_id, client_id=client_id, secret=azure_secret,
+                    )
+                    if is_azure
+                    else AccessKeyStorageUpdateRequest(
+                        access_key=access_key,
+                        secret_key=secret_key,
+                        endpoint=rse.endpoint,
+                        trust_self_signed=trust_self_signed,
+                    )
                 )
         else:
             rs_actions[_rs_key(rse)] = "create"
@@ -2575,6 +2691,10 @@ def _select_rs_actions(
                     relink_key=relink_key,
                     encryption_enabled=encryption_enabled,
                     trust_self_signed=trust_self_signed,
+                    tenant_id=tenant_id,
+                    client_id=client_id,
+                    azure_secret=azure_secret,
+                    account_name=account_name,
                 )
             except (KeyError, ValueError) as e:
                 rse.parse_error = str(e)
@@ -2583,6 +2703,34 @@ def _select_rs_actions(
 
 
 # ·· M365 auto-backup rule import
+
+
+def _resolve_bs_and_plan_ids(
+    bs_ref: str,
+    plan_ref: str,
+    label: str,
+    resolve_bs: Callable[[str, str], tuple[str, str | None]],
+    resolve_plan: Callable[[str, str], tuple[str, str | None]],
+    plans_by_name: dict[str, str],
+) -> tuple[str, str, str | None]:
+    """Resolve a backup_server_ref + plan_ref pair to (namespace, plan_id, error).
+
+    Shared by M365/GWS user-rule parsing and M365/GWS collab-setting parsing — all four follow
+    the identical "backup_server_ref required, then plan_ref required, then resolve both" shape.
+    resolve_bs/resolve_plan are the category-specific _resolve_bs/_resolve_plan closures already
+    bound to that category's ref maps.
+    """
+    if not bs_ref:
+        return "", "", "backup_server_ref is required"
+    if not plan_ref:
+        return "", "", "plan_ref is required"
+    ns, err = resolve_bs(bs_ref, label)
+    if err:
+        return "", "", err
+    plan_name, err2 = resolve_plan(plan_ref, label)
+    if err2:
+        return "", "", err2
+    return ns, plans_by_name[plan_name], None
 
 
 def _parse_m365_rule_entries(
@@ -2623,17 +2771,11 @@ def _parse_m365_rule_entries(
             return None, None
         bs_ref = raw_d.get("backup_server_ref") or ""
         plan_ref = raw_d.get("plan_ref") or ""
-        if not bs_ref:
-            return None, "backup_server_ref is required"
-        if not plan_ref:
-            return None, "plan_ref is required"
-        ns, err = _resolve_bs(bs_ref, label)
+        ns, plan_id, err = _resolve_bs_and_plan_ids(
+            bs_ref, plan_ref, label, _resolve_bs, _resolve_plan, m365_plans_by_name,
+        )
         if err:
             return None, err
-        plan_name, err2 = _resolve_plan(plan_ref, label)
-        if err2:
-            return None, err2
-        plan_id = m365_plans_by_name[plan_name]
         return M365CollabServiceSetting(plan_id=plan_id, namespace=ns), None
 
     for raw_tenant in (data.get("m365_auto_backup_rules") or []):
@@ -2660,23 +2802,9 @@ def _parse_m365_rule_entries(
                 continue
             bs_ref = raw_rule.get("backup_server_ref") or ""
             plan_ref = raw_rule.get("plan_ref") or ""
-            parse_error: str | None = None
-            ns = ""
-            plan_id = ""
-            if not bs_ref:
-                parse_error = "backup_server_ref is required"
-            elif not plan_ref:
-                parse_error = "plan_ref is required"
-            else:
-                ns, err = _resolve_bs(bs_ref, f"tenant {tenant_id!r}")
-                if err:
-                    parse_error = err
-                else:
-                    plan_name, err2 = _resolve_plan(plan_ref, f"tenant {tenant_id!r}")
-                    if err2:
-                        parse_error = err2
-                    else:
-                        plan_id = m365_plans_by_name[plan_name]
+            ns, plan_id, parse_error = _resolve_bs_and_plan_ids(
+                bs_ref, plan_ref, f"tenant {tenant_id!r}", _resolve_bs, _resolve_plan, m365_plans_by_name,
+            )
             rule_entries.append(_M365RuleEntry(
                 tenant_id=tenant_id,
                 kind="m365_user_rule",
@@ -2781,23 +2909,9 @@ def _parse_gws_rule_entries(
                 continue
             bs_ref = raw_rule.get("backup_server_ref") or ""
             plan_ref = raw_rule.get("plan_ref") or ""
-            parse_error: str | None = None
-            ns = ""
-            plan_id = ""
-            if not bs_ref:
-                parse_error = "backup_server_ref is required"
-            elif not plan_ref:
-                parse_error = "plan_ref is required"
-            else:
-                ns, err = _resolve_bs(bs_ref, f"domain {domain!r}")
-                if err:
-                    parse_error = err
-                else:
-                    plan_name, err2 = _resolve_plan(plan_ref, f"domain {domain!r}")
-                    if err2:
-                        parse_error = err2
-                    else:
-                        plan_id = gws_plans_by_name[plan_name]
+            ns, plan_id, parse_error = _resolve_bs_and_plan_ids(
+                bs_ref, plan_ref, f"domain {domain!r}", _resolve_bs, _resolve_plan, gws_plans_by_name,
+            )
             rule_entries.append(_GWSRuleEntry(
                 domain=domain,
                 kind="gws_user_rule",
@@ -2823,22 +2937,11 @@ def _parse_gws_rule_entries(
         if isinstance(sd_d, dict):
             bs_ref = sd_d.get("backup_server_ref") or ""
             plan_ref = sd_d.get("plan_ref") or ""
-            if not bs_ref:
-                shared_drive_parse_error = "backup_server_ref is required"
-            elif not plan_ref:
-                shared_drive_parse_error = "plan_ref is required"
-            else:
-                ns, err = _resolve_bs(bs_ref, f"domain {domain!r} shared_drive")
-                if err:
-                    shared_drive_parse_error = err
-                else:
-                    plan_name, err2 = _resolve_plan(plan_ref, f"domain {domain!r} shared_drive")
-                    if err2:
-                        shared_drive_parse_error = err2
-                    else:
-                        shared_drive = GWSSharedDriveSetting(
-                            plan_id=gws_plans_by_name[plan_name], namespace=ns, backup_user_id="",
-                        )
+            ns, plan_id, shared_drive_parse_error = _resolve_bs_and_plan_ids(
+                bs_ref, plan_ref, f"domain {domain!r} shared_drive", _resolve_bs, _resolve_plan, gws_plans_by_name,
+            )
+            if not shared_drive_parse_error:
+                shared_drive = GWSSharedDriveSetting(plan_id=plan_id, namespace=ns, backup_user_id="")
 
         if collab_specified or pat_d:
             include_unlicensed_accounts: bool | None = None
@@ -2860,6 +2963,67 @@ def _parse_gws_rule_entries(
     return rule_entries, collab_entries
 
 
+async def _execute_rule_entries(
+    collection: Any,
+    scope_kwarg: str,
+    scope_id: str,
+    kind: str,
+    rule_entries: Sequence[Any],
+    group_kwargs_of: Callable[[Any], dict[str, list[str]]],
+    current_rules: Iterable[Any],
+    on_conflict: str,
+    sem: asyncio.Semaphore,
+    interrupted: asyncio.Event,
+) -> list[_RuleResult]:
+    """Shared create/update/skip loop for one category's user auto-backup-rule entries.
+
+    Handles the M365/GWS-identical rule-entry lifecycle (interrupted/parse_error/skip/
+    create-or-update with APMError handling). Collab-settings execution stays category-specific
+    in _execute_m365_rules/_execute_gws_rules: M365 bundles all its collab settings into one
+    call while GWS applies two independent ones, so that part doesn't unify cleanly.
+    """
+    results: list[_RuleResult] = []
+    existing_by_ns_plan: dict[tuple[str, str], Any] = {
+        (r.namespace, r.plan_id): r for r in current_rules
+    }
+    for re_ in rule_entries:
+        label = f"{scope_id}:{re_.backup_server_ref}"
+        if interrupted.is_set():
+            results.append(_RuleResult(label=label, kind=kind, action="skip", result="skipped", error_msg=""))
+            continue
+        if re_.parse_error:
+            results.append(_RuleResult(
+                label=label, kind=kind, action="error", result="failed", error_msg=re_.parse_error,
+            ))
+            continue
+        existing = existing_by_ns_plan.get((re_.resolved_namespace, re_.resolved_plan_id))
+        if existing is not None:
+            if on_conflict == "skip":
+                results.append(_RuleResult(label=label, kind=kind, action="skip", result="skipped", error_msg=""))
+                continue
+            try:
+                async with sem:
+                    await collection.update(existing, plan_id=re_.resolved_plan_id, **group_kwargs_of(re_))
+                results.append(_RuleResult(label=label, kind=kind, action="overwrite", result="ok", error_msg=""))
+            except APMError as e:
+                results.append(_RuleResult(
+                    label=label, kind=kind, action="overwrite", result="failed", error_msg=str(e),
+                ))
+        else:
+            try:
+                async with sem:
+                    await collection.create(
+                        **{scope_kwarg: scope_id},
+                        namespace=re_.resolved_namespace,
+                        plan_id=re_.resolved_plan_id,
+                        **group_kwargs_of(re_),
+                    )
+                results.append(_RuleResult(label=label, kind=kind, action="create", result="ok", error_msg=""))
+            except APMError as e:
+                results.append(_RuleResult(label=label, kind=kind, action="create", result="failed", error_msg=str(e)))
+    return results
+
+
 async def _execute_m365_rules(
     apm: APMClient,
     tenant_id: str,
@@ -2868,16 +3032,14 @@ async def _execute_m365_rules(
     on_conflict: str,
     sem: asyncio.Semaphore,
     interrupted: asyncio.Event,
-) -> list[_M365RuleResult]:
+) -> list[_RuleResult]:
     """Fetch current rules for a tenant, then create/update/skip rules and collab settings."""
-    results: list[_M365RuleResult] = []
-
     try:
         async with sem:
             current = await apm.m365.auto_backup_rules.list(tenant_id)
     except APMError as e:
-        results.extend(
-            _M365RuleResult(
+        results: list[_RuleResult] = [
+            _RuleResult(
                 label=f"{tenant_id}:{re_.backup_server_ref}",
                 kind="m365_user_rule",
                 action="error",
@@ -2885,9 +3047,9 @@ async def _execute_m365_rules(
                 error_msg=f"failed to fetch current rules: {e}",
             )
             for re_ in rule_entries
-        )
+        ]
         results.extend(
-            _M365RuleResult(
+            _RuleResult(
                 label=tenant_id,
                 kind="m365_collab_services",
                 action="error",
@@ -2899,78 +3061,24 @@ async def _execute_m365_rules(
         )
         return results
 
-    existing_by_ns_plan: dict[tuple[str, str], M365AutoBackupRule] = {
-        (r.namespace, r.plan_id): r for r in current.rules
-    }
-
-    for re_ in rule_entries:
-        if interrupted.is_set():
-            results.append(_M365RuleResult(
-                label=f"{tenant_id}:{re_.backup_server_ref}",
-                kind="m365_user_rule", action="skip", result="skipped", error_msg="",
-            ))
-            continue
-        if re_.parse_error:
-            results.append(_M365RuleResult(
-                label=f"{tenant_id}:{re_.backup_server_ref}",
-                kind="m365_user_rule", action="error", result="failed", error_msg=re_.parse_error,
-            ))
-            continue
-        existing = existing_by_ns_plan.get((re_.resolved_namespace, re_.resolved_plan_id))
-        if existing is not None:
-            if on_conflict == "skip":
-                results.append(_M365RuleResult(
-                    label=f"{tenant_id}:{re_.backup_server_ref}",
-                    kind="m365_user_rule", action="skip", result="skipped", error_msg="",
-                ))
-                continue
-            try:
-                async with sem:
-                    await apm.m365.auto_backup_rules.update(
-                        existing,
-                        plan_id=re_.resolved_plan_id,
-                        exchange_group_ids=re_.exchange_groups,
-                        onedrive_group_ids=re_.onedrive_groups,
-                        chat_group_ids=re_.chat_groups,
-                    )
-                results.append(_M365RuleResult(
-                    label=f"{tenant_id}:{re_.backup_server_ref}",
-                    kind="m365_user_rule", action="overwrite", result="ok", error_msg="",
-                ))
-            except APMError as e:
-                results.append(_M365RuleResult(
-                    label=f"{tenant_id}:{re_.backup_server_ref}",
-                    kind="m365_user_rule", action="overwrite", result="failed", error_msg=str(e),
-                ))
-        else:
-            try:
-                async with sem:
-                    await apm.m365.auto_backup_rules.create(
-                        tenant_id=tenant_id,
-                        namespace=re_.resolved_namespace,
-                        plan_id=re_.resolved_plan_id,
-                        exchange_group_ids=re_.exchange_groups,
-                        onedrive_group_ids=re_.onedrive_groups,
-                        chat_group_ids=re_.chat_groups,
-                    )
-                results.append(_M365RuleResult(
-                    label=f"{tenant_id}:{re_.backup_server_ref}",
-                    kind="m365_user_rule", action="create", result="ok", error_msg="",
-                ))
-            except APMError as e:
-                results.append(_M365RuleResult(
-                    label=f"{tenant_id}:{re_.backup_server_ref}",
-                    kind="m365_user_rule", action="create", result="failed", error_msg=str(e),
-                ))
+    results = await _execute_rule_entries(
+        apm.m365.auto_backup_rules, "tenant_id", tenant_id, "m365_user_rule", rule_entries,
+        group_kwargs_of=lambda e: {
+            "exchange_group_ids": e.exchange_groups,
+            "onedrive_group_ids": e.onedrive_groups,
+            "chat_group_ids": e.chat_groups,
+        },
+        current_rules=current.rules, on_conflict=on_conflict, sem=sem, interrupted=interrupted,
+    )
 
     for ce in collab_entries:
         if interrupted.is_set():
-            results.append(_M365RuleResult(
+            results.append(_RuleResult(
                 label=tenant_id, kind="m365_collab_services", action="skip", result="skipped", error_msg="",
             ))
             continue
         if ce.parse_error:
-            results.append(_M365RuleResult(
+            results.append(_RuleResult(
                 label=tenant_id, kind="m365_collab_services", action="error",
                 result="failed", error_msg=ce.parse_error,
             ))
@@ -2982,7 +3090,7 @@ async def _execute_m365_rules(
                 ]
             )
             if _collab_active:
-                results.append(_M365RuleResult(
+                results.append(_RuleResult(
                     label=tenant_id, kind="m365_collab_services", action="skip", result="skipped", error_msg="",
                 ))
                 continue
@@ -2996,11 +3104,11 @@ async def _execute_m365_rules(
                     sharepoint=ce.sharepoint,
                     teams=ce.teams,
                 )
-            results.append(_M365RuleResult(
+            results.append(_RuleResult(
                 label=tenant_id, kind="m365_collab_services", action="overwrite", result="ok", error_msg="",
             ))
         except APMError as e:
-            results.append(_M365RuleResult(
+            results.append(_RuleResult(
                 label=tenant_id, kind="m365_collab_services", action="overwrite", result="failed", error_msg=str(e),
             ))
 
@@ -3015,7 +3123,7 @@ async def _execute_gws_rules(
     on_conflict: str,
     sem: asyncio.Semaphore,
     interrupted: asyncio.Event,
-) -> list[_GWSRuleResult]:
+) -> list[_RuleResult]:
     """Fetch current rules for a domain, then create/update/skip rules and collab settings.
 
     Shared Drive and protected-account-types are two independent GWS API calls, so each is
@@ -3023,14 +3131,12 @@ async def _execute_gws_rules(
     failed must still retry that one on the next on_conflict=skip run, rather than being
     skipped wholesale because the other half already matches.
     """
-    results: list[_GWSRuleResult] = []
-
     try:
         async with sem:
             current = await apm.gws.auto_backup_rules.list(domain)
     except APMError as e:
-        results.extend(
-            _GWSRuleResult(
+        results: list[_RuleResult] = [
+            _RuleResult(
                 label=f"{domain}:{re_.backup_server_ref}",
                 kind="gws_user_rule",
                 action="error",
@@ -3038,9 +3144,9 @@ async def _execute_gws_rules(
                 error_msg=f"failed to fetch current rules: {e}",
             )
             for re_ in rule_entries
-        )
+        ]
         results.extend(
-            _GWSRuleResult(
+            _RuleResult(
                 label=domain,
                 kind=kind,
                 action="error",
@@ -3060,83 +3166,28 @@ async def _execute_gws_rules(
         )
         return results
 
-    existing_by_ns_plan: dict[tuple[str, str], GWSAutoBackupRule] = {
-        (r.namespace, r.plan_id): r for r in current.rules
-    }
-
-    for re_ in rule_entries:
-        if interrupted.is_set():
-            results.append(_GWSRuleResult(
-                label=f"{domain}:{re_.backup_server_ref}",
-                kind="gws_user_rule", action="skip", result="skipped", error_msg="",
-            ))
-            continue
-        if re_.parse_error:
-            results.append(_GWSRuleResult(
-                label=f"{domain}:{re_.backup_server_ref}",
-                kind="gws_user_rule", action="error", result="failed", error_msg=re_.parse_error,
-            ))
-            continue
-        existing = existing_by_ns_plan.get((re_.resolved_namespace, re_.resolved_plan_id))
-        if existing is not None:
-            if on_conflict == "skip":
-                results.append(_GWSRuleResult(
-                    label=f"{domain}:{re_.backup_server_ref}",
-                    kind="gws_user_rule", action="skip", result="skipped", error_msg="",
-                ))
-                continue
-            try:
-                async with sem:
-                    await apm.gws.auto_backup_rules.update(
-                        existing,
-                        plan_id=re_.resolved_plan_id,
-                        mail_group_ids=re_.mail_groups,
-                        calendar_group_ids=re_.calendar_groups,
-                        contact_group_ids=re_.contact_groups,
-                        drive_group_ids=re_.drive_groups,
-                    )
-                results.append(_GWSRuleResult(
-                    label=f"{domain}:{re_.backup_server_ref}",
-                    kind="gws_user_rule", action="overwrite", result="ok", error_msg="",
-                ))
-            except APMError as e:
-                results.append(_GWSRuleResult(
-                    label=f"{domain}:{re_.backup_server_ref}",
-                    kind="gws_user_rule", action="overwrite", result="failed", error_msg=str(e),
-                ))
-        else:
-            try:
-                async with sem:
-                    await apm.gws.auto_backup_rules.create(
-                        domain=domain,
-                        namespace=re_.resolved_namespace,
-                        plan_id=re_.resolved_plan_id,
-                        mail_group_ids=re_.mail_groups,
-                        calendar_group_ids=re_.calendar_groups,
-                        contact_group_ids=re_.contact_groups,
-                        drive_group_ids=re_.drive_groups,
-                    )
-                results.append(_GWSRuleResult(
-                    label=f"{domain}:{re_.backup_server_ref}",
-                    kind="gws_user_rule", action="create", result="ok", error_msg="",
-                ))
-            except APMError as e:
-                results.append(_GWSRuleResult(
-                    label=f"{domain}:{re_.backup_server_ref}",
-                    kind="gws_user_rule", action="create", result="failed", error_msg=str(e),
-                ))
+    results = await _execute_rule_entries(
+        apm.gws.auto_backup_rules, "domain", domain, "gws_user_rule", rule_entries,
+        group_kwargs_of=lambda e: {
+            "mail_group_ids": e.mail_groups,
+            "calendar_group_ids": e.calendar_groups,
+            "contact_group_ids": e.contact_groups,
+            "drive_group_ids": e.drive_groups,
+        },
+        current_rules=current.rules, on_conflict=on_conflict, sem=sem, interrupted=interrupted,
+    )
 
     # Shared Drive setting — independent of protected-account-types (see docstring).
     for ce in collab_entries:
         if not ce.shared_drive_specified:
             continue
         if interrupted.is_set():
-            results.append(_GWSRuleResult(
+            results.append(_RuleResult(
                 label=domain, kind="gws_shared_drive", action="skip", result="skipped", error_msg="",
             ))
             continue
         if ce.shared_drive_parse_error:
-            results.append(_GWSRuleResult(
+            results.append(_RuleResult(
                 label=domain, kind="gws_shared_drive", action="error",
                 result="failed", error_msg=ce.shared_drive_parse_error,
             ))
@@ -3146,7 +3197,7 @@ async def _execute_gws_rules(
                 current.shared_drive_setting is not None and current.shared_drive_setting.enabled
             )
             if shared_drive_active:
-                results.append(_GWSRuleResult(
+                results.append(_RuleResult(
                     label=domain, kind="gws_shared_drive", action="skip", result="skipped", error_msg="",
                 ))
                 continue
@@ -3154,11 +3205,11 @@ async def _execute_gws_rules(
         try:
             async with sem:
                 await apm.gws.auto_backup_rules.update_collab_settings(domain, shared_drive=ce.shared_drive)
-            results.append(_GWSRuleResult(
+            results.append(_RuleResult(
                 label=domain, kind="gws_shared_drive", action="overwrite", result="ok", error_msg="",
             ))
         except APMError as e:
-            results.append(_GWSRuleResult(
+            results.append(_RuleResult(
                 label=domain, kind="gws_shared_drive", action="overwrite", result="failed", error_msg=str(e),
             ))
 
@@ -3168,7 +3219,7 @@ async def _execute_gws_rules(
         if ce.include_unlicensed_accounts is None and ce.include_archived_accounts is None:
             continue
         if interrupted.is_set():
-            results.append(_GWSRuleResult(
+            results.append(_RuleResult(
                 label=domain, kind="gws_protected_account_types", action="skip", result="skipped", error_msg="",
             ))
             continue
@@ -3186,7 +3237,7 @@ async def _execute_gws_rules(
                 and current.include_archived_accounts == target_archived
             )
             if pat_matches:
-                results.append(_GWSRuleResult(
+                results.append(_RuleResult(
                     label=domain, kind="gws_protected_account_types", action="skip", result="skipped", error_msg="",
                 ))
                 continue
@@ -3199,11 +3250,11 @@ async def _execute_gws_rules(
                     include_unlicensed_accounts=target_unlicensed,
                     include_archived_accounts=target_archived,
                 )
-            results.append(_GWSRuleResult(
+            results.append(_RuleResult(
                 label=domain, kind="gws_protected_account_types", action="overwrite", result="ok", error_msg="",
             ))
         except APMError as e:
-            results.append(_GWSRuleResult(
+            results.append(_RuleResult(
                 label=domain, kind="gws_protected_account_types", action="overwrite",
                 result="failed", error_msg=str(e),
             ))
@@ -3218,24 +3269,15 @@ def _fs_key(host_ip: str, namespace: str, plan_name: str) -> str:
     return f"{host_ip}:{namespace}:{plan_name}"
 
 
-def _m365_rule_key(e: _M365RuleEntry) -> tuple[str, str, str]:
-    """Dedup/match key for an M365 user rule (YAML-identity refs, not resolved IDs)."""
-    return (e.tenant_id, e.backup_server_ref, e.plan_ref)
+def _rule_key(e: _M365RuleEntry | _GWSRuleEntry) -> tuple[str, str, str]:
+    """Dedup/match key for an M365 or GWS user rule (YAML-identity refs, not resolved IDs)."""
+    scope_id = e.tenant_id if isinstance(e, _M365RuleEntry) else e.domain
+    return (scope_id, e.backup_server_ref, e.plan_ref)
 
 
-def _m365_collab_key(e: _M365CollabEntry) -> str:
-    """Dedup/match key for an M365 collab-services block (one per tenant)."""
-    return e.tenant_id
-
-
-def _gws_rule_key(e: _GWSRuleEntry) -> tuple[str, str, str]:
-    """Dedup/match key for a GWS user rule (YAML-identity refs, not resolved IDs)."""
-    return (e.domain, e.backup_server_ref, e.plan_ref)
-
-
-def _gws_collab_key(e: _GWSCollabEntry) -> str:
-    """Dedup/match key for a GWS collab-services block (one per domain)."""
-    return e.domain
+def _collab_key(e: _M365CollabEntry | _GWSCollabEntry) -> str:
+    """Dedup/match key for an M365 or GWS collab-services block (one per tenant/domain)."""
+    return e.tenant_id if isinstance(e, _M365CollabEntry) else e.domain
 
 
 def _autodetect_and_load_credentials(
@@ -3353,20 +3395,23 @@ def _report_parse_errors(
         or gws_rule_errors or gws_collab_errors
     ):
         print(file=sys.stderr)
+    printed = False
     if plan_errors:
         n = len(plan_errors)
         print(f"{n} plan parse error{'s' if n != 1 else ''}:", file=sys.stderr)
         for pe in plan_errors:
             print(f"  [{pe.kind}] {pe.name!r}: {pe.parse_error}", file=sys.stderr)
+        printed = True
     if fs_errors:
-        if plan_errors:
+        if printed:
             print(file=sys.stderr)
         n = len(fs_errors)
         print(f"{n} file server parse error{'s' if n != 1 else ''}:", file=sys.stderr)
         for fpe in fs_errors:
             print(f"  [file_server] {fpe.host_ip!r} ({fpe.backup_server_ref}): {fpe.parse_error}", file=sys.stderr)
+        printed = True
     if rs_errors:
-        if plan_errors or fs_errors:
+        if printed:
             print(file=sys.stderr)
         n = len(rs_errors)
         print(f"{n} remote storage parse error{'s' if n != 1 else ''}:", file=sys.stderr)
@@ -3375,8 +3420,9 @@ def _report_parse_errors(
                 f"  [remote_storage] {rpe.name_or_id!r} (vault={rpe.vault_name!r}): {rpe.parse_error}",
                 file=sys.stderr,
             )
+        printed = True
     if m365_rule_errors or m365_collab_errors:
-        if plan_errors or fs_errors or rs_errors:
+        if printed:
             print(file=sys.stderr)
         for mre in m365_rule_errors:
             print(
@@ -3385,8 +3431,9 @@ def _report_parse_errors(
             )
         for mce in m365_collab_errors:
             print(f"  [m365_collab] {mce.tenant_id!r}: {mce.parse_error}", file=sys.stderr)
+        printed = True
     if gws_rule_errors or gws_collab_errors:
-        if plan_errors or fs_errors or rs_errors or m365_rule_errors or m365_collab_errors:
+        if printed:
             print(file=sys.stderr)
         for gre in gws_rule_errors:
             print(
@@ -3681,7 +3728,7 @@ async def run_import(
         )
         m365_rule_entries = _dedupe_by_key(
             m365_rule_entries,
-            _m365_rule_key,
+            _rule_key,
             lambda mre: (
                 f"\nWARNING: duplicate m365_user_rule entry for tenant {mre.tenant_id!r} "
                 f"(backup_server_ref={mre.backup_server_ref!r}, plan_ref={mre.plan_ref!r})"
@@ -3690,7 +3737,7 @@ async def run_import(
         )
         m365_collab_entries = _dedupe_by_key(
             m365_collab_entries,
-            _m365_collab_key,
+            _collab_key,
             lambda mce: (
                 f"\nWARNING: duplicate m365 collab_services entry for tenant {mce.tenant_id!r}"
                 " — extra copy skipped."
@@ -3698,7 +3745,7 @@ async def run_import(
         )
         gws_rule_entries = _dedupe_by_key(
             gws_rule_entries,
-            _gws_rule_key,
+            _rule_key,
             lambda gre: (
                 f"\nWARNING: duplicate gws_user_rule entry for domain {gre.domain!r} "
                 f"(backup_server_ref={gre.backup_server_ref!r}, plan_ref={gre.plan_ref!r})"
@@ -3707,7 +3754,7 @@ async def run_import(
         )
         gws_collab_entries = _dedupe_by_key(
             gws_collab_entries,
-            _gws_collab_key,
+            _collab_key,
             lambda gce: (
                 f"\nWARNING: duplicate gws collab_services entry for domain {gce.domain!r}"
                 " — extra copy skipped."
@@ -3722,10 +3769,10 @@ async def run_import(
             ),
         )
         # Key sets reused by the Phase 7 re-dedup (see _filter_to_keys below).
-        _seen_m365_rule_keys = {_m365_rule_key(e) for e in m365_rule_entries}
-        _seen_m365_collab_keys = {_m365_collab_key(e) for e in m365_collab_entries}
-        _seen_gws_rule_keys = {_gws_rule_key(e) for e in gws_rule_entries}
-        _seen_gws_collab_keys = {_gws_collab_key(e) for e in gws_collab_entries}
+        _seen_m365_rule_keys = {_rule_key(e) for e in m365_rule_entries}
+        _seen_m365_collab_keys = {_collab_key(e) for e in m365_collab_entries}
+        _seen_gws_rule_keys = {_rule_key(e) for e in gws_rule_entries}
+        _seen_gws_collab_keys = {_collab_key(e) for e in gws_collab_entries}
 
         rs_actions = _select_rs_actions(
             rs_entries, rs_creds, on_conflict, existing_rs, existing_rs_by_name
@@ -3873,8 +3920,8 @@ async def run_import(
         loop = asyncio.get_running_loop()
         interrupted = asyncio.Event()
         register_interrupt(loop, interrupted)
-        m365_all_results: list[_M365RuleResult] = []
-        gws_all_results: list[_GWSRuleResult] = []
+        m365_all_results: list[_RuleResult] = []
+        gws_all_results: list[_RuleResult] = []
         try:
             rs_sem = asyncio.Semaphore(concurrency)
 
@@ -3991,11 +4038,16 @@ async def run_import(
 
             # Phase 7: M365 auto-backup rules — after plans exist.
             if m365_rule_entries or m365_collab_entries:
-                # Re-fetch M365 plan stubs to include plans created in Phase 6.
-                m365_stubs_fresh, _ = await paginate(
-                    lambda limit, offset: apm.m365.plans.list(limit=limit, offset=offset)
-                )
-                fresh_plans_by_name: dict[str, str] = {p.name: p.plan_id for p in m365_stubs_fresh}
+                # Merge plans created in Phase 6 directly (no full re-fetch of the plan list
+                # needed — overwritten plans keep their pre-Phase-6 name/id, only newly created
+                # ones are missing from m365_plans_by_name).
+                fresh_plans_by_name: dict[str, str] = dict(m365_plans_by_name)
+                for ir in results:
+                    if (
+                        ir.action == "create" and ir.result == "ok"
+                        and ir.entry.subtype == "m365" and ir.created_plan_id
+                    ):
+                        fresh_plans_by_name[ir.entry.name] = ir.created_plan_id
                 # Re-parse with fresh plan IDs so newly created plans resolve correctly.
                 m365_rule_entries_fresh, m365_collab_entries_fresh = _parse_m365_rule_entries(
                     data, backup_servers_by_ref, fresh_plans_by_name, plan_name_by_ref,
@@ -4005,10 +4057,10 @@ async def run_import(
                 # fresh list matches what the dry-run was computed from (consume each key once
                 # to prevent duplicate YAML entries from both passing).
                 m365_rule_entries_fresh = _filter_to_keys(
-                    m365_rule_entries_fresh, _m365_rule_key, _seen_m365_rule_keys,
+                    m365_rule_entries_fresh, _rule_key, _seen_m365_rule_keys,
                 )
                 m365_collab_entries_fresh = _filter_to_keys(
-                    m365_collab_entries_fresh, _m365_collab_key, _seen_m365_collab_keys,
+                    m365_collab_entries_fresh, _collab_key, _seen_m365_collab_keys,
                 )
                 # Group by tenant_id for concurrent execution.
                 tenant_ids: list[str] = list(dict.fromkeys(
@@ -4017,14 +4069,14 @@ async def run_import(
                 ))
                 m365_sem = asyncio.Semaphore(concurrency)
 
-                async def _run_tenant_m365(tid: str) -> list[_M365RuleResult]:
+                async def _run_tenant_m365(tid: str) -> list[_RuleResult]:
                     tenant_rules = [e for e in m365_rule_entries_fresh if e.tenant_id == tid]
                     tenant_collabs = [e for e in m365_collab_entries_fresh if e.tenant_id == tid]
                     return await _execute_m365_rules(
                         apm, tid, tenant_rules, tenant_collabs, on_conflict, m365_sem, interrupted,
                     )
 
-                tenant_result_lists: list[list[_M365RuleResult]] = list(
+                tenant_result_lists: list[list[_RuleResult]] = list(
                     await asyncio.gather(*[_run_tenant_m365(tid) for tid in tenant_ids])
                 )
                 for sublist in tenant_result_lists:
@@ -4036,11 +4088,11 @@ async def run_import(
 
             # Phase 8: GWS auto-backup rules — after plans exist.
             if gws_rule_entries or gws_collab_entries:
-                # Re-fetch GWS plan stubs to include plans created in Phase 6.
-                gws_stubs_fresh, _ = await paginate(
-                    lambda limit, offset: apm.gws.plans.list(limit=limit, offset=offset)
-                )
-                fresh_gws_plans_by_name: dict[str, str] = {p.name: p.plan_id for p in gws_stubs_fresh}
+                # Merge plans created in Phase 6 directly (see Phase 7's identical comment).
+                fresh_gws_plans_by_name: dict[str, str] = dict(gws_plans_by_name)
+                for ir in results:
+                    if ir.action == "create" and ir.result == "ok" and ir.entry.subtype == "gws" and ir.created_plan_id:
+                        fresh_gws_plans_by_name[ir.entry.name] = ir.created_plan_id
                 # Re-parse with fresh plan IDs so newly created plans resolve correctly.
                 gws_rule_entries_fresh, gws_collab_entries_fresh = _parse_gws_rule_entries(
                     data, backup_servers_by_ref, fresh_gws_plans_by_name, plan_name_by_ref,
@@ -4050,10 +4102,10 @@ async def run_import(
                 # fresh list matches what the dry-run was computed from (consume each key once
                 # to prevent duplicate YAML entries from both passing).
                 gws_rule_entries_fresh = _filter_to_keys(
-                    gws_rule_entries_fresh, _gws_rule_key, _seen_gws_rule_keys,
+                    gws_rule_entries_fresh, _rule_key, _seen_gws_rule_keys,
                 )
                 gws_collab_entries_fresh = _filter_to_keys(
-                    gws_collab_entries_fresh, _gws_collab_key, _seen_gws_collab_keys,
+                    gws_collab_entries_fresh, _collab_key, _seen_gws_collab_keys,
                 )
                 # Group by domain for concurrent execution.
                 domain_ids: list[str] = list(dict.fromkeys(
@@ -4062,14 +4114,14 @@ async def run_import(
                 ))
                 gws_sem = asyncio.Semaphore(concurrency)
 
-                async def _run_domain_gws(dom: str) -> list[_GWSRuleResult]:
+                async def _run_domain_gws(dom: str) -> list[_RuleResult]:
                     domain_rules = [e for e in gws_rule_entries_fresh if e.domain == dom]
                     domain_collabs = [e for e in gws_collab_entries_fresh if e.domain == dom]
                     return await _execute_gws_rules(
                         apm, dom, domain_rules, domain_collabs, on_conflict, gws_sem, interrupted,
                     )
 
-                domain_result_lists: list[list[_GWSRuleResult]] = list(
+                domain_result_lists: list[list[_RuleResult]] = list(
                     await asyncio.gather(*[_run_domain_gws(dom) for dom in domain_ids])
                 )
                 for gws_sublist in domain_result_lists:

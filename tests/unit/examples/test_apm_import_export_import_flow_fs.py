@@ -12,6 +12,7 @@ import apm_import_export as ie
 import pytest
 
 from synology_apm.sdk import (
+    APMError,
     DuplicateWorkloadError,
     FileServerAddRequest,
     FileServerType,
@@ -128,6 +129,34 @@ def test_build_fs_requests_overwrite_without_credential_keeps_password(
     assert "keeping existing stored password" in err
 
 
+def test_build_fs_requests_create_invalid_request_records_parse_error() -> None:
+    """A create entry whose raw fields can't build a valid request (invalid server_type)
+    records a parse_error and marks the action as error, instead of raising."""
+    fse = _make_fs_entry(raw={"host_ip": "10.0.0.10", "login_user": "admin", "server_type": "bogus"})
+    actions = _fs_actions_for(fse, "create")
+
+    ie._build_fs_requests([fse], {("10.0.0.10", "admin"): "fs-pw"}, actions, _PLANS_BY_NAME)
+
+    assert fse.request is None
+    assert fse.parse_error is not None
+    assert actions == _fs_actions_for(fse, "error")
+
+
+def test_build_fs_requests_overwrite_invalid_request_records_parse_error() -> None:
+    """An overwrite entry whose raw fields can't build a valid request (non-numeric
+    host_port) records a parse_error and marks the action as error, instead of raising."""
+    fse = _make_fs_entry(raw={"host_ip": "10.0.0.10", "login_user": "admin", "host_port": "not-a-number"})
+    actions = _fs_actions_for(fse, "overwrite")
+
+    ie._build_fs_requests(
+        [fse], {("10.0.0.10", "admin"): "new-pw"}, actions, _PLANS_BY_NAME
+    )
+
+    assert fse.request is None
+    assert fse.parse_error is not None
+    assert actions == _fs_actions_for(fse, "error")
+
+
 def test_build_fs_requests_overwrite_with_credential_sets_password() -> None:
     fse = _make_fs_entry()
     actions = _fs_actions_for(fse, "overwrite")
@@ -218,6 +247,22 @@ async def test_execute_one_fs_fails_fast_on_action_request_mismatch(
     assert (result.result, result.error_msg) == expected
 
 
+async def test_execute_one_fs_overwrite_wrong_request_type_with_existing_workload() -> None:
+    """An "overwrite" with an existing workload present, but whose request was built as an
+    add request (not an update request), fails fast without calling the SDK -- distinct from
+    the "no existing workload" mismatch case above."""
+    apm = make_fake_apm()
+    existing_wl = make_machine_workload(
+        workload_type=MachineWorkloadType.FS, fs_config=make_file_server_config()
+    )
+    entry = _make_fs_entry()
+    entry.request = _fs_add_request()
+
+    result = await ie._execute_one_fs(apm, entry, "overwrite", existing_wl)
+
+    assert (result.result, result.error_msg) == ("failed", "internal error: update request not built")
+
+
 async def test_execute_one_fs_duplicate_workload_error() -> None:
     apm = make_fake_apm()
     apm.machine.workloads.add_file_server = AsyncMock(
@@ -231,6 +276,19 @@ async def test_execute_one_fs_duplicate_workload_error() -> None:
     result = await ie._execute_one_fs(apm, entry, "create", None)
 
     assert (result.result, result.error_msg) == ("failed", "duplicate: already registered")
+
+
+async def test_execute_one_fs_generic_apm_error() -> None:
+    """A plain APMError (not DuplicateWorkloadError) from the SDK call is still reported,
+    distinct from the duplicate-specific message tested above."""
+    apm = make_fake_apm()
+    apm.machine.workloads.add_file_server = AsyncMock(side_effect=APMError("server unavailable"))
+    entry = _make_fs_entry()
+    entry.request = _fs_add_request()
+
+    result = await ie._execute_one_fs(apm, entry, "create", None)
+
+    assert (result.result, result.error_msg) == ("failed", "server unavailable")
 
 
 async def test_execute_one_fs_error_and_skip_actions() -> None:

@@ -19,6 +19,7 @@ from synology_apm.sdk import (
     RemoteStorage,
     RetentionType,
     ScheduleFrequency,
+    TieringPlanCreateRequest,
     WeekDay,
 )
 from tests.unit.examples._fixtures import make_backup_server, make_remote_storage
@@ -452,6 +453,15 @@ def test_build_saas_tenant_ref_map_empty_list() -> None:
     assert errors == []
 
 
+def test_build_saas_tenant_ref_map_skips_non_dict_entry_silently() -> None:
+    """A non-dict entry is skipped without recording an error (distinct from _build_ref_map,
+    which records one for a non-mapping entry)."""
+    entries: list[Any] = ["not-a-dict", {"ref_key": "tenant-ref", "tenant_id": "uuid-001"}]
+    ref_map, errors = ie._build_saas_tenant_ref_map(entries)
+    assert errors == []
+    assert ref_map == {"tenant-ref": "uuid-001"}
+
+
 # ── _build_gws_domain_ref_map ──────────────────────────────────────────────────
 
 
@@ -768,5 +778,58 @@ def test_parse_all_entries_non_pending_rs_ref_records_parse_error() -> None:
     entries = ie._parse_all_entries(data, {}, {}, rs_pending_refs=set())
 
     assert len(entries) == 1
+    assert entries[0].request is None
+    assert entries[0].parse_error is not None
+
+
+def test_parse_all_entries_retirement_plan_invalid_retention_records_parse_error() -> None:
+    """A retirement-plan entry whose retention_days isn't int-convertible records a
+    parse_error instead of raising."""
+    data: dict[str, Any] = {
+        "retirement_plans": [{"name_or_id": "Compliance Retention", "retention_days": "not-a-number"}]
+    }
+
+    entries = ie._parse_all_entries(data, {}, {})
+
+    assert len(entries) == 1
+    assert entries[0].kind == "retirement-plan"
+    assert entries[0].request is None
+    assert entries[0].parse_error is not None
+
+
+def _make_tiering_plan(dest_ref: str) -> dict[str, Any]:
+    return {
+        "name_or_id": "Tier Old Versions",
+        "tiering_after_days": 30,
+        "destination_ref": dest_ref,
+        "daily_check_time": "20:00",
+    }
+
+
+def test_parse_all_entries_tiering_plan_resolves_destination_on_first_pass() -> None:
+    """A tiering-plan whose destination_ref already resolves builds its request immediately
+    (no RS-creation deferral needed)."""
+    storage = make_remote_storage(name="tiering-remote")
+    data: dict[str, Any] = {"tiering_plans": [_make_tiering_plan("storage-1")]}
+
+    entries = ie._parse_all_entries(data, {}, {"storage-1": storage})
+
+    assert len(entries) == 1
+    assert entries[0].kind == "tiering-plan"
+    assert entries[0].parse_error is None
+    request = entries[0].request
+    assert isinstance(request, TieringPlanCreateRequest)
+    assert request.destination is storage
+
+
+def test_parse_all_entries_tiering_plan_non_pending_rs_ref_records_parse_error() -> None:
+    """A tiering-plan whose destination_ref is NOT pending (just missing) records a
+    parse_error, not a deferral -- mirrors the protection-plan case above."""
+    data: dict[str, Any] = {"tiering_plans": [_make_tiering_plan("missing-rs")]}
+
+    entries = ie._parse_all_entries(data, {}, {}, rs_pending_refs=set())
+
+    assert len(entries) == 1
+    assert entries[0].kind == "tiering-plan"
     assert entries[0].request is None
     assert entries[0].parse_error is not None

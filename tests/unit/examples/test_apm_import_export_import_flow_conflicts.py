@@ -19,6 +19,7 @@ from synology_apm.sdk import (
     ResourceNotFoundError,
     RetirementPlan,
     TieringPlan,
+    WorkloadCategory,
 )
 from tests.unit.examples._fixtures import make_fake_apm, make_protection_plan, make_remote_storage
 
@@ -195,6 +196,60 @@ async def test_check_conflicts_protection_plan_type_conflict() -> None:
     )
 
 
+async def test_check_conflicts_gws_plan_type_conflict() -> None:
+    """A YAML type=gws entry against an existing machine plan reports the expected/existing
+    types (subtype='m365' vs. subtype='machine' are covered above; this covers 'gws')."""
+    stub = make_protection_plan(plan_id=_MACHINE_PLAN_UUID, name="Daily Backup")
+    entry = ie._ImportEntry(
+        name="Daily Backup", kind="protection-plan", subtype="gws",
+        raw={}, request=None, parse_error=None,
+    )
+    apm = make_fake_apm()
+
+    await ie._check_conflicts(apm, [entry], [stub])
+
+    assert entry.parse_error == (
+        "type conflict: YAML declares type='gws' but the existing plan is type='machine'"
+    )
+
+
+async def test_check_conflicts_existing_m365_plan_type_conflict() -> None:
+    """The existing-plan side of the type-conflict message reports 'm365' when the stub's
+    own category is M365 but the YAML declares a different type."""
+    stub = make_protection_plan(
+        plan_id=_MACHINE_PLAN_UUID, name="Daily Backup", category=WorkloadCategory.M365
+    )
+    entry = ie._ImportEntry(
+        name="Daily Backup", kind="protection-plan", subtype="machine",
+        raw={}, request=None, parse_error=None,
+    )
+    apm = make_fake_apm()
+
+    await ie._check_conflicts(apm, [entry], [stub])
+
+    assert entry.parse_error == (
+        "type conflict: YAML declares type='machine' but the existing plan is type='m365'"
+    )
+
+
+async def test_check_conflicts_existing_gws_plan_type_conflict() -> None:
+    """Same as above, for an existing plan whose own category is GWS."""
+    stub = make_protection_plan(
+        plan_id=_MACHINE_PLAN_UUID, name="Daily Backup", category=WorkloadCategory.GWS
+    )
+    entry = ie._ImportEntry(
+        name="Daily Backup", kind="protection-plan", subtype="machine",
+        raw={}, request=None, parse_error=None,
+    )
+    apm = make_fake_apm()
+
+    await ie._check_conflicts(apm, [entry], [stub])
+
+    assert entry.parse_error == (
+        "type conflict: YAML declares type='machine' but the existing plan is type='gws'"
+    )
+
+
 async def test_check_conflicts_protection_plan_immutability_conflict() -> None:
     stub = make_protection_plan(
         plan_id=_MACHINE_PLAN_UUID, name="Daily Backup", is_immutable=False
@@ -309,6 +364,31 @@ async def test_check_conflicts_tiering_plan_by_name() -> None:
     existing = await ie._check_conflicts(apm, [entry], [])
 
     assert existing == {"tiering-plan:Tier Old Versions": plan_uuid}
+
+
+async def test_check_conflicts_tiering_plan_by_uuid_resolves_name() -> None:
+    """A tiering-plan entry named by UUID resolves the existing plan via .get() and records
+    its display name (mirrors the retirement-plan by-UUID case above)."""
+    plan_uuid = "123e4567-e89b-12d3-a456-426614174009"
+    plan = TieringPlan(
+        plan_id=plan_uuid,
+        name="Tier Old Versions",
+        description="",
+        tiering_after_days=30,
+        daily_check_time=time(20, 0),
+        destination=None,
+        server_count=0,
+        run_schedule_by_controller_time=False,
+    )
+    entry = _make_import_entry(name=plan_uuid, kind="tiering-plan")
+    apm = make_fake_apm()
+    apm.tiering_plans.get = AsyncMock(return_value=plan)
+
+    existing = await ie._check_conflicts(apm, [entry], [])
+
+    assert existing == {f"tiering-plan:{plan_uuid}": plan_uuid}
+    assert entry.resolved_name == "Tier Old Versions"
+    apm.tiering_plans.get.assert_awaited_once_with(plan_uuid)
 
 
 async def test_check_conflicts_apm_error_sets_parse_error_and_warns(

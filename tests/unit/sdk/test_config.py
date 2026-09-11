@@ -18,9 +18,11 @@ from synology_apm.sdk import (
     ProfileConfig,
     ResolvedConnection,
     delete_keyring_password,
+    get_keyring_password,
     load_config,
     resolve_connection,
     save_config,
+    save_profile_device_token,
     set_keyring_password,
 )
 
@@ -674,3 +676,197 @@ def test_resolve_connection_keyring_error_propagates(monkeypatch: pytest.MonkeyP
         save_config(cfg)
         with pytest.raises(KeyringUnavailableError):
             resolve_connection()
+
+
+# ── Trusted-device token (device_id) ────────────────────────────────────────
+
+
+def test_save_and_load_device_token_roundtrip(tmp_path: Path) -> None:
+    """device_id should round-trip correctly through save and load."""
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", device_id="did-abc"))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        loaded = load_config()
+
+    assert loaded.get_profile("default").device_id == "did-abc"
+
+
+def test_save_omits_empty_device_token(tmp_path: Path) -> None:
+    """An unset device_id should not be written to config.toml."""
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u"))
+
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        content = cfg_file.read_text()
+
+    assert "device_id" not in content
+
+
+def test_resolve_connection_surfaces_device_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """resolve_connection() reads device_id straight off the resolved profile."""
+    _clean_env(monkeypatch)
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", device_id="did-abc"))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        resolved = resolve_connection()
+
+    assert resolved.device_id == "did-abc"
+
+
+def test_resolve_connection_device_token_empty_when_unset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """resolve_connection() returns an empty device_id for a profile with none registered."""
+    _clean_env(monkeypatch)
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u"))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        resolved = resolve_connection()
+
+    assert resolved.device_id == ""
+
+
+def test_resolve_connection_suppresses_device_token_when_host_overridden(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A device token registered for the profile's own host must never be surfaced when a
+    caller-supplied host overrides it away from that identity — the token belongs to the
+    profile's original host, not whatever host this call happens to target."""
+    _clean_env(monkeypatch)
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", device_id="did-abc"))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        resolved = resolve_connection(host="https://other-host")
+
+    assert resolved.device_id == ""
+
+
+def test_resolve_connection_suppresses_device_token_when_username_overridden(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Same guard, for a username override instead of a host override."""
+    _clean_env(monkeypatch)
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", device_id="did-abc"))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        resolved = resolve_connection(username="otheruser")
+
+    assert resolved.device_id == ""
+
+
+def test_resolve_connection_keeps_device_token_when_override_matches_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit --host/--username that happens to match the profile's own stored values
+    (a no-op override) must not suppress the device token."""
+    _clean_env(monkeypatch)
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", device_id="did-abc"))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        resolved = resolve_connection(host="https://h", username="u")
+
+    assert resolved.device_id == "did-abc"
+
+
+def test_save_profile_device_token_preserves_other_fields(tmp_path: Path) -> None:
+    """save_profile_device_token() only touches device_id, leaving the rest of an existing
+    profile (host/username/password/SSL setting) untouched."""
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile(
+        "default",
+        ProfileConfig(host="https://h", username="u", password="s3cr3t", no_verify_ssl=True),
+    )
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        save_profile_device_token("default", "did-abc")
+        loaded = load_config().get_profile("default")
+
+    assert loaded.device_id == "did-abc"
+    assert loaded.host == "https://h"
+    assert loaded.username == "u"
+    assert loaded.password == "s3cr3t"
+    assert loaded.no_verify_ssl is True
+
+
+def test_save_profile_device_token_creates_profile_if_missing(tmp_path: Path) -> None:
+    """save_profile_device_token() creates the profile section on the fly if it doesn't exist yet."""
+    cfg_file = tmp_path / "config.toml"
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_profile_device_token("fresh", "did-abc")
+        loaded = load_config().get_profile("fresh")
+
+    assert loaded.device_id == "did-abc"
+
+
+def test_save_profile_device_token_clears_with_empty_string(tmp_path: Path) -> None:
+    """Passing an empty string clears a previously-registered device token."""
+    cfg_file = tmp_path / "config.toml"
+    cfg = AppConfig()
+    cfg.set_profile("default", ProfileConfig(host="https://h", username="u", device_id="did-abc"))
+    with (
+        patch("synology_apm.sdk.config.CONFIG_FILE", cfg_file),
+        patch("synology_apm.sdk.config.CONFIG_DIR", tmp_path),
+    ):
+        save_config(cfg)
+        save_profile_device_token("default", "")
+        loaded = load_config().get_profile("default")
+
+    assert loaded.device_id == ""
+
+
+def test_get_keyring_password_calls_keyring_get() -> None:
+    """get_keyring_password() should read the password under the profile's stable service name."""
+    with patch("synology_apm.sdk.config.keyring.get_password", return_value="s3cr3t") as mock_get:
+        result = get_keyring_password("default", "u")
+
+    mock_get.assert_called_once_with("synology-apm-cli:default", "u")
+    assert result == "s3cr3t"
+
+
+def test_get_keyring_password_wraps_keyring_error() -> None:
+    """A KeyringError from the backend should surface as KeyringUnavailableError."""
+    with (
+        patch("synology_apm.sdk.config.keyring.get_password", side_effect=keyring.errors.KeyringLocked()),
+        pytest.raises(KeyringUnavailableError),
+    ):
+        get_keyring_password("default", "u")

@@ -15,6 +15,7 @@ from aiointercept import aiointercept
 from synology_apm.sdk.collections.machine import MachineCollection, MachineWorkloadCollection
 from synology_apm.sdk.enums import (
     FileServerType,
+    HypervisorType,
     MachineWorkloadType,
     VerifyStatus,
     VersionStatus,
@@ -340,7 +341,7 @@ async def test_vm_workload_parses_device_uuid_from_spec_and_inventory() -> None:
     assert isinstance(wl, MachineWorkload)
     assert wl.device_uuid == "vm-uuid-001"
     assert wl.inventory_name == "esx-host-01"
-    assert wl.inventory_type == "ESXi"
+    assert wl.inventory_type == HypervisorType.VSPHERE_ESXI
 
 
 async def test_fs_workload_has_no_device_uuid_agent_version_ip() -> None:

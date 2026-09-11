@@ -180,6 +180,14 @@ class list itself does not convey:
 - `KeyringUnavailableError` extends `RuntimeError` directly, **not** `APMError` — it signals
   a local OS-keyring failure (raised by `config.py`'s keyring helpers / `resolve_connection()`),
   not a REST API error, and carries no `error_code` / `response_body`.
+- `OTPRequiredError` (two-factor authentication code required) and `OTPIncorrectError` (the
+  supplied code was rejected) extend `APMError` directly — **not** `AuthenticationError`, even
+  though both are conceptually authentication failures. `ERROR_CODES` keys must have no
+  subclass relationships with each other (`classify_error()` does an exact `type()` lookup,
+  not an `isinstance` walk), so a new auth-adjacent exception type is always a sibling of
+  `AuthenticationError`, never a subclass. Only synology-apm-cli's `config set` command ever
+  supplies an `otp_code`/handles these interactively; every other caller (including MCP) only
+  ever consumes an already-registered trusted device and treats these as a hard failure.
 - API errorCode → exception mappings are operation-specific and documented per collection in
   [`BEHAVIOR_REFERENCE.md`'s Collection Behavior Rules](BEHAVIOR_REFERENCE.md#collection-behavior-rules) (e.g. 4013 → `PlanNameConflictError`,
   4017/4019/4029 → `PlanInUseError`, 3004/3014 → the RemoteStorage conflict/in-use errors,
@@ -204,6 +212,31 @@ The SDK authenticates through the legacy Synology WebAPI login endpoint (`/webap
 2. `connect()` then calls `GET /api/v1/infra/backup_server/me` to confirm the host is an APM appliance and to resolve `my_server` (see "Trigger Conditions for NotManagementServerError" above).
 3. All business API requests rely on the `id` cookie. When the session expires, APM responds with `HTTP 401` (`{"message": "auth cookie failed"}`); the SDK re-authenticates once via step 1 and retries, raising `AuthenticationError` only if that also fails.
 4. `disconnect()` calls `GET /api/v1/preference/logout`.
+
+### Two-Factor Authentication (TOTP) / Trusted Devices
+
+`WebAPISession`/`APMClient` accept optional `otp_code`/`device_id` constructor args, added to
+the login request built in `_http.py`'s `_login_params()`:
+
+- `otp_code` (+ `enable_device_token=yes`) is included only when supplied — a fresh,
+  OTP-verified login that registers (or re-confirms) a trusted device. It is **one-shot**:
+  `_do_login()` clears it in a `finally` block after the first attempt, so it is never resent
+  on a later automatic 401 re-auth (a TOTP code can't be replayed, and resending it would risk
+  a spurious `OTPIncorrectError` on a re-auth nobody is watching).
+- `device_id` is included whenever known — **not** one-shot, resent on every login attempt
+  including automatic re-auth. This is what lets 401 re-auth keep working for a two-factor
+  account with no human present: the device token substitutes for the code.
+- A successful `otp_code`-bearing login's response `data.did` is captured and exposed via the
+  `device_id` property on both `WebAPISession` and `APMClient`.
+- Codes `403` (two-factor code required) and `404` (code incorrect) raise `OTPRequiredError`/
+  `OTPIncorrectError` respectively (via the shared `_auth_exception_for_code()` helper, used by
+  both `_do_login()` and the generic `_raise_for_error_code()` path); every other auth code
+  (119/400/401/402/406/407/430) is unaffected and still raises plain `AuthenticationError`.
+
+The SDK itself never solicits an `otp_code` interactively — that's synology-apm-cli's `config
+set` command's job (the only place in this project that handles a two-factor prompt). Every
+other consumer, including synology-apm-mcp, only ever supplies a previously-registered
+`device_id` and treats `OTPRequiredError`/`OTPIncorrectError` as a hard failure.
 
 ---
 

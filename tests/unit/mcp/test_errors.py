@@ -37,6 +37,8 @@ class TestSdkErrorToDictCodes:
             (lambda: _sdk("RemoteStorageInUseError")("in use", "storage", "stor-003"), "remote_storage_in_use"),
             (lambda: _sdk("ResourceNotReadyError")("not ready yet"), "resource_not_ready"),
             (lambda: _sdk("AuthenticationError")("bad credentials"), "authentication_error"),
+            (lambda: _sdk("OTPRequiredError")("two-factor code required"), "otp_required"),
+            (lambda: _sdk("OTPIncorrectError")("two-factor code incorrect"), "otp_incorrect"),
             (lambda: _sdk("PermissionDeniedError")("no permission"), "permission_denied"),
             (lambda: _sdk("NotSupportedError")("not supported"), "not_supported"),
             (lambda: _sdk("NotManagementServerError")("not the management server"), "not_management_server"),
@@ -92,6 +94,8 @@ class TestSdkErrorToDictCodes:
         "make_exc,expected_code",
         [
             (lambda: _sdk("AuthenticationError")("bad credentials"), "authentication_error"),
+            (lambda: _sdk("OTPRequiredError")("two-factor code required"), "otp_required"),
+            (lambda: _sdk("OTPIncorrectError")("two-factor code incorrect"), "otp_incorrect"),
             (lambda: _sdk("NotManagementServerError")("not the management server"), "not_management_server"),
             (lambda: _sdk("ConnectionTimeoutError")("timed out"), "connection_timeout"),
         ],
@@ -103,6 +107,18 @@ class TestSdkErrorToDictCodes:
         result = _convert(exc)
         assert result["error"] == expected_code
         assert "synology-apm-cli config set" in result["hint"]
+
+    @pytest.mark.parametrize("make_exc", [
+        lambda: _sdk("OTPRequiredError")("two-factor code required"),
+        lambda: _sdk("OTPIncorrectError")("two-factor code incorrect"),
+    ])
+    def test_hint_mentions_two_factor_config_set_flow(self, make_exc: Callable[[], APMError]) -> None:
+        """The reconfigure hint for otp_required/otp_incorrect names the exact command (`config
+        set`) that completes two-factor registration — the only place MCP points a user at,
+        since it never handles a two-factor code itself."""
+        result = _convert(make_exc())
+        assert "two-factor" in result["hint"]
+        assert "config set" in result["hint"]
 
     def test_hint_absent_for_non_reconfigure_codes(self) -> None:
         from synology_apm.sdk import ResourceNotFoundError

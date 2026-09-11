@@ -187,6 +187,12 @@ async def test_get_by_name_does_not_match_hypervisor_id() -> None:
     ("HyperV",          HypervisorType.HYPERV_STANDALONE),
     ("SCVMM",           HypervisorType.HYPERV_SCVMM),
     ("FailoverCluster", HypervisorType.HYPERV_FAILOVER_CLUSTER),
+    ("NutanixPE",       HypervisorType.NUTANIX_PRISM_ELEMENT),
+    ("NutanixPC",       HypervisorType.NUTANIX_PRISM_CENTRAL),
+    ("ProxmoxNode",     HypervisorType.PROXMOX_NODE),
+    ("ProxmoxCluster",  HypervisorType.PROXMOX_CLUSTER),
+    ("AWS",             HypervisorType.AWS),
+    ("Azure",           HypervisorType.AZURE),
     ("SomeNewValue",    HypervisorType.UNKNOWN),  # fallback
 ])
 async def test_host_type_mapping(api_val: str, expected: HypervisorType) -> None:

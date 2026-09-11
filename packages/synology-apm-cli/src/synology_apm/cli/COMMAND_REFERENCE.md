@@ -251,6 +251,30 @@ for the profile.
 > Secret Service running), commands needing the password fail with a hint to use
 > `APM_PASSWORD` instead.
 
+**Two-factor authentication (TOTP)**: whenever a password is available to test with (and
+`--no-input` is not given), `config set` also attempts a real connection; on success it prints
+`✓ Connection verified.`. If the account requires a two-factor code, it prompts once (retrying
+on an incorrect code, up to 3 attempts) and, on success, registers this device as trusted:
+
+```
+$ synology-apm-cli config set --host apm.corp.com --username admin --save-password keyring
+
+...
+Two-factor authentication code: 123456
+✓ Registered a trusted device for two-factor authentication.
+
+✓ Settings saved to ~/.config/synology-apm/config.toml (profile: default)
+✓ Password stored in the OS keyring.
+```
+
+`config show` reports the trusted-device status as an additional `2FA device:` line
+(`registered` or `(not registered)`). `config clear --forget-device [--profile <name>]`
+clears only the registered device (host/username/password untouched, no confirmation prompt) —
+use it to force re-verification, e.g. after revoking trusted devices in DSM. This is the *only*
+place synology-apm-cli ever handles a two-factor code; every other command that finds no valid
+trusted device on file fails with a message pointing back at `config set`, rather than
+prompting.
+
 ---
 
 ### machine — Device Workload Management

@@ -23,9 +23,12 @@ from synology_apm.sdk.exceptions import (
     InvalidOperationError,
     NotManagementServerError,
     NotSupportedError,
+    OTPIncorrectError,
+    OTPRequiredError,
     PermissionDeniedError,
     PlanInUseError,
     PlanNameConflictError,
+    RemoteStorageAuthenticationError,
     RemoteStorageConflictError,
     RemoteStorageEncryptionMismatchError,
     RemoteStorageInUseError,
@@ -42,6 +45,8 @@ from tests.unit.cli.conftest import invoke_cli
 # fallback" regression check, so the two stay in sync with each other by construction.
 _CLASSIFIED_INSTANCES: list[APMError] = [
     AuthenticationError("bad password"),
+    OTPRequiredError("two-step verification required"),
+    OTPIncorrectError("two-step verification code incorrect"),
     NotManagementServerError("not primary node"),
     BackupServerDisconnectedError("server offline"),
     ConnectionTimeoutError("timed out"),
@@ -56,6 +61,7 @@ _CLASSIFIED_INSTANCES: list[APMError] = [
     RemoteStorageConflictError("vault already registered", resource_type="RemoteStorage", resource_id="MyVault"),
     RemoteStorageInUseError("storage still assigned to plans", resource_type="RemoteStorage", resource_id="storage-001"),
     RemoteStorageEncryptionMismatchError("relink key required", resource_type="RemoteStorage", resource_id="MyVault"),
+    RemoteStorageAuthenticationError("invalid credentials", resource_type="RemoteStorage", resource_id="MyVault"),
     RemoteStorageUnmanagedCatalogError("unmanaged catalogs found", vault_name="MyVault", catalog_count=3),
 ]
 
@@ -68,6 +74,8 @@ def test_classified_instances_cover_every_error_code() -> None:
 
 _EXPECTED_EXIT_BY_TYPE: dict[type, int] = {
     AuthenticationError: EXIT_AUTH,
+    OTPRequiredError: EXIT_AUTH,
+    OTPIncorrectError: EXIT_AUTH,
     NotManagementServerError: EXIT_CONNECT,
     BackupServerDisconnectedError: EXIT_CONNECT,
     ConnectionTimeoutError: EXIT_CONNECT,
@@ -102,6 +110,16 @@ def test_classified_exceptions_never_hit_generic_fallback(exc: APMError, capsys:
 
 _MESSAGE_TEXT_CASES: list[tuple[APMError, str, str]] = [
     (AuthenticationError("bad password"), "Authentication failed: bad password", ""),
+    (
+        OTPRequiredError("two-step verification required"),
+        "Two-factor authentication required: two-step verification required",
+        "",
+    ),
+    (
+        OTPIncorrectError("two-step verification code incorrect"),
+        "Two-factor authentication failed: two-step verification code incorrect",
+        "",
+    ),
     (
         ResourceNotFoundError("not found", resource_type="Workload", resource_id="wl-001"),
         "Workload not found: wl-001",

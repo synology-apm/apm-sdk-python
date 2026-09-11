@@ -151,9 +151,9 @@ def test_ser_gws_domain_entry_and_comment() -> None:
 
 
 def test_ser_remote_storage_not_importable_type_full_entry() -> None:
-    """Non-importable type (AZURE_BLOB): full entry with endpoint, trust_self_signed=False,
+    """Non-importable type (UNKNOWN): full entry with endpoint, trust_self_signed=False,
     and an import-not-supported comment."""
-    rs = make_remote_storage(storage_type=RemoteStorageType.AZURE_BLOB)
+    rs = make_remote_storage(storage_type=RemoteStorageType.UNKNOWN)
 
     result = ie._ser_remote_storage(rs, "ref-1")
 
@@ -161,14 +161,37 @@ def test_ser_remote_storage_not_importable_type_full_entry() -> None:
         "ref_key": "ref-1",
         "name_or_id": "tiering-remote",
         "endpoint": "https://s3.example.com:443",
-        "storage_type": "azure_blob",
+        "storage_type": "unknown",
         "encryption_enabled": False,
         "vault_name": "my-bucket",
         "trust_self_signed": False,
         "_comment": (
             "name_or_id: 123e4567-e89b-12d3-a456-426614174030 | "
             "name: tiering-remote | endpoint: https://s3.example.com:443 | "
-            "type: azure_blob | import: not supported for this type"
+            "type: unknown | import: not supported for this type"
+        ),
+    }
+
+
+def test_ser_remote_storage_azure_full_entry() -> None:
+    """Azure Blob Storage: endpoint-free plus account_name; comment notes the Microsoft Entra
+    application credential requirement."""
+    rs = make_remote_storage(storage_type=RemoteStorageType.AZURE_BLOB, account_name="acct-1")
+
+    result = ie._ser_remote_storage(rs, "ref-3")
+
+    assert result == {
+        "ref_key": "ref-3",
+        "name_or_id": "tiering-remote",
+        "storage_type": "azure_blob",
+        "encryption_enabled": False,
+        "vault_name": "my-bucket",
+        "account_name": "acct-1",
+        "_comment": (
+            "name_or_id: 123e4567-e89b-12d3-a456-426614174030 | "
+            "name: tiering-remote | endpoint: https://s3.example.com:443 | "
+            "type: azure_blob | import: Microsoft Entra application credentials required "
+            "(see --storage-credentials)"
         ),
     }
 
@@ -216,6 +239,21 @@ def test_ser_remote_storage_importable_endpoint_required_full_entry() -> None:
             "type: s3_compatible"
         ),
     }
+
+
+# ── _rs_cred_endpoint ──────────────────────────────────────────────────────────
+
+
+def test_rs_cred_endpoint_returns_endpoint_for_endpoint_required_type() -> None:
+    rs = make_remote_storage(storage_type=RemoteStorageType.S3_COMPATIBLE)
+    assert ie._rs_cred_endpoint(rs) == "https://s3.example.com:443"
+
+
+def test_rs_cred_endpoint_returns_empty_for_non_endpoint_required_type() -> None:
+    """A storage type outside _ENDPOINT_REQUIRED_TYPES (e.g. AMAZON_S3, which connects to a
+    fixed service endpoint) has no credential-CSV endpoint key to look up."""
+    rs = make_remote_storage(storage_type=RemoteStorageType.AMAZON_S3)
+    assert ie._rs_cred_endpoint(rs) == ""
 
 
 # ── _ser_retention ────────────────────────────────────────────────────────────
@@ -535,6 +573,22 @@ def test_ser_file_server_no_fs_config_returns_empty_dict() -> None:
     assert result == {}
 
 
+def test_ser_file_server_falls_back_to_namespace_when_backup_server_is_none() -> None:
+    """When the workload has no resolved backup_server, backup_server_ref falls back to the
+    workload's own namespace rather than raising or omitting the field."""
+    wl = make_machine_workload(
+        workload_type=MachineWorkloadType.FS,
+        is_retired=False,
+        namespace="ns-apm-server-01",
+        fs_config=make_file_server_config(),
+        backup_server=None,
+    )
+
+    result = ie._ser_file_server(wl, {}, {})
+
+    assert result["backup_server_ref"] == "ns-apm-server-01"
+
+
 # ── _ser_m365_auto_backup_rules_block ─────────────────────────────────────────
 
 
@@ -793,5 +847,8 @@ def test_write_storage_credentials_csv_writes_expected_rows(tmp_path: Path) -> N
             "access_key": "",
             "secret_key": "",
             "relink_encryption_key": "",
+            "tenant_id": "",
+            "client_id": "",
+            "secret": "",
         }
     ]

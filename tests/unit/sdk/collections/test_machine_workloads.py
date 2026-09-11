@@ -11,6 +11,7 @@ from yarl import URL
 from synology_apm.sdk.collections._shared import _build_location_info
 from synology_apm.sdk.collections.machine import MachineWorkloadCollection, _parse_workload
 from synology_apm.sdk.enums import (
+    HypervisorType,
     MachineWorkloadType,
     RetentionType,
     VerifyStatus,
@@ -833,6 +834,49 @@ async def test_list_verify_status_filter_sends_repeated_verify_status() -> None:
     params = mock_get.call_args[1]["params"]
     verify_status_values = [v for k, v in params if k == "filter.verifyStatus"]
     assert verify_status_values == ["VERIFY_FAILED", "VERIFY_NOT_ENABLED"]
+
+
+# ── _parse_workload — inventory_type mapping (VM only) ──────────────────────
+
+
+@pytest.mark.parametrize("raw_inventory_type,expected", [
+    ("AWS",          HypervisorType.AWS),
+    ("Azure",        HypervisorType.AZURE),
+    ("ProxmoxNode",  HypervisorType.PROXMOX_NODE),
+    ("SomeNewValue", HypervisorType.UNKNOWN),  # present but unrecognized
+])
+def test_parse_workload_inventory_type_mapping(raw_inventory_type: str, expected: HypervisorType) -> None:
+    """A VM workload's inventory_type is parsed through the same HypervisorType mapping as
+    Hypervisor.host_type, covering platforms beyond the pre-existing ESXi/HyperV cases."""
+    raw = {
+        **SAMPLE_WORKLOAD,
+        "inventoryName": "some-host",
+        "inventoryType": raw_inventory_type,
+        "spec": {**SAMPLE_WORKLOAD["spec"], "workloadType": "VM"},
+    }
+    wl = _parse_workload(raw)
+
+    assert wl.workload_type == MachineWorkloadType.VM
+    assert wl.inventory_name == "some-host"
+    assert wl.inventory_type == expected
+
+
+@pytest.mark.parametrize("raw_inventory_type", ["NONE", "", None])
+def test_parse_workload_inventory_type_none_sentinel(raw_inventory_type: str | None) -> None:
+    """A VM workload with no hypervisor inventory link (raw "NONE" sentinel, empty string, or
+    an absent field) parses inventory_type as None, not the literal "NONE" string or
+    HypervisorType.UNKNOWN — regression case for a leak found via live-data verification."""
+    raw = {
+        **SAMPLE_WORKLOAD,
+        "inventoryName": "",
+        "inventoryType": raw_inventory_type,
+        "spec": {**SAMPLE_WORKLOAD["spec"], "workloadType": "VM"},
+    }
+    wl = _parse_workload(raw)
+
+    assert wl.workload_type == MachineWorkloadType.VM
+    assert wl.inventory_name is None
+    assert wl.inventory_type is None
 
 
 # ── _parse_workload — null field handling ───────────────────────────────────

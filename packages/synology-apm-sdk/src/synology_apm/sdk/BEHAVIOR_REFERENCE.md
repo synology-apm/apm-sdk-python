@@ -279,6 +279,16 @@ When `spec.configFs` is absent, `fs_config` is `None` (not a default `FileServer
 
 `FileServerConfig.server_type` is `FileServerType.UNKNOWN` when APM reports a server type not yet recognised by this SDK version.
 
+### `MachineWorkload.inventory_type` — VM Hypervisor Link
+
+`MachineWorkload.inventory_type` (`HypervisorType | None`) is populated for VM workloads with a
+hypervisor inventory link only, via the same `_HOST_TYPE_MAP` used by `Hypervisor.host_type`
+(`collections/hypervisors.py`'s `_parse_optional_host_type()` helper) — `None` for PC/PS/FS, and
+also `None` (not `HypervisorType.UNKNOWN`) for a VM workload with no inventory link at all,
+whether the API reports that as an absent field or its `"NONE"` sentinel string; a VM workload
+whose raw inventory type string is present but unrecognized by this SDK version still parses as
+`HypervisorType.UNKNOWN`, distinguishing "no inventory" from "unrecognized inventory type".
+
 ### Special Fields of WorkloadVersion
 
 - `portal_version_id` (API `spec.versionId`): used by the M365 export/restore API paths
@@ -684,6 +694,25 @@ write to return the refreshed model state.
 
 **update() — minimal body per type:** see `_build_update_body()`'s inline comments
 (`collections/remote_storages.py`) for the per-type body shape.
+
+**Azure Blob Storage (`AZURE_BLOB` / `AZURE_BLOB_CHINA`) — existing application only:** `add()`
+and `update()` support only registering/re-authenticating with the credentials of an *existing*
+Microsoft Entra application (service principal) — `AzureBlobStorageAddRequest`/
+`AzureBlobChinaStorageAddRequest` and `AzureBlobStorageUpdateRequest`. Creating a new application
+(the backend's device-login/OAuth flow under `/api/v1/external_storage/azure/*`) is not modeled by
+this SDK. The create/update request bodies nest Azure-specific fields under a single `azureInfo`
+object (`accountName`, `containerName`, `tenantId`, `clientId`, `secret`) instead of the flat
+`accessKey`/`secretKey` used by every other type — `create`'s top-level `accessKey`/`secretKey` are
+still sent as empty strings for schema consistency, but there is no `endpoint` key at all (unlike
+other endpoint-free types, which send `endpoint: ""`). The catalog pre-flight
+(`POST /api/v1/storage_connection/remote`) also uses a distinct shape for Azure —
+`{storageType, vaultName, supportVirtualHost: true, azureInfo}` — rather than the generic
+`accessKey`/`secretKey`/`endpoint`/`certificate` shape used by other types. `update()` always
+resends the immutable `accountName`/`containerName` (read from the existing `RemoteStorage`, not
+the caller's request) alongside the caller-supplied `tenantId`/`clientId`/`secret`. The read model
+exposes the storage account name and application ID as `RemoteStorage.account_name` /
+`RemoteStorage.client_id` (parsed from `azureAccountName`/`azureEntraAppId`), populated only for
+Azure storage types.
 
 ---
 

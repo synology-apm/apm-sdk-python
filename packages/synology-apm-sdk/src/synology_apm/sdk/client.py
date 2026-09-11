@@ -34,6 +34,12 @@ class APMClient:
               APM requires HTTPS; the SDK prepends the scheme automatically.
         username: Login account.
         password: Login password.
+        otp_code: One-time two-factor authentication code. Only meaningful when
+            registering a new trusted device — not needed on ordinary
+            connections once a trusted device has been registered (see the
+            device_id property).
+        device_id: A previously-obtained trusted-device identifier that lets
+            this login skip the two-factor code.
         verify_ssl: Whether to verify the SSL certificate. Defaults to True.
             Set to False for self-signed certificates in test environments.
         timeout: Per-request timeout in seconds. Defaults to 300.
@@ -51,12 +57,15 @@ class APMClient:
         username: str,
         password: str,
         *,
+        otp_code: str | None = None,
+        device_id: str | None = None,
         verify_ssl: bool = True,
         timeout: float = 300.0,
         debug: bool = False,
     ) -> None:
         self._session = WebAPISession(
             host, username, password,
+            otp_code=otp_code, device_id=device_id,
             verify_ssl=verify_ssl,
             timeout=timeout,
             debug=debug,
@@ -103,6 +112,10 @@ class APMClient:
         Raises:
             NotManagementServerError: Host is not an APM server, or is not the primary
                 management server.
+            AuthenticationError: Incorrect credentials or account locked.
+            OTPRequiredError: Two-factor authentication is required and no valid
+                otp_code / trusted-device id was supplied.
+            OTPIncorrectError: The supplied otp_code was rejected.
         """
         await self._session.connect()
         try:
@@ -138,6 +151,15 @@ class APMClient:
         if self._my_server is None:
             raise AuthenticationError("Not connected. Call connect() first.")
         return self._my_server
+
+    @property
+    def device_id(self) -> str | None:
+        """The trusted-device id in effect after connect(), if two-factor
+        authentication with a trusted device is in use for this connection.
+
+        None if two-factor authentication with a trusted device is not in use.
+        """
+        return self._session.device_id
 
     # ── Collection properties ──────────────────────────────────────────────
 
