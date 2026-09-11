@@ -72,6 +72,18 @@ _LEVEL_OPTION = typer.Option(
 def _parse_level(level: list[str] | None) -> list[LogLevel] | None:
     return parse_enum_list(level, LOG_LEVEL_ARGS, "level")
 
+
+def _list_help(summary: str, subcommand: str) -> str:
+    """Build a `log <subcommand> list --help` text: summary plus the Search/Direct mode
+    example shared by every log list command."""
+    return (
+        f"{summary}\n\n"
+        f"\b\nSearch mode (server name keyword):\n"
+        f"  synology-apm-cli log {subcommand} list \"apm-server-01\"\n\n"
+        f"\b\nDirect mode (server ID from synology-apm-cli infra server list --verbose):\n"
+        f"  synology-apm-cli log {subcommand} list --id <server-id>"
+    )
+
 _activity_app   = typer.Typer(name="activity",   help="Activity logs.",           no_args_is_help=True)
 _drive_app      = typer.Typer(name="drive",      help="Drive information logs.",  no_args_is_help=True)
 _conn_app       = typer.Typer(name="connection", help="Connection logs.",         no_args_is_help=True)
@@ -184,7 +196,7 @@ async def _run_log_list(
 # synology-apm-cli log activity list
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@_activity_app.command("list")
+@_activity_app.command("list", help=_list_help("List activity logs for a backup server.", "activity"))
 @run_async
 async def activity_list(
     ctx: typer.Context,
@@ -207,16 +219,6 @@ async def activity_list(
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
-    """List activity logs for a backup server.
-
-    \b
-    Search mode (server name keyword):
-      synology-apm-cli log activity list "apm-server-01"
-
-    \b
-    Direct mode (server ID from synology-apm-cli infra server list --verbose):
-      synology-apm-cli log activity list --id <server-id>
-    """
     level_enums = _parse_level(level)
     log_type_enum = parse_enum_scalar(log_type, APM_ACTIVITY_LOG_TYPE_ARGS, "type")
 
@@ -254,7 +256,7 @@ async def activity_list(
 # synology-apm-cli log drive list
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@_drive_app.command("list")
+@_drive_app.command("list", help=_list_help("List drive information logs for a backup server.", "drive"))
 @run_async
 async def drive_list(
     ctx: typer.Context,
@@ -274,16 +276,6 @@ async def drive_list(
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
-    """List drive information logs for a backup server.
-
-    \b
-    Search mode (server name keyword):
-      synology-apm-cli log drive list "apm-server-01"
-
-    \b
-    Direct mode (server ID from synology-apm-cli infra server list --verbose):
-      synology-apm-cli log drive list --id <server-id>
-    """
     level_enums = _parse_level(level)
 
     def _row(e: DriveLog) -> list[str]:
@@ -324,7 +316,7 @@ async def drive_list(
 # synology-apm-cli log connection list
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@_conn_app.command("list")
+@_conn_app.command("list", help=_list_help("List connection logs for a backup server.", "connection"))
 @run_async
 async def connection_list(
     ctx: typer.Context,
@@ -343,16 +335,6 @@ async def connection_list(
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
-    """List connection logs for a backup server.
-
-    \b
-    Search mode (server name keyword):
-      synology-apm-cli log connection list "apm-server-01"
-
-    \b
-    Direct mode (server ID from synology-apm-cli infra server list --verbose):
-      synology-apm-cli log connection list --id <server-id>
-    """
     level_enums = _parse_level(level)
     await _run_log_list(
         ctx, name=name, server_id=server_id, since=since, until=until,
@@ -373,7 +355,7 @@ async def connection_list(
 # synology-apm-cli log system list
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@_system_app.command("list")
+@_system_app.command("list", help=_list_help("List advanced system logs for a backup server.", "system"))
 @run_async
 async def system_list(
     ctx: typer.Context,
@@ -392,16 +374,6 @@ async def system_list(
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
 ) -> None:
-    """List advanced system logs for a backup server.
-
-    \b
-    Search mode (server name keyword):
-      synology-apm-cli log system list "apm-server-01"
-
-    \b
-    Direct mode (server ID from synology-apm-cli infra server list --verbose):
-      synology-apm-cli log system list --id <server-id>
-    """
     level_enums = _parse_level(level)
     await _run_log_list(
         ctx, name=name, server_id=server_id, since=since, until=until,

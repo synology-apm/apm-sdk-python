@@ -76,8 +76,6 @@ async def _resolve_activity_workload(
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
-    """Register all activity tools onto server."""
-
     @registrar.tool(description=(
         "List backup activities. Filter by status (queuing/backing_up/canceling/success/failed/partial/canceled), "
         "machine types (pc,ps,vm,fs), M365 types (exchange,onedrive,chat,sharepoint,teams,group), GWS types "

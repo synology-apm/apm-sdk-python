@@ -13,8 +13,6 @@ from synology_apm.sdk import APMClient, RetirementPlanCreateRequest
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
-    """Register retirement plan tools onto server."""
-
     @registrar.tool(description=f"List retirement plans. Filter by name. {LIST_RESULT_SUFFIX}")
     async def list_retirement_plans(
         ctx: Context,

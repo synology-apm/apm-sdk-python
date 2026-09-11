@@ -6,7 +6,6 @@ from synology_apm.mcp.tools.plans import common, gws, m365, machine, retirement,
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
-    """Register all plan tools onto server."""
     common.register(registrar)
     machine.register(registrar)
     m365.register(registrar)

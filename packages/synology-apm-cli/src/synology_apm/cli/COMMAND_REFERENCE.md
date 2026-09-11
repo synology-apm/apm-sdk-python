@@ -1,4 +1,4 @@
-# APM CLI — Command Reference
+# APM CLI — Command Behavior Reference
 
 > Corresponding product: Synology ActiveProtect Manager
 
@@ -24,7 +24,7 @@ material, not a document meant to be read cover to cover.
    - [plan protection / retirement / tiering — Plan Management](#plan-protection--retirement--tiering--plan-management)
    - [activity — Activity Log Queries](#activity--activity-log-queries)
    - [infra — Infrastructure Information](#infra--infrastructure-information)
-   - [synology-apm-cli log — Backup Server Logs](#synology-apm-cli-log--backup-server-logs)
+   - [log — Backup Server Logs](#log--backup-server-logs)
 - [Status and Color Conventions](#status-and-color-conventions)
 - [Error Handling](#error-handling)
 
@@ -464,7 +464,7 @@ being stopped (ongoing operations continue; immutable-workload lock durations ar
 
 ---
 
-### `synology-apm-cli log` — Backup Server Logs
+### log — Backup Server Logs
 
 Queries the system logs of a specified backup server; see `_run_log_list()`'s own docstring
 (`log.py`) for the DP-only server requirement, shared by all four `log * list` commands.

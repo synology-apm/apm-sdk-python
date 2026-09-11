@@ -90,8 +90,6 @@ def _resolve_update_selectors(
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
-    """Register all machine workload tools onto server."""
-
     register_workload_tools(
         registrar,
         name_prefix="machine",

@@ -23,8 +23,6 @@ _LIST_RESOURCES: list[tuple[str, str, Callable[[APMClient], Any]]] = [
 
 
 def register(server: FastMCP) -> None:  # pragma: no cover
-    """Register all MCP resources onto server."""
-
     @server.resource("apm://site", description="APM site overview: site UUID, external address, management servers, storage, and workload counts.")
     async def site_resource(ctx: Context) -> ToolResult:  # pragma: no cover
         apm: APMClient = ctx.lifespan_context["apm"]

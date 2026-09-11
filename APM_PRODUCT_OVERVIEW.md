@@ -131,7 +131,7 @@ Enterprise-grade multi-site management capability:
 
 ### Security / Ransomware Defense
 
-Differentiating capabilities emphasized in APM 1.1+:
+Differentiating capabilities:
 
 - **WORM / Immutable Backup**: Prevents backups from being deleted or tampered with
 - **Air-gap Backup**: Three tiers of air-gap options

@@ -46,8 +46,6 @@ def _shared_drive_setting(
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
-    """Register all GWS tools onto server."""
-
     # ── Domain lookup tool ────────────────────────────────────────────────────
 
     @registrar.tool(description="Get GWS domain details by domain (see list_saas_applications for valid IDs).")

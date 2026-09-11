@@ -15,8 +15,6 @@ from synology_apm.sdk import APMClient, TieringPlanCreateRequest
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
-    """Register tiering plan tools onto server."""
-
     @registrar.tool(description=f"List tiering plans. Filter by name. {LIST_RESULT_SUFFIX}")
     async def list_tiering_plans(
         ctx: Context,

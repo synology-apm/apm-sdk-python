@@ -168,8 +168,6 @@ def _register_export_tools(
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
-    """Register all M365 tools onto server."""
-
     # ── SaaS application lookup tools ─────────────────────────────────────────
 
     @registrar.tool(description=(

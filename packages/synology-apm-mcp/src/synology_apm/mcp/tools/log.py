@@ -57,8 +57,6 @@ async def _list_dp_server_logs(
 
 
 def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
-    """Register all log tools onto server."""
-
     @registrar.tool(description=(
         "List APM activity logs for a backup server (DP appliances only). Filter by level "
         "(info/warning/error), log_type (protection/system/data_access), time window, or keyword. "

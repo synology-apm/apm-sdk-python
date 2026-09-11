@@ -18,7 +18,7 @@ Python SDK for `Synology ActiveProtect Manager <https://www.synology.com/product
 
    async def main():
        async with APMClient("apm.corp.com", "admin", "password") as apm:
-           workloads = await apm.machine.workloads.list()
+           workloads, _ = await apm.machine.workloads.list()
            for wl in workloads:
                print(wl.name, wl.status)
 

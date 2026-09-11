@@ -405,8 +405,8 @@ class M365WorkloadCollection(_VersionMixin):
         resp = await self._session.delete(
             "/api/v1/workload/m365_workload/batch",
             json={
-                # tenantId is the field name in APM 1.2; APM 2.0 renamed it to primKey.
-                # Send both to keep this working against either version.
+                # APM's tenant identifier field name differs by server version; both are sent
+                # so the request works against either.
                 "tenantId": workload.tenant_id,
                 "primKey": workload.tenant_id,
                 "isFromUnmanagedWorkload": False,
