@@ -4,11 +4,13 @@
 help: ## List available targets
 	@grep -E '^[a-z0-9-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-28s %s\n", $$1, $$2}'
 
-test: ## Run the pre-commit checklist (unit + integration tests, lint, mypy, coverage, MCP coverage check, version consistency check)
+test: ## Run the pre-commit checklist (unit + integration tests, lint, mypy across linux/win32/darwin, coverage, MCP coverage check, version consistency check)
 	uv run pytest tests/unit/ --cov=synology_apm.sdk --cov=synology_apm.cli --cov=synology_apm.mcp --cov=examples --cov-report=term --cov-report=html -n auto -q
 	uv run pytest tests/integration/ --record-mode=none --import-mode=importlib -q
 	uv run ruff check packages/synology-apm-sdk/src packages/synology-apm-cli/src packages/synology-apm-mcp/src tests examples scripts
-	uv run mypy
+	uv run mypy --platform linux --cache-dir .mypy_cache/linux
+	uv run mypy --platform win32 --cache-dir .mypy_cache/win32
+	uv run mypy --platform darwin --cache-dir .mypy_cache/darwin
 	uv run python scripts/check_mcp_coverage.py
 	uv run python scripts/check_version_consistency.py
 

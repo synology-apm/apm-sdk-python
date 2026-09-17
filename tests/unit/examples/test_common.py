@@ -6,6 +6,7 @@ import asyncio
 import io
 import os
 import signal
+import sys
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta, timezone
@@ -212,13 +213,15 @@ def tz_utc_plus_2() -> Iterator[None]:
     """Pin the process's local timezone to UTC+2 so fmt_dt output is deterministic."""
     old = os.environ.get("TZ")
     os.environ["TZ"] = "Etc/GMT-2"  # POSIX sign convention: Etc/GMT-2 is UTC+2
-    time.tzset()
+    if sys.platform != "win32":
+        time.tzset()
     yield
     if old is None:
         os.environ.pop("TZ", None)
     else:
         os.environ["TZ"] = old
-    time.tzset()
+    if sys.platform != "win32":
+        time.tzset()
 
 
 def test_fmt_dt_none_returns_empty_default() -> None:
@@ -229,17 +232,20 @@ def test_fmt_dt_none_returns_custom_default() -> None:
     assert fmt_dt(None, default="N/A") == "N/A"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="TZ/time.tzset local-time pinning is POSIX-only")
 def test_fmt_dt_converts_utc_to_local_time(tz_utc_plus_2: None) -> None:
     dt = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
     assert fmt_dt(dt) == "2026-06-15 14:00:00"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="TZ/time.tzset local-time pinning is POSIX-only")
 def test_fmt_dt_converts_fixed_offset_to_local_time(tz_utc_plus_2: None) -> None:
     # 07:00 at UTC-3 is 10:00 UTC, i.e. 12:00 in the pinned UTC+2 local zone.
     dt = datetime(2026, 6, 15, 7, 0, 0, tzinfo=timezone(timedelta(hours=-3)))
     assert fmt_dt(dt) == "2026-06-15 12:00:00"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="TZ/time.tzset local-time pinning is POSIX-only")
 def test_fmt_dt_custom_fmt(tz_utc_plus_2: None) -> None:
     # 23:00 UTC crosses midnight into the next day in the UTC+2 local zone.
     dt = datetime(2026, 6, 15, 23, 0, 0, tzinfo=UTC)
