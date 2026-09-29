@@ -432,10 +432,7 @@ class WebAPISession:
         req_id = next(self._debug_seq)
         start = time.monotonic()
         if self._debug:
-            masked = {**params, "passwd": "***"}
-            if "otp_code" in masked:
-                masked["otp_code"] = "***"
-            _debug_print_request(req_id, "GET", url, params=masked)
+            _debug_print_request(req_id, "GET", url, params=_redact(params))
 
         try:
             async with self._session.get(url, params=params, ssl=self._ssl_param()) as resp:
@@ -449,7 +446,7 @@ class WebAPISession:
 
             if self._debug:
                 _debug_print_response(
-                    req_id, resp.status, data,
+                    req_id, resp.status, _redact(data),
                     method="GET", url=url, duration=time.monotonic() - start,
                 )
 
@@ -516,7 +513,9 @@ class WebAPISession:
         if self._debug:
             _debug_print_request(
                 req_id, method, url,
-                params=kwargs.get("params"), body=kwargs.get("json"), headers=kwargs.get("headers"),
+                params=_redact(kwargs.get("params")),
+                body=_redact(kwargs.get("json")),
+                headers=_redact(kwargs.get("headers")),
             )
 
         try:
@@ -527,7 +526,7 @@ class WebAPISession:
 
                 if self._debug:
                     _debug_print_response(
-                        req_id, resp.status, body,
+                        req_id, resp.status, _redact(body),
                         method=method, url=url, duration=time.monotonic() - start,
                     )
 
@@ -769,6 +768,37 @@ def _has_detail_code(body: Any, code: int) -> bool:
 
 
 _DEBUG_MAX_BODY = 4096  # response bodies longer than this are truncated
+
+_SENSITIVE_EXACT_KEYS = frozenset({
+    "passwd", "otp_code", "device_id", "did", "sid", "synotoken",
+    "accesskey", "secretkey", "secret", "password", "loginpassword",
+    "storageencryptionkey", "encryptionkey",
+})
+
+
+def _redact(value: Any) -> Any:
+    """Recursively mask dict values whose key exactly matches a known credential/secret
+    field name (see _SENSITIVE_EXACT_KEYS).
+
+    Applied to every request/response, not just the login endpoint's own known fields.
+    Uses exact matching rather than a substring heuristic, since the latter would also
+    mask unrelated fields that merely contain a sensitive-looking word — e.g. the login
+    flag "enable_syno_token" (a plain "yes"/"no" value, not a secret).
+    """
+    if isinstance(value, dict):
+        return {
+            k: "***" if k.lower() in _SENSITIVE_EXACT_KEYS else _redact(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact(v) for v in value]
+    if isinstance(value, tuple):
+        # Query params are sometimes a list of (key, value) tuples rather than a dict
+        # (see WebAPISession.get()/.delete()'s `params` type) — mask those the same way.
+        if len(value) == 2 and isinstance(value[0], str) and value[0].lower() in _SENSITIVE_EXACT_KEYS:
+            return (value[0], "***")
+        return tuple(_redact(v) for v in value)
+    return value
 
 
 def _debug_print_request(

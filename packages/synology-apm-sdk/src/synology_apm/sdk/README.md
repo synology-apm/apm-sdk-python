@@ -50,7 +50,16 @@ Every `APMError` subclass also exposes a `to_dict()` method returning a JSON-saf
 
 ### Add a collection method
 
-1. Implement it in the relevant `collections/` module (see "Design Conventions" above).
+1. Implement it in the relevant `collections/` module (see "Design Conventions" above). Any
+   `{variable}` interpolated into a request path (as opposed to a fixed literal segment) must
+   be wrapped with `_seg()` from `collections/_shared.py` — e.g. `f"/api/v1/foo/{_seg(some_id)}"`
+   — so the value cannot introduce an extra path segment into the request URL. Enforced by
+   `tests/unit/sdk/collections/test_path_segment_convention.py`. If it sends or receives a
+   field carrying a password, API key, encryption key, or auth-bypass token, add that field's
+   exact key name to `_SENSITIVE_EXACT_KEYS` in `_http.py` so `debug=True` masks it — a
+   forgotten one is caught by `tests/unit/sdk/test_sensitive_key_convention.py`, which
+   flags any new credential-shaped key name and requires it to be masked or explicitly
+   reviewed as safe.
 2. If it introduces a new public symbol (enum, model, collection), export it via `sdk/__init__.py` + `__all__`, then run `grep -r "from synology_apm\.sdk\." packages/synology-apm-cli/src examples/` and confirm no output — CLI and examples must consume it via the top-level `synology_apm.sdk` package, never a submodule import.
 3. Add exactly one `[[mapping]]` or `[[not_exposed]]` entry to `scripts/mcp_coverage.toml` — enforced by `make test`.
 4. Add a unit test in `tests/unit/sdk/collections/` (see `tests/CLAUDE.md` for the request-contract + response-parsing conventions).

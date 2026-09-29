@@ -28,6 +28,7 @@ from ._shared import (
     _delete_plan_checked,
     _not_found_as,
     _paginate,
+    _seg,
     _update_plan_and_fetch,
 )
 
@@ -150,7 +151,7 @@ async def _get_plan_by_name(
 async def _get_plan_by_id(session: WebAPISession, plan_id: str) -> ProtectionPlan:
     """Fetch a single plan by UUID and parse it."""
     with _not_found_as(_RESOURCE_TYPE, plan_id, detail_code=4001):
-        raw = await session.get(f"/api/v1/plan/backup_plan/{plan_id}")
+        raw = await session.get(f"/api/v1/plan/backup_plan/{_seg(plan_id)}")
     plan_raw = raw if "id" in raw else raw.get("plan") or raw
     cache = await _build_location_cache(session, [plan_raw])
     return _parse_plan(plan_raw, cache)
@@ -469,7 +470,7 @@ async def _update_plan(
 ) -> ProtectionPlan:
     body = body_builder(request)
     return await _update_plan_and_fetch(
-        session, f"/api/v1/plan/backup_plan/{plan_id}", body, request.name, _RESOURCE_TYPE,
+        session, f"/api/v1/plan/backup_plan/{_seg(plan_id)}", body, request.name, _RESOURCE_TYPE,
         lambda: _get_plan_by_id(session, plan_id),
     )
 
@@ -481,7 +482,7 @@ async def _delete_plan(
 ) -> None:
     plan_id = plan.plan_id if isinstance(plan, ProtectionPlan) else plan
     await _delete_plan_checked(
-        session, f"/api/v1/plan/backup_plan/{plan_id}", plan_id, resource_type,
+        session, f"/api/v1/plan/backup_plan/{_seg(plan_id)}", plan_id, resource_type,
         in_use_flags={4019: "has_workloads", 4017: "has_server_template"},
         message=f"Cannot delete plan {plan_id!r}: plan is still in use.",
     )

@@ -31,7 +31,7 @@ from ..models.remote_storage import (
     _AzureBlobStorageAddRequestBase,
     _S3VendorStorageAddRequest,
 )
-from ._shared import ListResult, _not_found_as
+from ._shared import ListResult, _not_found_as, _seg
 
 _REMOTE_STORAGE_STATUS_MAP: dict[str, RemoteStorageStatus] = {
     "Connection":      RemoteStorageStatus.CONNECTED,
@@ -182,7 +182,7 @@ class RemoteStorageCollection:
             ResourceNotFoundError: The specified remote storage does not exist.
         """
         with _not_found_as("RemoteStorage", storage_id):
-            raw = await self._session.get(f"/api/v1/external_storage/{storage_id}")
+            raw = await self._session.get(f"/api/v1/external_storage/{_seg(storage_id)}")
             if not raw.get("id"):
                 raise ResourceNotFoundError("empty response", resource_type="unknown", resource_id="")
         return _parse_remote_storage(raw)
@@ -345,7 +345,7 @@ class RemoteStorageCollection:
         """
         try:
             await self._session.delete(
-                f"/api/v1/external_storage/{storage.storage_id}", json={}
+                f"/api/v1/external_storage/{_seg(storage.storage_id)}", json={}
             )
         except APIError as exc:
             if exc.error_code == 3014:

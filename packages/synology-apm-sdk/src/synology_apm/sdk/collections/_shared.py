@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Generic, NamedTuple, TypeVar
+from urllib.parse import quote
 
 from .._http import WebAPISession, _get_all_detail_codes, _has_detail_code
 from ..enums import (
@@ -136,7 +137,7 @@ async def _fetch_remote_storage_location(
     carries no display name; any other lookup failure propagates to the caller.
     """
     try:
-        raw = await session.get(f"/api/v1/external_storage/{dest_id}")
+        raw = await session.get(f"/api/v1/external_storage/{_seg(dest_id)}")
     except ResourceNotFoundError:
         return None
     name = raw.get("displayName") or ""
@@ -336,6 +337,15 @@ def _tunnel_headers(namespace: str) -> dict[str, str]:
     return {"x-syno-tunnel-route": namespace}
 
 
+def _seg(value: Any) -> str:
+    """URL-encode a value for safe use as a single path segment.
+
+    Escapes "/" (and any other reserved character) so a value interpolated
+    into a request path cannot introduce extra path segments.
+    """
+    return quote(str(value), safe="")
+
+
 # ── _VersionMixin ─────────────────────────────────────────────────────────
 
 
@@ -387,7 +397,7 @@ class _VersionMixin:
         if until:
             params.append(("createEndTimestamp", str(int(until.timestamp()))))
         raw = await self._session.get(
-            f"/api/v1/workload/{workload.namespace}/{workload.workload_id}/version",
+            f"/api/v1/workload/{_seg(workload.namespace)}/{_seg(workload.workload_id)}/version",
             params=params,
         )
         wl_type = self._version_wl_type(workload)

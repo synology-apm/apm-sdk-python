@@ -8,7 +8,7 @@ from ..enums import BackupServerRole, BackupServerType, ServerStatus
 from ..exceptions import InvalidOperationError, ResourceNotFoundError
 from ..models.backup_server import BackupServer
 from ..models.tiering_plan import TieringPlan
-from ._shared import ListResult, _not_found_as, _paginate, _parse_tiering_status
+from ._shared import ListResult, _not_found_as, _paginate, _parse_tiering_status, _seg
 from .tiering_plans import _get_plans_bulk
 
 _SERVER_STATUS_MAP: dict[str, ServerStatus] = {
@@ -202,7 +202,7 @@ class BackupServerCollection:
             ResourceNotFoundError: The specified backup server does not exist.
         """
         with _not_found_as("BackupServer", backup_server_id):
-            raw = await self._session.get(f"/api/v1/infra/backup_server/{backup_server_id}")
+            raw = await self._session.get(f"/api/v1/infra/backup_server/{_seg(backup_server_id)}")
             server_raw = (
                 raw.get("backupServer") or raw
                 if not raw.get("backupServers")

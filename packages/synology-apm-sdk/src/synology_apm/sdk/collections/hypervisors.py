@@ -7,7 +7,7 @@ from .._http import WebAPISession
 from ..enums import HypervisorType
 from ..exceptions import ResourceNotFoundError
 from ..models.hypervisor import Hypervisor
-from ._shared import ListResult, _not_found_as
+from ._shared import ListResult, _not_found_as, _seg
 
 _HOST_TYPE_MAP: dict[str, HypervisorType] = {
     "ESXi":            HypervisorType.VSPHERE_ESXI,
@@ -53,7 +53,7 @@ class HypervisorCollection:
             ResourceNotFoundError: The specified hypervisor does not exist.
         """
         with _not_found_as("Hypervisor", hypervisor_id):
-            raw = await self._session.get(f"/api/v1/inventory/{hypervisor_id}")
+            raw = await self._session.get(f"/api/v1/inventory/{_seg(hypervisor_id)}")
             if not raw.get("id"):
                 raise ResourceNotFoundError("empty response", resource_type="unknown", resource_id="")
         return _parse_hypervisor(raw)

@@ -134,6 +134,22 @@ async def test_get_calls_single_endpoint() -> None:
     assert wl.plan.category == WorkloadCategory.MACHINE
 
 
+async def test_get_encodes_slash_in_workload_id() -> None:
+    """A workload_id containing "/" must be percent-encoded in the request path so it
+    cannot introduce an extra path segment into the request URL."""
+    raw_id = "wl/evil"
+    async with connected_session() as (session, m):
+        m.get(
+            f"{BASE_URL}/api/v1/workload/device_workload/wl%2Fevil?namespace={NAMESPACE}",
+            payload={**SAMPLE_WORKLOAD, "id": raw_id},
+        )
+        collection = MachineWorkloadCollection(session)
+        wl = await collection.get(raw_id, namespace=NAMESPACE)
+        await session.disconnect()
+
+    assert wl.workload_id == raw_id
+
+
 async def test_get_parses_archive_plan_ref_as_retirement_plan() -> None:
     """A workload whose planRef.kind is ArchivePlan parses plan as a RetirementPlan."""
     archived_workload = {

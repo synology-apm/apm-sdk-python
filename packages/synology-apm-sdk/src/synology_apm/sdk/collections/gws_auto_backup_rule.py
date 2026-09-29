@@ -12,7 +12,7 @@ from ..models.gws_auto_backup_rule import (
     GWSAutoBackupRuleListResult,
     GWSSharedDriveSetting,
 )
-from ._shared import _is_terminating
+from ._shared import _is_terminating, _seg
 
 
 def _parse_shared_drive_setting(raw: dict[str, Any]) -> GWSSharedDriveSetting:
@@ -72,7 +72,7 @@ class GWSAutoBackupRuleCollection:
             ResourceNotFoundError: The specified domain was not found.
         """
         raw, global_config = await asyncio.gather(
-            self._session.get(f"/api/v1/application/gw/domain/auto_backup_rule/{domain}"),
+            self._session.get(f"/api/v1/application/gw/domain/auto_backup_rule/{_seg(domain)}"),
             self._get_global_config(domain),
         )
         rules = tuple(
@@ -147,7 +147,7 @@ class GWSAutoBackupRuleCollection:
             drive_group_ids:    Replacement Drive group IDs, or None to keep current.
         """
         await self._session.put(
-            f"/api/v1/application/gw/domain/auto_backup_rule/{rule.uid}",
+            f"/api/v1/application/gw/domain/auto_backup_rule/{_seg(rule.uid)}",
             json={
                 "namespace": rule.namespace,
                 "backupPlanId": plan_id if plan_id is not None else rule.plan_id,
@@ -173,7 +173,7 @@ class GWSAutoBackupRuleCollection:
             rule: Rule to delete (obtained via list()).
         """
         await self._session.delete(
-            f"/api/v1/application/gw/domain/auto_backup_rule/{rule.uid}",
+            f"/api/v1/application/gw/domain/auto_backup_rule/{_seg(rule.uid)}",
             params={"namespace": rule.namespace},
         )
 
@@ -233,7 +233,7 @@ class GWSAutoBackupRuleCollection:
         global_config["autoAddArchived"] = include_archived_accounts
 
         await self._session.put(
-            f"/api/v1/application/gw/domain/{domain}",
+            f"/api/v1/application/gw/domain/{_seg(domain)}",
             json={
                 "domainName": domain_spec.get("domainName") or domain,
                 "globalConfig": global_config,
@@ -241,7 +241,7 @@ class GWSAutoBackupRuleCollection:
         )
 
     async def _get_domain_spec(self, domain: str) -> dict[str, Any]:
-        raw = await self._session.get(f"/api/v1/application/gw/domain/{domain}")
+        raw = await self._session.get(f"/api/v1/application/gw/domain/{_seg(domain)}")
         if not raw.get("isFound"):
             raise ResourceNotFoundError(
                 f"GWS domain '{domain}' not found.",

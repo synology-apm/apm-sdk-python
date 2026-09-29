@@ -12,6 +12,7 @@ from ._shared import (
     _delete_plan_checked,
     _not_found_as,
     _paginate,
+    _seg,
     _update_plan_and_fetch,
 )
 
@@ -61,7 +62,7 @@ class RetirementPlanCollection:
             ResourceNotFoundError: No matching plan found.
         """
         with _not_found_as(_RESOURCE_TYPE, plan_id, detail_code=4002):
-            raw = await self._session.get(f"/api/v1/plan/archive_plan/{plan_id}")
+            raw = await self._session.get(f"/api/v1/plan/archive_plan/{_seg(plan_id)}")
         return _parse_retirement_plan(raw)
 
     async def get_by_name(self, name: str) -> RetirementPlan:
@@ -126,7 +127,7 @@ class RetirementPlanCollection:
         """
         body = _build_retirement_body(request)
         return await _update_plan_and_fetch(
-            self._session, f"/api/v1/plan/archive_plan/{plan_id}", body, request.name, _RESOURCE_TYPE,
+            self._session, f"/api/v1/plan/archive_plan/{_seg(plan_id)}", body, request.name, _RESOURCE_TYPE,
             lambda: self.get(plan_id),
         )
 
@@ -143,7 +144,7 @@ class RetirementPlanCollection:
         """
         plan_id = plan.plan_id if isinstance(plan, RetirementPlan) else plan
         await _delete_plan_checked(
-            self._session, f"/api/v1/plan/archive_plan/{plan_id}", plan_id, _RESOURCE_TYPE,
+            self._session, f"/api/v1/plan/archive_plan/{_seg(plan_id)}", plan_id, _RESOURCE_TYPE,
             in_use_flags={4019: "has_workloads"},
             message=f"Cannot delete plan {plan_id!r}: plan is still in use.",
         )

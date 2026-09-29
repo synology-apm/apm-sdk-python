@@ -14,7 +14,7 @@ from yarl import URL
 
 from synology_apm.sdk._http import WebAPISession
 from synology_apm.sdk.exceptions import AuthenticationError
-from tests.unit.sdk.conftest import BASE_URL, LOGIN_OK, LOGOUT_OK, TESTUSER_LOGIN_URL
+from tests.unit.sdk.conftest import BASE_URL, LOGIN_OK, LOGOUT_OK, TESTUSER_LOGIN_URL, connected_session
 from tests.unit.sdk.conftest import (
     connect_testuser_session as connect_session,
 )
@@ -430,3 +430,69 @@ async def test_connect_second_call_reconnects() -> None:
         await disconnect_session(m, session)
 
     assert len(m.requests.get(("GET", URL(login_url)), [])) == 2
+
+
+# ── debug-mode redaction (non-login endpoints) ─────────────────────────────
+
+
+async def test_debug_mode_masks_secret_fields_in_non_login_request_and_response(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A credential-like field (e.g. a remote storage secretKey) in a request body or
+    response body must be masked in debug output, not just the login endpoint's own
+    passwd/otp_code fields."""
+    async with connected_session(debug=True) as (session, m):
+        m.post(
+            f"{BASE_URL}/api/v1/external_storage",
+            payload={"id": "abc", "secretKey": "resp-secret-value"},
+        )
+        await session.post(
+            "/api/v1/external_storage",
+            json={"accessKey": "AKIA-real-value", "secretKey": "req-secret-value"},
+        )
+    captured = capsys.readouterr()
+    assert "req-secret-value" not in captured.err
+    assert "resp-secret-value" not in captured.err
+    assert "AKIA-real-value" not in captured.err
+    assert '"accessKey": "***"' in captured.err
+    assert '"secretKey": "***"' in captured.err
+
+
+async def test_debug_mode_masks_vault_encryption_key_in_request_and_response(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A remote storage vault's client-side encryption key (storageEncryptionKey on the
+    request, encryptionKey on the response) is at least as sensitive as accessKey/secretKey
+    — it must be masked in debug output too."""
+    async with connected_session(debug=True) as (session, m):
+        m.post(
+            f"{BASE_URL}/api/v1/external_storage",
+            payload={"id": "abc", "encryptionKey": "resp-encryption-key-value"},
+        )
+        await session.post(
+            "/api/v1/external_storage",
+            json={"storageEncryptionKey": "req-encryption-key-value"},
+        )
+    captured = capsys.readouterr()
+    assert "req-encryption-key-value" not in captured.err
+    assert "resp-encryption-key-value" not in captured.err
+    assert '"storageEncryptionKey": "***"' in captured.err
+    assert '"encryptionKey": "***"' in captured.err
+
+
+async def test_debug_mode_masks_secret_fields_in_tuple_list_params(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Query params are sometimes a list of (key, value) tuples rather than a dict
+    (WebAPISession.get()/.delete()'s documented `params` type) — a credential-like key in
+    that shape must be masked too, not just dict-shaped params."""
+    async with connected_session(debug=True) as (session, m):
+        m.get(f"{BASE_URL}/api/v1/some_endpoint?limit=5&passwd=leaked-tuple-value", payload={})
+        await session.get(
+            "/api/v1/some_endpoint",
+            params=[("passwd", "leaked-tuple-value"), ("limit", 5)],
+        )
+    captured = capsys.readouterr()
+    assert "leaked-tuple-value" not in captured.err
+    assert '"passwd"' in captured.err
+    assert '"***"' in captured.err

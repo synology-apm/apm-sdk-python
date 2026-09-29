@@ -102,6 +102,44 @@ async def test_debug_mode_masks_otp_code_in_printed_request(capsys: pytest.Captu
     assert '"otp_code": "***"' in captured.err
 
 
+async def test_debug_mode_masks_device_id_and_login_response_session_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With debug=True, device_id (a trusted-device token that skips 2FA) must be masked
+    in the printed login request, and sid/synotoken/did (session-identifying fields in the
+    login response) must be masked in the printed login response."""
+    session = make_session(device_id="did-abc", debug=True)
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL_WITH_DEVICE_ID, payload=LOGIN_OK_WITH_DID)
+        await session.connect()
+        await session.disconnect()
+    captured = capsys.readouterr()
+    assert '"device_id": "did-abc"' not in captured.err
+    assert '"sid": "abc"' not in captured.err
+    assert '"synotoken": "tok"' not in captured.err
+    assert '"did": "did-new"' not in captured.err
+    assert '"device_id": "***"' in captured.err
+    assert '"sid": "***"' in captured.err
+    assert '"synotoken": "***"' in captured.err
+    assert '"did": "***"' in captured.err
+
+
+async def test_debug_mode_does_not_mask_non_secret_login_flags(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """enable_syno_token/enable_device_token are plain "yes" flags, not credentials — an
+    exact-key-name match must not mistake them for a secret just because their key name
+    contains the substring "token"."""
+    session = make_session(otp_code="123456", debug=True)
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL_WITH_OTP, payload=LOGIN_OK)
+        await session.connect()
+        await session.disconnect()
+    captured = capsys.readouterr()
+    assert '"enable_syno_token": "yes"' in captured.err
+    assert '"enable_device_token": "yes"' in captured.err
+
+
 async def test_401_reauth_reuses_device_id_not_otp_code() -> None:
     """An automatic 401 re-auth resends the (now-known) device_id, never the original one-shot
     otp_code — otherwise a session-expiry re-login for a two-factor account would need a fresh

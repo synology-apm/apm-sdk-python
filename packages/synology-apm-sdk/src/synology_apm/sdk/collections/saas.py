@@ -7,7 +7,7 @@ from .._http import WebAPISession
 from ..enums import WorkloadCategory
 from ..exceptions import ResourceNotFoundError
 from ..models.saas import GWSDomainInfo, M365TenantInfo
-from ._shared import ListResult
+from ._shared import ListResult, _seg
 
 
 class SaasCollection:
@@ -32,7 +32,7 @@ class SaasCollection:
         Raises:
             ResourceNotFoundError: The specified tenant was not found.
         """
-        raw = await self._session.get(f"/api/v1/application/m365/tenant/{tenant_id}")
+        raw = await self._session.get(f"/api/v1/application/m365/tenant/{_seg(tenant_id)}")
         if not raw.get("isFound"):
             raise ResourceNotFoundError(
                 f"M365 tenant '{tenant_id}' not found.",
@@ -60,7 +60,7 @@ class SaasCollection:
         Raises:
             ResourceNotFoundError: The specified domain was not found.
         """
-        raw = await self._session.get(f"/api/v1/application/gw/domain/{domain}")
+        raw = await self._session.get(f"/api/v1/application/gw/domain/{_seg(domain)}")
         if not raw.get("isFound"):
             raise ResourceNotFoundError(
                 f"GWS domain '{domain}' not found.",

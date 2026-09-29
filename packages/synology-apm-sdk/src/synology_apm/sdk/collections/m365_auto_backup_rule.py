@@ -10,7 +10,7 @@ from ..models.m365_auto_backup_rule import (
     M365AutoBackupRuleListResult,
     M365CollabServiceSetting,
 )
-from ._shared import _is_terminating
+from ._shared import _is_terminating, _seg
 
 
 def _parse_collab_setting(raw: dict[str, Any]) -> M365CollabServiceSetting:
@@ -62,7 +62,7 @@ class M365AutoBackupRuleCollection:
             collaboration service settings. Rules pending deletion are excluded.
         """
         raw = await self._session.get(
-            f"/api/v1/application/m365/tenant/auto_backup_rule/{tenant_id}",
+            f"/api/v1/application/m365/tenant/auto_backup_rule/{_seg(tenant_id)}",
         )
         rules = tuple(
             _parse_rule(r) for r in (raw.get("rulesWithMetas") or [])
@@ -129,7 +129,7 @@ class M365AutoBackupRuleCollection:
             chat_group_ids:     Replacement Chat group IDs, or None to keep current.
         """
         await self._session.put(
-            f"/api/v1/application/m365/tenant/auto_backup_rule/{rule.uid}",
+            f"/api/v1/application/m365/tenant/auto_backup_rule/{_seg(rule.uid)}",
             json={
                 "namespace": rule.namespace,
                 "backupPlanId": plan_id if plan_id is not None else rule.plan_id,
@@ -150,7 +150,7 @@ class M365AutoBackupRuleCollection:
             rule: Rule to delete (obtained via list()).
         """
         await self._session.delete(
-            f"/api/v1/application/m365/tenant/auto_backup_rule/{rule.uid}",
+            f"/api/v1/application/m365/tenant/auto_backup_rule/{_seg(rule.uid)}",
             params={"namespace": rule.namespace},
         )
 

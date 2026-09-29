@@ -104,6 +104,22 @@ async def test_get_returns_hypervisor() -> None:
     assert h.version == "6.5"
 
 
+async def test_get_encodes_slash_in_id() -> None:
+    """An id containing "/" must be percent-encoded in the request path so it cannot
+    introduce an extra path segment into the request URL."""
+    raw_id = "abc/def"
+    async with connected_session() as (session, m):
+        m.get(
+            f"{BASE_URL}/api/v1/inventory/abc%2Fdef",
+            payload={**SAMPLE_HYPERVISOR_RAW, "id": raw_id},
+        )
+        collection = HypervisorCollection(session)
+        h = await collection.get(raw_id)
+        await session.disconnect()
+
+    assert h.hypervisor_id == raw_id
+
+
 async def test_get_not_found_raises() -> None:
     async with connected_session() as (session, m):
         m.get(f"{BASE_URL}/api/v1/inventory/no-such-id", payload={})

@@ -19,6 +19,7 @@ from ._shared import (
     _not_found_as,
     _paginate,
     _parse_tiering_status,
+    _seg,
     _update_plan_and_fetch,
 )
 
@@ -78,7 +79,7 @@ class TieringPlanCollection:
             ResourceNotFoundError: No matching plan found.
         """
         with _not_found_as(_RESOURCE_TYPE, plan_id, detail_code=4003):
-            raw = await self._session.get(f"/api/v1/plan/tiering_plan/{plan_id}")
+            raw = await self._session.get(f"/api/v1/plan/tiering_plan/{_seg(plan_id)}")
         dest_id = _spec_destination(raw)
         dest = await _fetch_remote_storage_location(self._session, dest_id) if dest_id else None
         return _parse_tiering_plan(raw, {dest_id: dest} if dest else {})
@@ -149,7 +150,7 @@ class TieringPlanCollection:
         """
         body = _build_tiering_body(request)
         return await _update_plan_and_fetch(
-            self._session, f"/api/v1/plan/tiering_plan/{plan_id}", body, request.name, _RESOURCE_TYPE,
+            self._session, f"/api/v1/plan/tiering_plan/{_seg(plan_id)}", body, request.name, _RESOURCE_TYPE,
             lambda: self.get(plan_id),
         )
 
@@ -166,7 +167,7 @@ class TieringPlanCollection:
         """
         plan_id = plan.plan_id if isinstance(plan, TieringPlan) else plan
         await _delete_plan_checked(
-            self._session, f"/api/v1/plan/tiering_plan/{plan_id}", plan_id, _RESOURCE_TYPE,
+            self._session, f"/api/v1/plan/tiering_plan/{_seg(plan_id)}", plan_id, _RESOURCE_TYPE,
             in_use_flags={4029: "has_backup_servers"},
             message=f"Cannot delete plan {plan_id!r}: backup servers are assigned to this plan.",
         )
@@ -225,7 +226,7 @@ async def _get_plans_bulk(
     """
     async def fetch_raw(pid: str) -> dict[str, Any] | None:
         try:
-            raw: dict[str, Any] = await session.get(f"/api/v1/plan/tiering_plan/{pid}")
+            raw: dict[str, Any] = await session.get(f"/api/v1/plan/tiering_plan/{_seg(pid)}")
             return raw
         except ResourceNotFoundError:
             return None

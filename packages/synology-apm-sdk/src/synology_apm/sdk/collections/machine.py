@@ -39,6 +39,7 @@ from ._shared import (
     _parse_ts_optional,
     _parse_verify_status,
     _raise_first_batch_error,
+    _seg,
     _tunnel_headers,
     _VersionMixin,
 )
@@ -218,7 +219,7 @@ class MachineWorkloadCollection(_VersionMixin):
         msg = f"Workload not found (namespace={namespace!r}, id={workload_id!r})."
         with _not_found_as("Workload", workload_id, message=msg):
             raw = await self._session.get(
-                f"/api/v1/workload/device_workload/{workload_id}",
+                f"/api/v1/workload/device_workload/{_seg(workload_id)}",
                 params={"namespace": namespace},
             )
             if not raw or "id" not in raw:
@@ -373,7 +374,7 @@ class MachineWorkloadCollection(_VersionMixin):
                 resource_id=workload.workload_id,
             )
         raw = await self._session.get(
-            f"/api/v1/workload/device_workload/{workload.workload_id}",
+            f"/api/v1/workload/device_workload/{_seg(workload.workload_id)}",
             params={"namespace": workload.namespace},
         )
         spec: dict[str, Any] = raw["spec"]
@@ -392,7 +393,7 @@ class MachineWorkloadCollection(_VersionMixin):
         }
         try:
             await self._session.put(
-                f"/api/v1/workload/device_workload/{workload.workload_id}",
+                f"/api/v1/workload/device_workload/{_seg(workload.workload_id)}",
                 json={"spec": spec, "namespace": workload.namespace},
             )
         except APIError as exc:
@@ -421,7 +422,7 @@ class MachineWorkloadCollection(_VersionMixin):
             APIError: APM rejected the request or no verification video exists for this version.
         """
         resp = await self._session.post(
-            f"/api/v1/version/{version.version_id}/video:download",
+            f"/api/v1/version/{_seg(version.version_id)}/video:download",
             json={
                 "workload": {
                     "uid": workload.workload_id,
