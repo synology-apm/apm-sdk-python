@@ -61,6 +61,13 @@ def load_cli_env() -> CliEnv:
     return CliEnv(cred_env=cred_env, host=host, username=username)
 
 
+def _decode_partial(output: bytes | str | None) -> str:
+    # TimeoutExpired carries partial output as bytes even when run() was called with text=True.
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output or ""
+
+
 def _default_repo_root() -> Path:
     # _cli_runner.py -> cli -> smoke -> tests -> repo root
     return Path(__file__).resolve().parents[3]
@@ -107,8 +114,8 @@ class CliRunner:
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            stdout = _decode_partial(exc.stdout)
+            stderr = _decode_partial(exc.stderr)
             return CliResult(
                 args=full_args,
                 exit_code=-1,
@@ -150,8 +157,8 @@ class CliRunner:
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            stdout = _decode_partial(exc.stdout)
+            stderr = _decode_partial(exc.stderr)
             return CliResult(
                 args=full_args,
                 exit_code=-1,

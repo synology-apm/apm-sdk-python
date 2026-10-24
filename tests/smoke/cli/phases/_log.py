@@ -36,10 +36,10 @@ def _run_activity(ctx: SmokeContext, name: str, server_id: str) -> None:
     )
     ctx.run(
         DOMAIN, "log.activity.list[page-all]",
-        ["log", "activity", "list", name, "--page-all", "--since", "24h"],
+        ["log", "activity", "list", name, "--page-all", "--limit", "500", "--since", "24h"],
         output_format="json",
-        note="Exercises NDJSON streaming for --page-all; bounded to 24h so full pagination"
-        " fits the runner timeout on log-heavy servers.",
+        note="Exercises NDJSON streaming for --page-all; bounded to 24h with --limit 500 pages so"
+        " full pagination fits the runner timeout on log-heavy servers.",
     )
     ctx.run(DOMAIN, "log.activity.list[csv]", ["log", "activity", "list", name], output_format="csv")
     ctx.run(DOMAIN, "log.activity.list[yaml]", ["log", "activity", "list", name], output_format="yaml")
