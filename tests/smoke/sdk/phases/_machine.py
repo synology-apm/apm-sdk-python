@@ -39,6 +39,7 @@ from synology_apm.sdk import (
     WorkloadStatus,
     WorkloadVersion,
 )
+from tests.sandbox_checks import assert_defaults_fit, is_restorable_version
 
 from .._context import SmokeContext
 from .._trace import current_step as _current_step
@@ -514,6 +515,33 @@ async def _run_type_block(
                 f"No {prefix.upper()} version with verify_status == SUCCESS found"
                 f" (checked w0 + {fallback_checked} fallback workload(s))",
             )
+
+        # ── Sandbox (read-only: defaults and resources; never starts a sandbox) ──
+        sandbox_version = next((v for v in versions if is_restorable_version(v)), None)
+        if w0.is_retired or sandbox_version is None:
+            ctx.skip_remaining(
+                DOMAIN,
+                [f"machine.{prefix}.sandbox.resources", f"machine.{prefix}.sandbox.defaults",
+                 f"machine.{prefix}.sandbox.check[defaults_within_resources]"],
+                reason="First workload is retired or has no restorable backup-server version",
+            )
+        else:
+            _sv = sandbox_version
+            resources = await ctx.call(
+                DOMAIN, f"machine.{prefix}.sandbox.resources",
+                lambda: apm.machine.sandboxes.get_resources(w0, _sv),
+            )
+            defaults = await ctx.call(
+                DOMAIN, f"machine.{prefix}.sandbox.defaults",
+                lambda: apm.machine.sandboxes.get_default_settings(w0, _sv),
+            )
+            if resources is not None and defaults is not None:
+                try:
+                    assert_defaults_fit(resources, defaults)
+                    fit, note = True, ""
+                except AssertionError as exc:
+                    fit, note = False, str(exc)
+                ctx.check(DOMAIN, f"machine.{prefix}.sandbox.check[defaults_within_resources]", fit, note=note)
 
     # ── FS-specific checks ────────────────────────────────────────────────────
 

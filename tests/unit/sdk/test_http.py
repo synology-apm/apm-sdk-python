@@ -9,11 +9,13 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from aiointercept import aiointercept
 from yarl import URL
 
 from synology_apm.sdk._http import WebAPISession
-from synology_apm.sdk.exceptions import AuthenticationError
+from synology_apm.sdk.exceptions import APIError, AuthenticationError, PermissionDeniedError
 from tests.unit.sdk.conftest import BASE_URL, LOGIN_OK, LOGOUT_OK, TESTUSER_LOGIN_URL, connected_session
 from tests.unit.sdk.conftest import (
     connect_testuser_session as connect_session,
@@ -496,3 +498,94 @@ async def test_debug_mode_masks_secret_fields_in_tuple_list_params(
     assert "leaked-tuple-value" not in captured.err
     assert '"passwd"' in captured.err
     assert '"***"' in captured.err
+
+
+# ── Console traffic: fetch_cookies() / ws_connect() ───────────────────────
+
+LINK_ORIGIN = "https://apm2.corp.com"
+WS_URL = f"{LINK_ORIGIN}/ws/vm-1"
+
+
+async def test_fetch_cookies_keeps_the_cookies_apart_from_the_login() -> None:
+    session = make_session()
+    async with aiointercept(mock_external_urls=True) as m:
+        await connect_session(m, session)
+        m.get(f"{LINK_ORIGIN}/link", headers={"Set-Cookie": "side_cookie=1; path=/"})
+        login_cookies = {c.key for c in session._session.cookie_jar}  # type: ignore[union-attr]
+
+        assert await session.fetch_cookies(f"{LINK_ORIGIN}/link", shown=LINK_ORIGIN) == (200, {"side_cookie": "1"})
+        assert {c.key for c in session._session.cookie_jar} == login_cookies  # type: ignore[union-attr]
+        # The login's own cookies are not sent along.
+        assert "Cookie" not in (m.requests[("GET", URL(f"{LINK_ORIGIN}/link"))][0].kwargs.get("headers") or {})
+        await disconnect_session(m, session)
+
+
+async def test_fetch_cookies_returns_the_status_without_cookies() -> None:
+    session = make_session()
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(f"{LINK_ORIGIN}/link", status=404)
+        assert await session.fetch_cookies(f"{LINK_ORIGIN}/link", shown=LINK_ORIGIN) == (404, {})
+        await session.disconnect()
+
+
+@pytest.mark.parametrize(("status", "error"), [
+    (400, APIError), (401, APIError), (403, PermissionDeniedError), (502, APIError),
+])
+async def test_ws_connect_rejections(status: int, error: type[APIError]) -> None:
+    session = make_session()
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(f"{WS_URL}?sharing_id=abc", status=status)
+        try:
+            with pytest.raises(error) as exc_info:
+                await session.ws_connect(WS_URL, params={"sharing_id": "abc"}, cookies={"sharing_sid": "s1"})
+        finally:
+            await session.disconnect()
+    assert type(exc_info.value) is error
+    assert exc_info.value.error_code == status
+    [request] = m.requests[("GET", URL(f"{WS_URL}?sharing_id=abc"))]
+    assert request.kwargs["headers"]["Cookie"] == "sharing_sid=s1"
+
+
+async def test_console_traffic_debug_output_hides_credentials(capsys: pytest.CaptureFixture[str]) -> None:
+    session = make_session(debug=True)
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(f"{LINK_ORIGIN}/sharing/SeCrEt1", headers={"Set-Cookie": "c=1; path=/"})
+        m.get(f"{WS_URL}?sharing_id=SeCrEt2", status=400)
+        try:
+            await session.fetch_cookies(f"{LINK_ORIGIN}/sharing/SeCrEt1", shown=f"{LINK_ORIGIN}/sharing/***")
+            with pytest.raises(APIError):
+                await session.ws_connect(WS_URL, params={"sharing_id": "SeCrEt2"}, cookies={"c": "1"})
+        finally:
+            await session.disconnect()
+
+    err = capsys.readouterr().err
+    assert f"GET {LINK_ORIGIN}/sharing/***" in err and f"WEBSOCKET {WS_URL}" in err
+    assert "SeCrEt" not in err
+
+
+async def test_disconnect_closes_open_console_websockets() -> None:
+    server_saw_close = asyncio.Event()
+
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse(protocols=("binary",))
+        await ws.prepare(request)
+        async for _ in ws:
+            pass
+        server_saw_close.set()
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/ws", handler)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        session = make_session()
+        ws = await session.ws_connect(
+            f"http://{server.host}:{server.port}/ws", params={"sharing_id": "abc"}, cookies={},
+        )
+        await session.disconnect()
+
+        assert ws.closed
+        await asyncio.wait_for(server_saw_close.wait(), 1)
+    finally:
+        await server.close()

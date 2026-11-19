@@ -84,6 +84,20 @@ class TestSdkErrorToDictCodes:
         assert result["error"] == "invalid_argument"
         assert "host_ip" in result["message"]
 
+    def test_sandbox_settings_error_names_its_fields(self) -> None:
+        from synology_apm.sdk import SandboxSettingsError
+
+        exc = SandboxSettingsError(
+            "hyperv_enlightenments must be False when cpu_compatibility_mode is True.",
+            field="hyperv_enlightenments", other_field="cpu_compatibility_mode",
+        )
+        assert _convert(exc) == {
+            "error": "invalid_argument",
+            "message": "hyperv_enlightenments must be False when cpu_compatibility_mode is True.",
+            "field": "hyperv_enlightenments",
+            "other_field": "cpu_compatibility_mode",
+        }
+
     def test_unexpected_exception(self) -> None:
         exc = RuntimeError("something completely unexpected")
         result = _convert(exc)

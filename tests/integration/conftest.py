@@ -1,13 +1,9 @@
 """Integration test fixtures.
 
-Default mode (--record-mode=none) replays from cassettes in tests/cassettes/
-and requires no live APM server.
-
-To record cassettes against a real APM:
-    pytest tests/integration/ --record-mode=new_episodes -v
-
-To run offline against recorded cassettes:
-    pytest tests/integration/ --record-mode=none -v   (default)
+--record-mode (from pytest-recording) picks where each test runs:
+    none (default)  replay the test's cassette in tests/cassettes/; skip when it is missing
+    new_episodes    record against the live APM when the cassette is missing, replay otherwise
+    all             record every test against the live APM, overwriting its cassette
 """
 from __future__ import annotations
 
@@ -40,31 +36,36 @@ def record_mode(request: pytest.FixtureRequest) -> str:
     return mode
 
 
+@pytest.fixture(scope="function")
+def live(request: pytest.FixtureRequest, record_mode: str) -> bool:
+    """Whether this test runs against the live APM (True) or replays its cassette (False).
+
+    Live under --record-mode=all, and under --record-mode=new_episodes when the test has no
+    cassette yet; replay otherwise.
+    """
+    return record_mode == "all" or (
+        record_mode == "new_episodes" and not cassette_path(request.node.nodeid).exists()
+    )
+
+
 @pytest_asyncio.fixture(scope="function")
-async def apm(
-    request: pytest.FixtureRequest,
-    record_mode: str,
-) -> AsyncGenerator[APMClient, None]:
+async def apm(request: pytest.FixtureRequest, live: bool) -> AsyncGenerator[APMClient, None]:
     """Function-scoped APMClient backed by a per-test cassette.
 
-    Replay mode (default): loads tests/cassettes/<module>__<test>.json and
-    replays all interactions without hitting the network.
+    Replay (``live`` is False): loads tests/cassettes/<module>__<test>.json and replays its
+    interactions without touching the network.
 
-    Record mode (--record-mode=new_episodes|all): connects to the live APM
-    server, runs the test, then saves the cassette.
+    Live (``live`` is True): connects to the APM configured in .env, runs the test, then saves
+    the cassette. The client uses its default request timeout unless the test carries
+    @pytest.mark.apm_timeout(seconds).
     """
     path = cassette_path(request.node.nodeid)
 
-    use_live = record_mode == "all" or (
-        record_mode == "new_episodes" and not path.exists()
-    )
-
-    if not use_live:
+    if not live:
         # ── Replay ───────────────────────────────────────────────────────────
         if not path.exists():
             pytest.skip("No cassette — run with --record-mode=new_episodes first")
         cassette = _Cassette.load(path)
-        # Dummy credentials — no real connection is made
         client = APMClient("localhost", "user", "pass", verify_ssl=False)
         install_replay(client._session, cassette)
         await client.connect()
@@ -79,11 +80,15 @@ async def apm(
         if not host or not user or not pwd:
             pytest.skip("APM_HOST / APM_USERNAME / APM_PASSWORD not set in .env")
 
-        # Strip scheme prefix if .env uses full URL (e.g. "https://10.0.0.1")
+        # Accept a full URL in .env (e.g. "https://apm.corp.com").
         if host and "://" in host:
             host = host.split("://", 1)[1]
 
-        client = APMClient(host, user, pwd, verify_ssl=False, timeout=15.0)
+        timeout_marker = request.node.get_closest_marker("apm_timeout")
+        if timeout_marker is None:
+            client = APMClient(host, user, pwd, verify_ssl=False)
+        else:
+            client = APMClient(host, user, pwd, verify_ssl=False, timeout=float(timeout_marker.args[0]))
         cassette = _Cassette()
         install_recording(client._session, cassette)
 

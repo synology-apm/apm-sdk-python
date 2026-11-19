@@ -101,7 +101,7 @@ synology_apm/mcp/
     ├── infra.py            # Site info, backup server, remote storage, hypervisor tools
     ├── log.py              # DP-server-only log tools
     ├── m365.py             # M365 workload tools + exports + auto-backup rules + tenant lookup
-    ├── machine.py          # Machine workload tools + file server add/update
+    ├── machine.py          # Machine workload tools + file server add/update + sandbox tools
     └── plans/
         ├── __init__.py
         ├── _builders_common.py   # Retention/schedule/backup-copy builders shared by machine + M365 + GWS
@@ -127,11 +127,13 @@ only states the rule a new tool must follow and where that rule lives.
   M365, and GWS share the same verb/noun with a differing prefix; cross-category plan operations that behave
   identically across all three categories (list/get/delete) carry no category prefix — only `create_*`/
   `update_*` are split per category, since their request shapes diverge.
-- Every tool/resource returns a `ToolResult` (`dict[str, Any]`, defined in `_errors.py`) — built via
-  `run_tool()` / `run_resource()` (`_errors.py`), `run_audited_tool()` / `destructive_tool()` (`_security.py`),
-  or `list_tool()` / `get_tool()` (`_helpers.py`). A tool body must not catch exceptions itself — let them
-  propagate to these wrappers, which raise `fastmcp.exceptions.ToolError` (isError=true) with the
-  JSON-encoded error dict as its message.
+- Every tool/resource returns a `ToolResult` (`dict[str, Any]`, defined in `_errors.py`), except a tool
+  whose answer is an image (`get_machine_sandbox_screenshot`), which returns
+  `fastmcp.utilities.types.Image`. Both are built via `run_tool()` / `run_resource()` (`_errors.py`),
+  `run_audited_tool()` / `destructive_tool()` (`_security.py`), or `list_tool()` / `get_tool()`
+  (`_helpers.py`). A tool body must not catch exceptions itself — let them propagate to these wrappers,
+  which raise `fastmcp.exceptions.ToolError` (isError=true) with the JSON-encoded error dict as its
+  message.
 - List tools return `{items, total, truncated?}` via `list_result()` / `list_tool()`; every list tool's
   `description=` must end with `LIST_RESULT_SUFFIX` or `LIST_RESULT_SUFFIX_UNRELIABLE_TOTAL` (`_helpers.py`)
   so the documented shape can't drift from what the tool returns. get tools return a single item via
@@ -141,6 +143,12 @@ only states the rule a new tool must follow and where that rule lives.
 
 - Repeatable/list-typed parameters: `Annotated[list[X], JSON_LIST_VALIDATOR]` (`_helpers.py`), never a bare
   `list[X] | None` — see `coerce_json_encoded_list()`'s docstring for why.
+- List-of-object parameters: `X` is a `typing_extensions.TypedDict` (`Literal` enum fields, `StrictBool`
+  booleans, `NotRequired` optional fields), so the tool schema shows each entry's shape and malformed
+  entries are rejected before the tool runs; descriptions state only the rules a schema can't.
+  A TypedDict's docstring becomes the schema description agents see, so it follows the same
+  rules as a `description=` (no SDK names or internals).
+  `call_tool()` skips this validation; test it through a real client (`test_tool_arg_coercion.py`).
 - Enum-typed parameters: a `Literal[...]` alias from `_enums.py`, never the SDK enum class directly.
   `_enums.py` is the single source of truth for each value set; convert to the real enum only at the SDK
   call site (`to_enum_list()` for repeatable filters, a direct `EnumType(value)` otherwise).
@@ -154,7 +162,8 @@ only states the rule a new tool must follow and where that rule lives.
   omitting the mode defaults to `readonly`. Modes are cumulative: `readonly < operator < admin`.
   Gating happens only at registration — never re-check the mode inside a tool body.
 - **Choosing a mode for a new tool**: `readonly` for list/get queries; `operator` for triggering a routine,
-  already-anticipated action (backup, cancel, export); `admin` for version lock/unlock, and anything that
+  already-anticipated action (backup, cancel, export, sandbox start) and for a get that grants access to a
+  guest (a sandbox's console link or screen); `admin` for version lock/unlock, and anything that
   creates/updates/deletes a persistent configuration object, or permanently changes a workload's lifecycle
   (retire, delete, change_plan).
 - Changing the `APM_MCP_MODE` env var itself (its accepted values or gating semantics), independent of any
@@ -175,6 +184,10 @@ only states the rule a new tool must follow and where that rule lives.
 - Any `delete_*`/`retire_*` tool takes `confirm: bool = False` and goes through the shared
   `destructive_tool()` helper (`_security.py`) — never hand-roll the preview/execute branching. Its
   `description=` must end with the shared `DESTRUCTIVE_PREVIEW_SUFFIX` constant.
+- **`confirm` vs. `dry_run`**: `confirm` belongs only to destructive tools. A non-destructive tool may
+  take `dry_run: bool = False` (`start_machine_sandbox`); a dry run changes nothing and is not audited.
+  A dry run and a real run return the same shape (`start_machine_sandbox`: `{"version_id", "settings"}`,
+  the final settings), so the agent learns the result without a prior dry run.
 
 ### Audit logging
 
@@ -184,6 +197,10 @@ only states the rule a new tool must follow and where that rule lives.
   tenant/domain value by `WorkloadCategory.scope_param_name` (`"tenant_id"` for M365, `"domain"`
   for GWS), so the logged key matches the tool's own parameter name rather than always saying
   `tenant_id`. Read-only tools are never audit-logged.
+- **Access-grant tools** return a bearer link (a URL usable without signing in:
+  `get_machine_sandbox_console_link`) or a view of a guest's screen (`get_machine_sandbox_screenshot`).
+  They are `operator` tools wrapped in `run_audited_tool()`; `params` holds only the identifiers used
+  to request the grant, and the link or image never goes into any log line.
 
 ### Resources vs tools
 
@@ -228,9 +245,10 @@ only states the rule a new tool must follow and where that rule lives.
   behavior, and `_server.py`'s `_FailedConnectionClient` / `build_lifespan()` and
   `_config.py::resolve_mode()` for the implementation.
 - **Error dict shape**: `sdk_error_to_dict()` (`_errors.py`) is the single place that converts any exception
-  to `{"error": <code>, ...}`; codes needing user remediation get an additional `"hint"` field (see
-  `_RECONFIGURE_CODES`) — this must not duplicate or diverge from the CLI's own error-message mapping
-  (`cli/errors.py`). `raise_tool_error()` (`_errors.py`) JSON-encodes this dict into the `ToolError` every
+  to `{"error": <code>, ...}` — it must not duplicate or diverge from the CLI's own error-message mapping
+  (`cli/errors.py`). Codes needing user remediation get an additional `"hint"` field (see
+  `_RECONFIGURE_CODES`); a `SandboxSettingsError` maps to `invalid_argument` plus `field` / `other_field`
+  naming the setting(s). `raise_tool_error()` (`_errors.py`) JSON-encodes this dict into the `ToolError` every
   wrapper raises on failure — new error-handling code should call it rather than raising `ToolError` directly.
 
 ---
@@ -259,8 +277,10 @@ way it is:
 | `mock_apm` | Deeply-mocked `APMClient`, every collection method an `AsyncMock()` |
 | `mock_ctx` | `Context` with `lifespan_context = {"apm": mock_apm}` |
 | `admin_server` | Real server with every tool registered (`mode="admin"`) |
+| `client_server(mode)` | Factory: real server for `mode` with a lifespan yielding `mock_apm`, for an in-memory `fastmcp.Client` (real argument validation) |
+| `audit_log` | Enables the audit log for the test and returns its path; read it with `audit_entries(path)` |
 | `resource_server` | Real server with only resources registered, plus a real lifespan yielding `mock_apm` |
-| `call_tool(server, name, ctx, **kwargs)` | Invoke a registered tool through its real FastMCP wiring |
+| `call_tool(server, name, ctx, **kwargs)` | Call a registered tool's function with its registration wrappers; skips FastMCP argument validation (use `client_server` for that) |
 | `assert_destructive_preview_then_execute(...)` | Asserts the shared preview-then-execute contract |
 | `make_*` | Model factories — keyword defaults plus `.update(kwargs)` |
 

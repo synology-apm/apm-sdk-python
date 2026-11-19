@@ -14,6 +14,7 @@ import pytest
 
 from synology_apm.mcp import _enums
 from synology_apm.sdk import (
+    LISTED_VERSION_STATUSES,
     BackupActivityStatus,
     BackupServerType,
     FileServerType,
@@ -21,8 +22,14 @@ from synology_apm.sdk import (
     M365WorkloadType,
     MachineWorkloadType,
     RestoreActivityStatus,
+    SandboxAdapterModel,
+    SandboxDiskController,
+    SandboxKey,
+    SandboxMachineType,
+    SandboxVideoCard,
     ServerStatus,
     VerifyStatus,
+    VersionStatus,
     WorkloadStatus,
 )
 
@@ -46,6 +53,18 @@ _PARITY_CASES = [
         id="FileServerType-excludes-unknown",
     ),
     pytest.param(_enums.VerifyStatusLiteral, VerifyStatus, set(), id="VerifyStatus"),
+    pytest.param(
+        _enums.VersionListStatusLiteral,
+        VersionStatus,
+        {s.value for s in VersionStatus} - {s.value for s in LISTED_VERSION_STATUSES},
+        # A version listing only ever holds the SDK's listed statuses.
+        id="VersionStatus-listed-only",
+    ),
+    pytest.param(_enums.SandboxVideoCardLiteral, SandboxVideoCard, set(), id="SandboxVideoCard"),
+    pytest.param(_enums.SandboxMachineTypeLiteral, SandboxMachineType, set(), id="SandboxMachineType"),
+    pytest.param(_enums.SandboxAdapterModelLiteral, SandboxAdapterModel, set(), id="SandboxAdapterModel"),
+    pytest.param(_enums.SandboxDiskControllerLiteral, SandboxDiskController, set(), id="SandboxDiskController"),
+    pytest.param(_enums.SandboxKeyLiteral, SandboxKey, set(), id="SandboxKey"),
     pytest.param(
         _enums.WorkloadStatusLiteral,
         WorkloadStatus,

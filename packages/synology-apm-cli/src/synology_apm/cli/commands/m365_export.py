@@ -5,19 +5,16 @@ Consumed by m365.py: import _TENANT_ID_OPTION, _make_export_app.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import re
-import signal
 from datetime import date
 from pathlib import Path
-from types import FrameType
 from typing import NamedTuple, cast
 
 import typer
 
 from synology_apm.cli._async import run_async
 from synology_apm.cli._display import fmt_datetime, fmt_export_status, print_list_footer
-from synology_apm.cli._helpers import api_spinner, apm_session
+from synology_apm.cli._helpers import api_spinner, apm_session, confirm_overwrite, poll_until
 from synology_apm.cli._options import (
     LIMIT_OPTION,
     LIST_OUTPUT_OPTION,
@@ -35,13 +32,12 @@ from synology_apm.cli._validate import (
     require_or_help,
     validate_resolve_args,
 )
-from synology_apm.cli.errors import EXIT_CANCEL, EXIT_ERROR, err_console
+from synology_apm.cli.errors import EXIT_CANCEL, EXIT_ERROR, err_console, fail
 from synology_apm.cli.output import ListOutputFormat, cell, console, dispatch_paginated_list, new_table
 from synology_apm.sdk import (
     APMClient,
     ExchangeExportCollection,
     GroupExportCollection,
-    M365ExportActivity,
     M365ExportStartResult,
     M365ExportStatus,
     M365GroupInfo,
@@ -85,15 +81,6 @@ def _safe_export_name(wl_name: str) -> str:
     return re.sub(r"[^\w.-]", "_", wl_name).strip("_") or "export"
 
 
-def _confirm_overwrite(dest_path: str, yes: bool) -> None:
-    """Prompt before overwriting an existing download target; Exit(EXIT_CANCEL) when declined."""
-    if not yes and Path(dest_path).exists():
-        err_console.print(f"[yellow]![/yellow] File already exists: {dest_path}")
-        if not typer.confirm("Overwrite?", default=False):
-            err_console.print("\n[bright_black]Cancelled.[/bright_black]")
-            raise typer.Exit(EXIT_CANCEL)
-
-
 _EXPORT_DOWNLOADABLE: frozenset[M365ExportStatus] = frozenset({
     M365ExportStatus.READY_TO_DOWNLOAD,
     M365ExportStatus.WARNING,
@@ -108,55 +95,6 @@ _EXPORT_TERMINAL: frozenset[M365ExportStatus] = frozenset({
 })
 
 
-def _register_export_interrupt(loop: asyncio.AbstractEventLoop, event: asyncio.Event) -> None:
-    try:
-        loop.add_signal_handler(signal.SIGINT, event.set)
-    except (NotImplementedError, AttributeError):  # pragma: no cover
-        def _win_handler(sig: int, frame: FrameType | None) -> None:  # pragma: no cover
-            loop.call_soon_threadsafe(event.set)
-        signal.signal(signal.SIGINT, _win_handler)  # pragma: no cover
-
-
-def _unregister_export_interrupt(loop: asyncio.AbstractEventLoop) -> None:
-    try:
-        loop.remove_signal_handler(signal.SIGINT)
-    except (NotImplementedError, AttributeError):  # pragma: no cover
-        signal.signal(signal.SIGINT, signal.default_int_handler)  # pragma: no cover
-
-
-async def _poll_export_until_ready(
-    collection: ExchangeExportCollection | GroupExportCollection,
-    start_result: M365ExportStartResult,
-    poll_interval: int = 5,
-) -> tuple[M365ExportStatus | None, bool, M365ExportActivity | None]:
-    """Poll export activity until a terminal status is reached or Ctrl+C fires.
-
-    Returns (status, interrupted, last_activity):
-      status is None when interrupted before any terminal state.
-      last_activity is the last matched activity seen during polling (None if never found).
-    """
-    interrupt = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    _register_export_interrupt(loop, interrupt)
-    found_status: M365ExportStatus | None = None
-    last_activity: M365ExportActivity | None = None
-    try:
-        while not interrupt.is_set():
-            activity = await collection.get_activity_by_result(start_result)
-            if activity is not None:
-                last_activity = activity
-            if activity is not None and activity.status in _EXPORT_TERMINAL:
-                found_status = activity.status
-                break
-            with contextlib.suppress(TimeoutError):  # pragma: no cover
-                await asyncio.wait_for(interrupt.wait(), timeout=poll_interval)
-    finally:
-        _unregister_export_interrupt(loop)
-
-    interrupted = found_status is None
-    return found_status, interrupted, last_activity
-
-
 async def _wait_until_downloadable(
     col: ExchangeExportCollection | GroupExportCollection,
     start_result: M365ExportStartResult,
@@ -164,9 +102,12 @@ async def _wait_until_downloadable(
     cmd_prefix: str,
 ) -> None:
     """Poll until the export becomes downloadable; handle Ctrl+C and failed end states."""
-    status, interrupted, last_activity = await _poll_export_until_ready(col, start_result)
+    result = await poll_until(
+        lambda: col.get_activity_by_result(start_result), lambda a: a.status in _EXPORT_TERMINAL, interval=5,
+    )
+    last_activity = result.last
 
-    if interrupted:  # pragma: no cover
+    if result.outcome == "interrupted":  # pragma: no cover
         console.print()
         loop = asyncio.get_running_loop()
         raw = await loop.run_in_executor(
@@ -186,12 +127,9 @@ async def _wait_until_downloadable(
             )
         raise typer.Exit(EXIT_CANCEL)
 
-    if status not in _EXPORT_DOWNLOADABLE:
-        assert status is not None
-        err_console.print(
-            f"[red]✗[/red] Export ended with status: {fmt_export_status(status)}"
-        )
-        raise typer.Exit(EXIT_ERROR)
+    assert last_activity is not None
+    if last_activity.status not in _EXPORT_DOWNLOADABLE:
+        fail(f"Export ended with status: {fmt_export_status(last_activity.status)}")
 
 
 async def _start_export_and_resolve_url(
@@ -229,7 +167,7 @@ async def _start_export_and_resolve_url(
     )
     effective_export_name = export_name or Path(dest_path).name
 
-    _confirm_overwrite(dest_path, yes)
+    confirm_overwrite(dest_path, yes)
 
     with api_spinner("Starting export..."):
         if is_group:
@@ -287,7 +225,7 @@ async def _resolve_existing_export_url(
     dest_path = filename if filename is not None else _auto_download_filename_by_id(
         wl.name, activity_id
     )
-    _confirm_overwrite(dest_path, yes)
+    confirm_overwrite(dest_path, yes)
 
     activities, _ = await col.list(wl, limit=500)
     activity = next((a for a in activities if a.activity_id == activity_id), None)

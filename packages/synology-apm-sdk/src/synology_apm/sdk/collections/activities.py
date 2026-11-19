@@ -18,6 +18,7 @@ from ..enums import (
     M365WorkloadType,
     MachineWorkloadType,
     RestoreActivityStatus,
+    RestoreType,
     WorkloadCategory,
 )
 from ..exceptions import InvalidOperationError, ResourceNotFoundError
@@ -30,31 +31,34 @@ from ._activity_parsers import (
     _GWS_TYPE_TO_SAAS_SERVICE,
     _M365_TYPE_TO_SAAS_SERVICE,
     _MACHINE_TYPE_TO_CATEGORY_SERVICE,
-    _RESTORE_STATUS_TO_API,
     _SUBTYPE_TO_CANCEL_TYPE,
     _parse_backup_activity,
     _parse_data_sizes,
     _parse_log_entries,
     _parse_restore_activity,
+    _restore_type_filter,
 )
-from ._shared import ListResult, _paginate, _tunnel_headers
+from ._shared import ListResult, _paginate, _tunnel_headers, _wl_params
 
 ActivityT = TypeVar("ActivityT", BackupActivity, RestoreActivity)
 
 
 async def _get_latest_by_name(
     search: Callable[[bool], Awaitable[ListResult[ActivityT]]],
-    get: Callable[[str], Awaitable[ActivityT]],
+    detail: Callable[[ActivityT], Awaitable[ActivityT]],
     name: str,
     noun: str,
 ) -> ActivityT:
-    """Shared body for get_latest_by_workload_name(): search RECENT then HISTORY, exact-match the name."""
+    """Shared body for get_latest_by_workload_name(): search RECENT then HISTORY, exact-match the name.
+
+    ``detail`` completes the matched listed activity.
+    """
     q = name.lower()
     for history in (False, True):
         candidates, _ = await search(history)
         match = next((a for a in candidates if a.workload_name.lower() == q), None)
         if match is not None:
-            return await get(match.activity_id)
+            return await detail(match)
     raise ResourceNotFoundError(
         f"No {noun} activity found for workload '{name}'.",
         resource_type="Activity",
@@ -75,13 +79,18 @@ async def _fetch_backup_activity_detail(
 
 
 async def _fetch_backup_detail_extras(
-    session: WebAPISession, detail: dict[str, Any], *, log_uid: str, log_namespace: str,
+    session: WebAPISession,
+    detail: dict[str, Any],
+    *,
+    log_uid: str,
+    log_namespace: str,
+    include_logs: bool = True,
 ) -> dict[str, Any]:
     """Derive the get()/get_by_version() dataclasses.replace() fields from a fetched activity detail.
 
     Shared tail of BackupActivityCollection.get() and .get_by_version(): resolves
-    data_change_bytes/data_deduped_bytes/backup_scope from the detail, then fetches and
-    parses the activity's detail log.
+    data_change_bytes/data_deduped_bytes/backup_scope from the detail, then (with
+    include_logs) fetches and parses the activity's detail log.
     """
     detail_status = detail.get("status") or {}
     detail_spec = detail.get("spec") or {}
@@ -91,19 +100,19 @@ async def _fetch_backup_detail_extras(
     _scope_raw = machine_info.get("backupScope") or None
     backup_scope: BackupScope | None = _BACKUP_SCOPE_MAP.get(_scope_raw) if _scope_raw else None
 
-    raw_logs = await session.get(
-        "/api/v1/log/detail-log",
-        params={"limit": 1001, "offset": 0, "backupActivityUid": log_uid},
-        headers=_tunnel_headers(log_namespace),
-    )
-    log_entries = _parse_log_entries(raw_logs.get("detailLogs") or [])
-
-    return {
+    extras: dict[str, Any] = {
         "data_change_bytes": data_change,
         "data_deduped_bytes": data_deduped,
         "backup_scope": backup_scope,
-        "log_entries": log_entries,
     }
+    if include_logs:
+        raw_logs = await session.get(
+            "/api/v1/log/detail-log",
+            params={"limit": 1001, "offset": 0, "backupActivityUid": log_uid},
+            headers=_tunnel_headers(log_namespace),
+        )
+        extras["log_entries"] = _parse_log_entries(raw_logs.get("detailLogs") or [])
+    return extras
 
 
 class _BaseActivityCollection(Generic[ActivityT]):
@@ -122,9 +131,16 @@ class _BaseActivityCollection(Generic[ActivityT]):
         """Convert one raw API activity object to its SDK model. Implemented by each subclass."""
         raise NotImplementedError  # pragma: no cover
 
-    async def get(self, activity_id: str) -> ActivityT:
-        """Fetch full activity details by activity_id. Implemented by each subclass."""
-        raise NotImplementedError  # pragma: no cover
+    async def _require_by_id(self, activity_id: str) -> ActivityT:
+        """The listed activity with this activity_id; raise ResourceNotFoundError when there is none."""
+        target = await self._find_by_id(activity_id)
+        if target is None:
+            raise ResourceNotFoundError(
+                f"Activity '{activity_id}' not found.",
+                resource_type="Activity",
+                resource_id=activity_id,
+            )
+        return target
 
     async def _list_impl(
         self,
@@ -162,7 +178,10 @@ class _BaseActivityCollection(Generic[ActivityT]):
         )
 
     async def _find_by_id(self, activity_id: str) -> ActivityT | None:
-        """Page through recent then historical activities to locate one by activity_id."""
+        """Page through recent then historical activities to locate one by activity_id.
+
+        Compares the raw uid (which activity_id is parsed from), so only the match is parsed.
+        """
         list_method: str
         for list_method in ("RECENT", "HISTORY"):
 
@@ -180,9 +199,8 @@ class _BaseActivityCollection(Generic[ActivityT]):
                 return raw_page.get("activities") or [], raw_page.get("total")
 
             async for item in _paginate(fetch):
-                act = self._parse(item["activity"])
-                if act.activity_id == activity_id:
-                    return act
+                if (item["activity"].get("uid") or "") == activity_id:
+                    return self._parse(item["activity"])
         return None
 
 
@@ -247,8 +265,7 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
         extra_params.extend(("saasServiceType", _M365_TYPE_TO_SAAS_SERVICE[st]) for st in m365_types or [])
         extra_params.extend(("saasServiceType", _GWS_TYPE_TO_SAAS_SERVICE[st]) for st in gws_types or [])
         if workload is not None:
-            extra_params.append(("workload.uid", workload.workload_id))
-            extra_params.append(("workload.namespace", workload.namespace))
+            extra_params.extend(_wl_params(workload))
         return await self._list_impl(
             status_api=status_api,
             extra_params=extra_params or None,
@@ -260,23 +277,22 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
             offset=offset,
         )
 
-    async def get(self, activity_id: str) -> BackupActivity:
-        """Fetch the details (including logs) of a backup activity by activity_id.
+    async def get(self, activity_id: str, *, include_logs: bool = True) -> BackupActivity:
+        """Fetch the details of a backup activity by activity_id.
 
         Args:
             activity_id: Unique activity identifier.
+            include_logs: Attach the activity's log entries. Pass ``False`` when only its status
+                and sizes are needed (for example while polling); ``log_entries`` is then
+                ``None``.
 
         Raises:
             ResourceNotFoundError: The specified ID does not exist.
         """
-        target = await self._find_by_id(activity_id)
-        if target is None:
-            raise ResourceNotFoundError(
-                f"Activity '{activity_id}' not found.",
-                resource_type="Activity",
-                resource_id=activity_id,
-            )
+        return await self._with_details(await self._require_by_id(activity_id), include_logs=include_logs)
 
+    async def _with_details(self, target: BackupActivity, *, include_logs: bool = True) -> BackupActivity:
+        """``target`` (a listed activity) with its details, and optionally its logs, attached."""
         detail = await _fetch_backup_activity_detail(
             self._session,
             execution_id=target.execution_id,
@@ -284,15 +300,15 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
             namespace=target.namespace,
         )
         extras = await _fetch_backup_detail_extras(
-            self._session, detail, log_uid=activity_id, log_namespace=target.namespace,
+            self._session, detail, log_uid=target.activity_id, log_namespace=target.namespace,
+            include_logs=include_logs,
         )
         return dataclasses.replace(target, **extras)
 
     async def get_latest_by_workload_name(self, name: str) -> BackupActivity:
         """Fetch the latest backup activity details (including logs) for a given workload name.
 
-        Searches ongoing activities first, then history; exact-matches workload_name and
-        calls get() for full details.
+        Ongoing activities are searched before history.
 
         Args:
             name: Workload display name (exact match, case-insensitive).
@@ -302,7 +318,7 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
         """
         return await _get_latest_by_name(
             lambda history: self.list(keyword=name, limit=50, history=history),
-            self.get,
+            self._with_details,
             name,
             "backup",
         )
@@ -335,7 +351,7 @@ class BackupActivityCollection(_BaseActivityCollection[BackupActivity]):
         """Cancel a running backup activity.
 
         Args:
-            activity: The backup activity to cancel (obtained from list()).
+            activity: The backup activity to cancel.
         """
         pair = {"namespace": activity.namespace, "uid": activity.activity_id}
         if activity.category == WorkloadCategory.M365:
@@ -370,6 +386,7 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
         self,
         status: list[RestoreActivityStatus] | None = None,
         workload: Workload | None = None,
+        restore_types: list[RestoreType] | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
         keyword: str | None = None,
@@ -380,10 +397,14 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
         """List restore activity records.
 
         Args:
-            status: Restore activity status filter (OR logic).
+            status: Restore activity status filter (OR logic). ``READY_FOR_MIGRATE`` also
+                matches sandboxes that are ``SANDBOX_READY``.
             workload: Restrict results to a single workload's activities, matched by
                 ``(workload.workload_id, workload.namespace)``. Returns ``([], 0)``
                 if no workload matching this reference exists on the server.
+            restore_types: Restore type filter (OR logic), combined with ``status`` (an
+                activity must match both); for example ``[RestoreType.INSTANT_SANDBOX]`` lists
+                sandboxes only.
             since: Only include activities started at or after this time
                 (inclusive).
             until: Only include activities started at or before this time
@@ -398,16 +419,16 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
             (list of RestoreActivity, total) for the selected mode.
 
         Raises:
+            ValueError: ``restore_types`` holds ``RestoreType.UNKNOWN``; or ``status`` holds
+                ``SANDBOX_READY`` but not ``READY_FOR_MIGRATE``, and either ``restore_types``
+                is given but is not ``[RestoreType.INSTANT_SANDBOX]``, or ``restore_types`` is
+                omitted and ``status`` holds another status.
             ResourceNotFoundError: Raised for any cause other than a non-matching
                 ``workload`` filter (which instead returns ``([], 0)``, see above).
         """
-        status_api = [api for s in (status or []) for api in _RESTORE_STATUS_TO_API.get(s, [])]
-        extra_params: list[tuple[str, str | int]] | None = None
-        if workload is not None:
-            extra_params = [
-                ("workload.uid", workload.workload_id),
-                ("workload.namespace", workload.namespace),
-            ]
+        status_api, type_api = _restore_type_filter(status, restore_types)
+        extra_params: list[tuple[str, str | int]] = _wl_params(workload) if workload is not None else []
+        extra_params += [("restoreType", t) for t in type_api]
         try:
             return await self._list_impl(
                 status_api=status_api,
@@ -424,26 +445,25 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
                 raise
             return ListResult([], 0)
 
-    async def get(self, activity_id: str) -> RestoreActivity:
-        """Fetch the details (including logs) of a restore activity by activity_id.
+    async def get(self, activity_id: str, *, include_logs: bool = True) -> RestoreActivity:
+        """Fetch the details of a restore activity by activity_id.
 
         Args:
             activity_id: Unique activity identifier.
+            include_logs: Attach the activity's log entries. Pass ``False`` when only its status
+                is needed (for example while polling); ``log_entries`` is then ``None``.
 
         Raises:
             ResourceNotFoundError: The specified ID does not exist.
         """
-        target = await self._find_by_id(activity_id)
-        if target is None:
-            raise ResourceNotFoundError(
-                f"Activity '{activity_id}' not found.",
-                resource_type="Activity",
-                resource_id=activity_id,
-            )
+        target = await self._require_by_id(activity_id)
+        return await self._with_details(target) if include_logs else target
 
+    async def _with_details(self, target: RestoreActivity) -> RestoreActivity:
+        """Return ``target`` (a listed activity) with its detail log attached."""
         raw_logs = await self._session.get(
             "/api/v1/log/detail-log",
-            params={"limit": 1001, "offset": 0, "restoreActivityUid": activity_id},
+            params={"limit": 1001, "offset": 0, "restoreActivityUid": target.activity_id},
             headers=_tunnel_headers(target.namespace),
         )
         log_entries = _parse_log_entries(raw_logs.get("detailLogs") or [])
@@ -452,8 +472,7 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
     async def get_latest_by_workload_name(self, name: str) -> RestoreActivity:
         """Fetch the latest restore activity details (including logs) for a given workload name.
 
-        Searches ongoing activities first, then history; exact-matches workload_name and
-        calls get() for full details.
+        Ongoing activities are searched before history.
 
         Args:
             name: Workload display name (exact match, case-insensitive).
@@ -463,16 +482,16 @@ class RestoreActivityCollection(_BaseActivityCollection[RestoreActivity]):
         """
         return await _get_latest_by_name(
             lambda history: self.list(keyword=name, limit=50, history=history),
-            self.get,
+            self._with_details,
             name,
             "restore",
         )
 
     async def cancel(self, activity: RestoreActivity) -> None:
-        """Cancel a running restore activity.
+        """Cancel a running restore activity; for a sandbox, stop and delete its VM.
 
         Args:
-            activity: The restore activity to cancel (obtained from list()).
+            activity: The restore activity to cancel.
 
         Raises:
             InvalidOperationError: activity.workload_type has no known cancel mapping.

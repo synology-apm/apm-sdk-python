@@ -4,10 +4,11 @@ Pass 1 — manifest internal consistency: every sdk_path listed in the manifest
          (across [[mapping]] and [[not_exposed]]) must appear only once.
 
 Pass 2 — manifest -> SDK: every sdk_path in the manifest must resolve to a real
-         public async method on APMClient (catches typos and renamed/removed
-         SDK methods).
+         public async method or async context manager on APMClient (catches
+         typos and renamed/removed SDK methods).
 
-Pass 3 — SDK -> manifest: every public async method reachable from APMClient
+Pass 3 — SDK -> manifest: every public async method (or async context manager)
+         reachable from APMClient
          (walking collection properties, excluding session-lifecycle methods
          connect()/disconnect()) must appear in at least one manifest entry
          (catches new SDK methods added without a coverage decision).
@@ -45,19 +46,24 @@ def _load_manifest() -> dict[str, Any]:
         return tomllib.load(f)
 
 
+def _is_async_api(obj: Any) -> bool:
+    """An async method, or an @asynccontextmanager method (used as `async with`)."""
+    return inspect.iscoroutinefunction(obj) or inspect.isasyncgenfunction(getattr(obj, "__wrapped__", None))
+
+
 def _resolve_sdk_path(client: Any, path: str) -> bool:
-    """Return True if the dotted path resolves to a real async method on client."""
+    """Return True if the dotted path resolves to a real async method or async context manager on client."""
     obj: Any = client
     for segment in path.split("."):
         try:
             obj = getattr(obj, segment)
         except Exception:
             return False
-    return inspect.iscoroutinefunction(obj)
+    return _is_async_api(obj)
 
 
 def _walk_sdk_surface(obj: Any, prefix: str = "") -> set[str]:
-    """Return the dotted paths of every public async method reachable from obj.
+    """Return the dotted paths of every public async method (or async context manager) reachable from obj.
 
     Recurses into properties/attributes that are themselves SDK collection
     instances (identified by their module living under synology_apm.sdk.collections);
@@ -73,7 +79,7 @@ def _walk_sdk_surface(obj: Any, prefix: str = "") -> set[str]:
         except Exception:
             continue
         path = f"{prefix}.{name}" if prefix else name
-        if inspect.iscoroutinefunction(member):
+        if _is_async_api(member):
             paths.add(path)
         elif type(member).__module__.startswith("synology_apm.sdk.collections"):
             paths |= _walk_sdk_surface(member, path)

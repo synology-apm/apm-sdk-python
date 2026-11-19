@@ -17,6 +17,20 @@ cover.
 - [Type System Notes](#type-system-notes)
 - [Collection Behavior Rules](#collection-behavior-rules)
    - [MachineWorkloadCollection](#machineworkloadcollection)
+   - [MachineSandboxCollection](#machinesandboxcollection)
+      - [A sandbox is a restore activity](#a-sandbox-is-a-restore-activity)
+      - [Requests](#requests)
+      - [Locations](#locations)
+      - [Defaults](#defaults)
+      - [Values that are not settings](#values-that-are-not-settings)
+      - [Validation and SandboxSettingsError](#validation-and-sandboxsettingserror)
+   - [Sandbox console access](#sandbox-console-access)
+      - [Console link](#console-link)
+      - [Opening an access](#opening-an-access)
+      - [Console transport](#console-transport)
+      - [Access reuse and replacement](#access-reuse-and-replacement)
+      - [Screen](#screen)
+      - [VNC relay](#vnc-relay)
    - [M365WorkloadCollection](#m365workloadcollection)
    - [M365AutoBackupRuleCollection](#m365autobackuprulecollection)
    - [GWSWorkloadCollection](#gwsworkloadcollection)
@@ -25,6 +39,7 @@ cover.
    - [LogCollection](#logcollection)
    - [ExchangeExportCollection / GroupExportCollection](#exchangeexportcollection--groupexportcollection)
    - [BackupServerCollection](#backupservercollection)
+   - [Common Patterns Across Plan Collections](#common-patterns-across-plan-collections)
    - [ProtectionPlanCollection](#protectionplancollection)
    - [RetirementPlanCollection](#retirementplancollection)
    - [TieringPlanCollection](#tieringplancollection)
@@ -51,18 +66,20 @@ cover.
 |---|---|
 | `ServerStatus`, `BackupServerRole`, server status/type filters | `collections/backup_servers.py` — `_SERVER_STATUS_MAP`, `_SYNC_DISCONNECTED`, `_ROLE_MAP`, `_STATUS_FILTER_MAP`, `_TYPE_FILTER_MAP` |
 | `RemoteStorageStatus` / `RemoteStorageType` (API `connectionStatus` / `storageType`) | `collections/remote_storages.py` — `_REMOTE_STORAGE_STATUS_MAP`, `_REMOTE_STORAGE_TYPE_MAP` |
-| `BackupActivityStatus` / `RestoreActivityStatus` (parse and filter directions) | `collections/_activity_parsers.py` — `_BACKUP_STATUS_MAP`, `_RESTORE_STATUS_MAP`, `_BACKUP_STATUS_TO_API`, `_RESTORE_STATUS_TO_API` |
-| `RestoreType`, `ActivityWorkloadType`, cancel type strings | `collections/_activity_parsers.py` — `_RESTORE_TYPE_MAP`, `_RAW_TO_SUBTYPE`, `_SUBTYPE_TO_CANCEL_TYPE` |
+| `BackupActivityStatus` / `RestoreActivityStatus` (parse and filter directions) | `collections/_activity_parsers.py` — `_BACKUP_STATUS_MAP`, `_RESTORE_STATUS_MAP`, `_BACKUP_STATUS_TO_API`, `_RESTORE_STATUS_TO_API`, `_restore_type_filter` |
+| `RestoreType` (parse and `restore_types` filter directions), `ActivityWorkloadType`, cancel type strings | `collections/_activity_parsers.py` — `_RESTORE_TYPE_MAP` / `_RESTORE_TYPE_TO_API`, `_RAW_TO_SUBTYPE`, `_SUBTYPE_TO_CANCEL_TYPE` |
 | `MachineWorkloadType` / `M365WorkloadType` / `GWSWorkloadType` → `BackupActivityCollection.list()`'s `categoryService`/`saasServiceType` filter params | `collections/_activity_parsers.py` — `_MACHINE_TYPE_TO_CATEGORY_SERVICE`, `_M365_TYPE_TO_SAAS_SERVICE`, `_GWS_TYPE_TO_SAAS_SERVICE` |
 | `M365WorkloadType` | `collections/m365.py` — `_TYPE_TO_API_TYPE` / `_API_TYPE_TO_TYPE` |
 | `GWSWorkloadType` | `collections/gws.py` — `_TYPE_TO_API_TYPE` / `_API_TYPE_TO_TYPE` |
-| `MachineWorkloadType`, `VersionStatus` | `collections/_shared.py` — `_MACHINE_WORKLOAD_TYPE_MAP`, `_VERSION_STATUS_MAP` |
+| `MachineWorkloadType`, `VersionStatus` | `collections/_shared.py` — `_MACHINE_WORKLOAD_TYPE_MAP`, `_VERSION_STATUS_MAP`; the `statuses` filter of `list_versions()`/`get_latest_version()` → `_VERSION_STATUS_TO_API`, keyed by the public `LISTED_VERSION_STATUSES` (`enums.py`; versions are only ever listed as COMPLETED/PARTIAL/FAILED/CANCELED, which the SDK requests when `statuses` is omitted) |
 | `VerifyStatus` (parse and filter directions) | `enums.py` — `_VERIFY_STATUS_MAP`; `collections/machine.py` — `_VERIFY_STATUS_TO_API` |
 | `WorkloadStatus` filter direction (`list()` `status` parameter; parse direction is branching logic — see "WorkloadStatus" below) | `collections/machine.py` — `_STATUS_TO_JOB_STATUS`, `_STATUS_TO_LVR`; `collections/m365.py` / `collections/gws.py` — `_STATUS_TO_API_BACKUP_STATUS` |
 | `VersionCopyStatus`, `CopyReason` | `enums.py` — `_VERSION_COPY_STATUS_MAP`; `collections/_shared.py` — `_COPY_REASON_MAP`, `_COPY_REASON_SKIPPED_MAP`, `_COPY_ERROR_STATUS_MAP` |
 | Plan task/db enums (`MachineOsType`, `MachineTaskScope`, `DbActionOnError`, `MssqlLogSetting`, `OracleLogSetting`) | `collections/_protection_plan_parsers.py` — `_OS_TYPE_MAP`, `_SOURCE_TYPE_MAP`, `_DB_ACTION_MAP`, `_MSSQL_LOG_MAP`, `_ORACLE_LOG_MAP` |
 | `RemoteStorageType` → plan/tiering `destinationType` | `collections/_shared.py` — `_STORAGE_TYPE_TO_DEST_TYPE` |
 | `HypervisorType` | `collections/hypervisors.py` — `_HOST_TYPE_MAP` |
+| `SandboxDiskController` (`vdiskMode`), `SandboxAdapterModel` (`vnicType`), `SandboxVideoCard` | `collections/machine_sandbox.py` — `_VDISK_MODE` / `_VDISK_MODE_TO_CONTROLLER`, `_VNIC_TYPE`, `_VIDEO_CARDS` |
+| `SandboxKey` (→ X11 keysyms sent as RFB key events) | `_vnc.py` — `_KEYSYMS` |
 | `M365ExportStatus` | `collections/m365_mail_export.py` — `_EXPORT_STATUS_MAP` |
 | `LogLevel` (activity logs) | `collections/_activity_parsers.py` — `_LOG_LEVEL_MAP` |
 | `LogLevel` (backup-server logs) | `collections/logs.py` — `_LEVEL_API` / `_LEVEL_PARSE` |
@@ -75,15 +92,15 @@ cover.
 
 `GWS` is the SDK's chosen name for the Google Workspace category; the raw APM API uses
 `GW` / `gw` / `APPLICATION_GW` / `GW_*` for this category (e.g. `GW_DRIVE`, `GW_MAIL`) —
-this is an established SDK convention of preferring official/UI terminology over raw API
+this is an established SDK convention of preferring official product terminology over raw API
 abbreviations or legacy tokens (applies to `WorkloadCategory.GWS`, `ActivityWorkloadType.GWS`,
 `WorkloadStatType.GWS`).
 
 The same principle applies to `GWSWorkloadType.SHARED_DRIVE`: the raw API calls this subtype
-`TEAM_DRIVE` (legacy Google terminology), but the current UI and Google's own product naming
-both say "Shared Drive" — so the SDK enum member is `SHARED_DRIVE`, and `TEAM_DRIVE` only
-appears in the raw-string mapping dicts (`collections/gws.py`'s `_TYPE_TO_API_TYPE`,
-`collections/_activity_parsers.py`'s `_GWS_TYPE_TO_SAAS_SERVICE`), never in public SDK surface.
+`TEAM_DRIVE` (legacy Google terminology), but the product name is "Shared Drive" — so the SDK
+enum member is `SHARED_DRIVE`, and `TEAM_DRIVE` only appears in the raw-string mapping dicts
+(`collections/gws.py`'s `_TYPE_TO_API_TYPE`, `collections/_activity_parsers.py`'s
+`_GWS_TYPE_TO_SAAS_SERVICE`), never in public SDK surface.
 
 ### Naming decision: SaaS application hierarchy
 
@@ -233,7 +250,7 @@ These two have similar names but belong to different subsystems:
 
 | Type | Purpose | How to obtain |
 |------|------|---------|
-| `ActivityLogEntry` | Execution log of a backup/restore activity (`Activity.log_entries` field) | Populated after `get()` or `get_by_version()`; `None` after `list()` |
+| `ActivityLogEntry` | Execution log of a backup/restore activity (`Activity.log_entries` field) | Populated by the single-activity lookups (`get()`, `get_by_version()`, …); `None` after `list()` or with `include_logs=False` |
 | `APMActivityLog` | System activity log of a backup server (an independent resource) | `LogCollection.list_activity()` |
 
 ### Field Differences Between RetirementPlan and ProtectionPlan
@@ -376,6 +393,197 @@ docstring for the filter contract, and `_STATUS_TO_JOB_STATUS`/`_STATUS_TO_LVR` 
 
 ---
 
+### MachineSandboxCollection
+
+Instant restore of a PS/VM version to a VM on the appliance's built-in hypervisor.
+`_load()` parses the four `list_*` responses of one location into private frozen dataclasses
+(`_VmSpec`, `_Repo`, `SandboxLocation`, the existing VM names) gathered in a `_Plan`. Raw keys
+appear only in those parsers and in `_open_in_vm_body()`, which holds the field-level request
+contract, including the fields that always take a fixed value. `get_default_settings()` runs the
+checks, then `_load()`, then the pure `_default_settings()`.
+
+#### A sandbox is a restore activity
+
+Raw `restoreType=INSTANT_RESTORE_AEM` (→ `RestoreType.INSTANT_SANDBOX`), with
+`restore_destination` = the sandbox's name. `open_in_vm` returns
+nothing that identifies the sandbox, so `start()` returns `None`, like `backup_now()`, and the
+activity is found with `RestoreActivityCollection.list(restore_types=[RestoreType.INSTANT_SANDBOX])`.
+Status, logs and stopping (`cancel()`, which also deletes the VM) go through
+`RestoreActivityCollection`; there is no separate sandbox list or delete call. Ready-status
+parsing and filtering:
+[BackupActivityCollection / RestoreActivityCollection](#backupactivitycollection--restoreactivitycollection).
+
+#### Requests
+
+Every call goes to `/api/v1/portal/vmm/<call>`. `x-syno-tunnel-route` is the namespace named in
+"Routed by". Only `list_spec` (`versionIds`) and `open_in_vm` (`versionId`) carry the chosen
+location's `location_id`.
+
+| Call | Routed by | Sent by | Used for |
+|---|---|---|---|
+| `list_spec` | Version location | `get_default_settings()`, `validate_settings()`, `start()` | The backed-up machine's spec (CPU, memory, disks, video card, machine type) |
+| `list_repo` | Version location | `get_default_settings()`, `validate_settings()`, `start()` | The repo the sandbox is stored on (see [Values that are not settings](#values-that-are-not-settings)) |
+| `list_resource` | Version location | `get_resources()` (one per eligible location), `get_default_settings()`, `validate_settings()`, `start()` | CPU and memory limits (`maxRamSize` in KB) and networks; only `permitted` networks are usable |
+| `list_basic` | Version location | `get_default_settings()`, `validate_settings()`, `start()` | Existing VM names, for the name rule; a new sandbox's name is listed as soon as `open_in_vm` returns |
+| `gen_mac` | Version location | `start()`, once per network adapter | One MAC address per adapter; an empty or duplicate result raises `APIError` before `open_in_vm` |
+| `open_in_vm` | Version location | `start()` | Starts the sandbox |
+| `connect_to_vm` | Activity (`RestoreActivity.namespace`) | `get_console_link()`; `get_screenshot()` and `open_vnc_bridge()` when they open a console access | Powers the VM on if needed and creates a console link (see [Console link](#console-link)) |
+
+`get_resources()` sends only `list_resource`. `get_default_settings()`, `validate_settings()` and
+`start()` send the four `list_*` calls of the chosen location concurrently.
+
+`get_latest_version()` sends no `vmm` call: it is `MachineWorkloadCollection.get_latest_version()`
+with `statuses=[SUCCESS, PARTIAL]` (`_RESTORABLE_STATUSES`, which the other methods' version
+check also uses). When there is no such version it raises `InvalidOperationError`, not
+`ResourceNotFoundError`: the workload exists, it only lacks a restorable version.
+
+#### Locations
+
+Only non-remote entries of `version.locations` are eligible: a sandbox runs on an appliance,
+not on remote storage. A version without one raises `InvalidOperationError`. They are ordered
+with the backup itself (`location_id == version.version_id`) first, then by server name; the
+first is the default. A `location_id` that is not eligible (the argument of
+`get_default_settings()`, or `SandboxSettings.location_id`) raises
+`SandboxSettingsError(field="location_id")`.
+
+#### Defaults
+
+`get_default_settings()`'s docstring lists the defaults. Rules not obvious from that list:
+
+- Memory rounds up to 128, 256, 512 or 768 MB, or above 768 MB to whole GiB, and is then capped
+  at the location maximum. A whole-GiB value above the maximum becomes the maximum rounded down
+  to whole GiB, but not below 128 MB.
+- Hyper-V enlightenments default to on, whatever the backed-up machine had.
+- The name's timestamp is the version time in the local time zone of the host that runs the SDK
+  (`default_sandbox_name()` in `models/sandbox.py`, next to the name rules it applies).
+
+`memory_mb` stays in MB rather than a `*_bytes` field: the SDK's `*_bytes` fields are measured,
+read-only sizes, while memory is a setting that the server expresses in MB.
+
+#### Values that are not settings
+
+- **Storage:** the sandbox is stored on the first `list_repo` repo sorted by name. At least one
+  repo must be on the backup's volume (`volumePath` equal to `vdiskStruct[0].volumePath`);
+  otherwise `get_default_settings()`, `validate_settings()` and `start()` raise
+  `InvalidOperationError`.
+- **Weights:** every `open_in_vm` body sends `cpuWeight` `"256"` and, on every disk, `devWeight`
+  `"3"` (`_CPU_WEIGHT`, `_DEV_WEIGHT`).
+
+#### Validation and SandboxSettingsError
+
+Every settings rule raises `SandboxSettingsError`. It extends `ValueError`, not `APMError` (it
+reports a bad argument), so it is not in `ERROR_CODES`, and it carries:
+
+- `field`: the `SandboxSettings.to_dict()` key of the setting, so the CLI and MCP map it to a
+  flag or parameter without parsing the message. For a key that `with_changes()` does not know,
+  `field` is that key. An error inside one adapter or disk names the list (`network_adapters`,
+  `disks`); the message names the inner key (for example `disks.controller`).
+- `other_field`: the second setting of a conflicting pair, otherwise `None`. The pairs are
+  `hyperv_enlightenments` / `cpu_compatibility_mode` and `disks` / `machine_type` (IDE with Q35).
+- `to_dict()`: `message`, `field` and `other_field`.
+
+| Rule | Checked by |
+|---|---|
+| Name format, and the two pairs above | `SandboxSettings.__post_init__` (so also every `with_changes()`) |
+| Unknown key, wrong value type, value that is not one of the enum's values | `SandboxSettings.with_changes()` |
+| `location_id` is an eligible location | `_find_location()` |
+| Name already used by another VM, CPU and memory limits, networks and SR-IOV, disk count | `_validate()` |
+
+`validate_settings()` and `start()` run the location checks through `_prepare()`. `start()`
+validates because the server does not: it accepts an out-of-range CPU count, an unknown network,
+or memory below 128 MB and creates a VM that never boots. Free memory is the one condition only
+the server checks: detail error 7026 → `InvalidOperationError`.
+
+---
+
+### Sandbox console access
+
+`get_console_link()`, `get_screenshot()` and `open_vnc_bridge()` of
+[MachineSandboxCollection](#machinesandboxcollection). The screen is reached through a console
+access, never the login session (implementation: `_console.py`).
+
+#### Console link
+
+`connect_to_vm {guestId, workload}` powers the VM on first if needed (detail error 932 =
+power-on failed → `InvalidOperationError`) and writes one activity-log entry per call. The
+backup server that runs the VM creates a single-use DSM sharing link on its own host and returns
+it as a relative `/sharing/<id>` path. `get_console_link()` returns the absolute URL, prefixed
+with that server's origin (`BackupServerCollection._origin_for_namespace()`): the session's
+`base_url` for the primary, otherwise `https://<spec.addr>` on the default port, with an IPv6
+address in brackets. The origin is looked up before `connect_to_vm`, so a failed lookup
+(`ResourceNotFoundError`) neither powers the VM on nor uses up a link.
+
+The link needs no sign-in. `url` and `sharing_id` are in `_SENSITIVE_EXACT_KEYS`, and the
+link's GET shows only `/sharing/***` in debug output.
+
+#### Opening an access
+
+1. A link is created as for `get_console_link()`.
+2. One GET of the link sets a `sharing_sid` cookie. The link is then used up: a second GET
+   answers 200 without a cookie.
+3. A WebSocket to `/synovirtualization/ws/<sandbox_vm_id>?app_id=<random UUID>&sharing_id=<link
+   id>` on the link's host. It needs both the cookie and `sharing_id`; either alone gets 400.
+
+A link that is not a `/sharing/<id>` URL, or whose GET does not answer 200 with a cookie, raises
+`APIError`.
+
+#### Console transport
+
+The session owns the console traffic: the link GET and every WebSocket go through
+`WebAPISession.fetch_cookies()` / `ws_connect()`, on one `aiohttp.ClientSession` with a
+`DummyCookieJar`, created on first use with the login session's TLS setting and timeout. The
+cookies are read from the responses (redirects included) and sent as a `Cookie` header, so they
+never enter the login jar. `WebAPISession.disconnect()` (and so `APMClient.disconnect()`) first
+closes every WebSocket `ws_connect()` opened, since closing the client session alone leaves
+established WebSockets open, then closes the client: every console connection and every VNC
+bridge connection ends.
+
+#### Access reuse and replacement
+
+- One access opens any number of connections and keeps working while idle. The client
+  (`SandboxConsoles`) keeps one console per sandbox VM, keyed by
+  `(RestoreActivity.namespace, sandbox_vm_id)`, for its 16 most recently used VMs
+  (`_DEFAULT_MAX_CONSOLES`). A console that is minting an access is not dropped, so the cache can
+  briefly hold more. Dropping a console only forgets its access; open connections are not
+  affected. `MachineSandboxCollection(consoles=...)` takes another cache (tests).
+- An access is replaced only when a handshake answers 400/401, at most once per connection; a
+  second rejection raises `APIError`. A 403 raises `PermissionDeniedError`; any other status
+  raises `APIError`. Each replacement is another `connect_to_vm`, so another activity-log entry.
+  Concurrent callers rejected on the same access share one replacement.
+- A powered-off guest rejects the kept access, so the replacement's `connect_to_vm` powers it on
+  again.
+- A failed link creation or link GET leaves no access, so the next connection starts over.
+- A connection that closes while the RFB session starts is reopened once on the same access.
+  Nothing is retried after the session has started, because keys may already have been pressed.
+
+#### Screen
+
+The RFB client and the PNG encoding are in `_vnc.py`; its module docstring lists the protocol
+subset. Rules not stated there:
+
+- ClientInit sets the shared flag, so a viewer already connected to the console is not
+  disconnected.
+- Each connecting step (WebSocket handshake, RFB start) has 30 s (`_DEFAULT_TIMEOUT_S`); a
+  capture has 30 s plus `delay_seconds`. A timeout raises `ConnectionTimeoutError`.
+- `connect_to_vm` and the link's GET have no console timeout; only the session's request timeout
+  applies.
+- A screen wider or taller than 4096 px (`_MAX_SIDE`) raises `APIError`.
+
+#### VNC relay
+
+`open_vnc_bridge()` is `SandboxConsole.serve_vnc()`: it opens and closes one console connection
+before it listens, so an unreachable console fails the call. The relay (`_relay.py`) then
+listens on `127.0.0.1`:
+
+- Each VNC client gets its own console connection on the kept access.
+- A connection that cannot be opened disconnects that VNC client, without an error; with the
+  client's `debug=True` it prints one line on stderr (the exception type, and the message only
+  for SDK errors, since other errors can carry the link).
+- When the bridge exits, every connection closes; a VNC client accepted during that exit is
+  disconnected without opening one.
+
+---
+
 ### M365WorkloadCollection
 
 **get() / get_by_name():**
@@ -395,8 +603,8 @@ existing pattern.
 - When `namespace` is not None: 1 additional backup-server API call (shared scan across all
   given namespaces — see the Namespace filter resolution note above).
 - `workload_type` has no "all subtypes" wildcard value to collapse the 6 per-subtype calls into
-  one: verified against a live APM that the underlying filter's zero-value enum member returns
-  the same single subtype's workloads as one of the 6 named values (not the union of all 6), so
+  one: the underlying filter's zero-value enum member returns the same single subtype's
+  workloads as one of the 6 named values (not the union of all 6), so
   `list()` must still be called once per `M365WorkloadType` to enumerate every M365 workload for
   a tenant.
 
@@ -507,7 +715,8 @@ writes the merged object back — a partial-object `PUT` would silently clear un
 **The status parameter of list() is a one-to-many filter:**
 A single SDK status enum value can expand to multiple API filter values (OR logic) — see
 `_BACKUP_STATUS_TO_API` / `_RESTORE_STATUS_TO_API` in `collections/_activity_parsers.py`
-(also indexed in [Enum Definitions](#enum-definitions-and-api-string-mapping) above).
+(also indexed in [Enum Definitions](#enum-definitions-and-api-string-mapping) above). The two
+restore ready statuses have their own rule; see the status and restore_types paragraph below.
 
 **workload parameter (both collections):**
 `workload: Workload | None` restricts results to a single workload's activities. Both
@@ -516,9 +725,41 @@ effect, so the SDK only ever sends them as a pair. See `RestoreActivityCollectio
 own docstring for the no-matching-workload behavior, and `_RESTORE_WORKLOAD_NOT_FOUND_CODE`'s
 comment (`activities.py`) for the underlying error-code handling.
 
+**Sandbox-ready status depends on the restore type:** raw `restoreStatus=READY_FOR_MIGRATE` is
+reported both by sandboxes (`restoreType=INSTANT_RESTORE_AEM` → `RestoreType.INSTANT_SANDBOX`)
+and by other instant restores (VMware instant restore when migration is possible; after a
+canceled migration). `_parse_restore_activity` maps it to `RestoreActivityStatus.SANDBOX_READY`
+on sandbox activities and to `READY_FOR_MIGRATE` on every other type; `_RESTORE_STATUS_MAP`
+itself stays type-agnostic. Sandbox rules: [MachineSandboxCollection](#machinesandboxcollection).
+
+**RestoreActivityCollection.list() status and restore_types filters** (`_restore_type_filter`):
+`status` → repeated `restoreStatus`, `restore_types` → repeated `restoreType` (through
+`_RESTORE_TYPE_TO_API`, the reverse of `_RESTORE_TYPE_MAP`); the server ANDs the two, so an
+activity must match both. `RestoreType.UNKNOWN` has no raw value and raises `ValueError`.
+
+A sandbox is itself ready for migration, so `READY_FOR_MIGRATE` is the wider status filter and
+matches sandboxes too. `SANDBOX_READY` without `READY_FOR_MIGRATE` needs the sandbox type in the
+same `restoreType` parameter, which then narrows every requested status to sandboxes:
+
+| `restore_types` | `SANDBOX_READY` without `READY_FOR_MIGRATE` |
+|---|---|
+| omitted | Allowed only as the only status; `restoreType=INSTANT_RESTORE_AEM` is added |
+| `[INSTANT_SANDBOX]` | Allowed with any other status: the caller already asked for sandboxes only |
+| anything else | `ValueError` |
+
+Filtering a page client-side instead would break `total` and paging. Excluding sandboxes from a
+`READY_FOR_MIGRATE` filter is not offered: the server has no `restoreType` exclusion, and
+listing every other type would silently drop types the SDK doesn't know.
+
+**get(activity_id, include_logs=True) (both collections):** pages through the listed
+activities (ongoing, then history) and compares each raw `uid` before parsing, so only the
+match is parsed (`_find_by_id`). `_with_details()` then completes it: the detail log for a
+restore activity; the activity detail (data sizes, backup scope) and the detail log for a backup
+activity. `include_logs=False` skips the log request; a backup activity still gets its detail.
+
 **RestoreActivityCollection.list() filter support:**
-Confirmed against the real `/api/v2/activity/restore/activities` API: supports `status`,
-`workload`, `since`/`until`, `keyword`, `history`, `limit`, and `offset` — unlike
+`/api/v2/activity/restore/activities` supports `status`,
+`workload`, `restore_types`, `since`/`until`, `keyword`, `history`, `limit`, and `offset` — unlike
 `BackupActivityCollection.list()`, it does not accept `machine_types`, `m365_types`,
 `gws_types`, or a backup-server `namespace` list.
 
@@ -535,6 +776,8 @@ comments in `activities.py` for the exact shapes. `RestoreActivityCollection`'s 
 `ActivityWorkloadType` via `_SUBTYPE_TO_CANCEL_TYPE` (`collections/_activity_parsers.py`).
 
 **RestoreActivity detail fields parsed from spec:**
+- `sandbox_vm_id`: `spec.machineInfo.vmmGuestId`, sandbox activities only. Internal: used by the
+  sandbox console methods and left out of `to_dict()`, like `execution_id`.
 - `restore_from_info`: `LocationInfo` built from `spec.restoreFromInfo` — see
   `_parse_restore_from_info`'s own docstring (`collections/_activity_parsers.py`) for the
   field mapping and the None-vs-empty condition.
@@ -620,7 +863,7 @@ facades (`APMClient.plans`, `.machine.plans`, `.m365.plans`, `.gws.plans`).
 `ProtectionPlan.backup_copy_policy` (`BackupCopyPolicy | None`) is populated when Backup Copy is enabled and the destination can be resolved; otherwise `None`. The resolution method differs depending on the destination type:
 
 - **APPLIANCE (backup server)**: issues a single backup server list request to retrieve all servers, matching by **namespace**. If the namespace is not found in the list, `backup_copy_policy` is set to `None` for that plan; a failed backup server list query propagates as an exception.
-  > Note: `spec.backupCopy.destination` returned by the plan API is the backup server's **namespace**, not its `backup_server_id`, so it cannot be used to query a single server directly.
+  > **Note:** `spec.backupCopy.destination` returned by the plan API is the backup server's **namespace**, not its `backup_server_id`, so it cannot be used to query a single server directly.
 - **Remote Storage (external storage)**: resolved via `_fetch_remote_storage_location()` / `_build_remote_location_cache()` in `collections/_shared.py` — the same helpers [TieringPlanCollection](#tieringplancollection)'s `destination` field uses (see below). A dangling destination reference or an empty `displayName` resolves to `None`; any other query failure propagates as an exception.
 
 `list()` performs a batch query for all unique destinations on the page; `get(plan_id)` / `get_by_name(name)` resolves the destination only for the single matched plan.
@@ -734,7 +977,8 @@ domain-detail response.
 
 ### APMClient.get_site_info()
 
-**Scan condition:** see `_find_management_servers()`'s own docstring (`collections/backup_servers.py`).
+**Scan condition:** see `_find_first()`'s docstring (`collections/backup_servers.py`), which
+`_find_management_servers()` uses.
 
 ---
 
@@ -745,9 +989,10 @@ here — they live in the source docstrings and the Sphinx API docs, which are a
 
 | Access path | Collection | Purpose |
 |---|---|---|
-| `apm.machine` | `MachineCollection` | Machine domain entry point (`.workloads`, `.plans`) |
+| `apm.machine` | `MachineCollection` | Machine domain entry point (`.workloads`, `.plans`, `.sandboxes`) |
 | `apm.machine.workloads` | `MachineWorkloadCollection` | PC/PS/VM/FS workloads: listing, versions, backup/cancel, retire/change-plan, file-server registration |
 | `apm.machine.plans` | `MachinePlanCollection` | Machine protection plan CRUD |
+| `apm.machine.sandboxes` | `MachineSandboxCollection` | PS/VM instant restore to the built-in sandbox: default settings, resources, validation, start, screenshot, console link, VNC bridge |
 | `apm.m365` | `M365Collection` | M365 domain entry point (`.workloads`, `.plans`, `.exchange_export`, `.group_export`, `.auto_backup_rules`) |
 | `apm.m365.workloads` | `M365WorkloadCollection` | M365 workloads per service subtype: listing, versions, backup/cancel, retire/change-plan, delete |
 | `apm.m365.plans` | `M365PlanCollection` | M365 protection plan CRUD |

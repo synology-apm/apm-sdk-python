@@ -6,6 +6,7 @@ corresponding enum — no missing keys, no extra keys.
 from __future__ import annotations
 
 from datetime import time
+from enum import Enum
 
 import pytest
 
@@ -27,6 +28,10 @@ from synology_apm.cli._display import (
     _REMOTE_STORAGE_TYPE_DISPLAY,
     _RESTORE_ACTIVITY_STATUS_DISPLAY,
     _RESTORE_TYPE_DISPLAY,
+    _SANDBOX_ADAPTER_MODEL_DISPLAY,
+    _SANDBOX_DISK_CONTROLLER_DISPLAY,
+    _SANDBOX_MACHINE_TYPE_DISPLAY,
+    _SANDBOX_VIDEO_CARD_DISPLAY,
     _SCHEDULE_FREQUENCY_LABELS,
     _SCOPE_DISPLAY,
     _SERVER_LOG_LEVEL_DISPLAY,
@@ -50,6 +55,10 @@ from synology_apm.cli._display import (
     fmt_remote_storage_usage,
     fmt_restore_type,
     fmt_retirement_retention,
+    fmt_sandbox_adapter_model,
+    fmt_sandbox_disk_controller,
+    fmt_sandbox_machine_type,
+    fmt_sandbox_video_card,
     fmt_schedule_frequency,
     fmt_schedule_str,
     fmt_server_log_level,
@@ -78,6 +87,10 @@ from synology_apm.sdk import (
     RestoreActivityStatus,
     RestoreType,
     RetentionType,
+    SandboxAdapterModel,
+    SandboxDiskController,
+    SandboxMachineType,
+    SandboxVideoCard,
     ScheduleFrequency,
     ServerStatus,
     VerifyStatus,
@@ -172,6 +185,23 @@ def test_schedule_frequency_labels_covers_all_enum_values() -> None:
 
 def test_restore_type_display_covers_all_enum_values() -> None:
     assert set(RestoreType) == set(_RESTORE_TYPE_DISPLAY)
+
+
+@pytest.mark.parametrize(("enum_cls", "display"), [
+    (SandboxVideoCard, _SANDBOX_VIDEO_CARD_DISPLAY),
+    (SandboxMachineType, _SANDBOX_MACHINE_TYPE_DISPLAY),
+    (SandboxAdapterModel, _SANDBOX_ADAPTER_MODEL_DISPLAY),
+    (SandboxDiskController, _SANDBOX_DISK_CONTROLLER_DISPLAY),
+], ids=lambda v: getattr(v, "__name__", ""))
+def test_sandbox_display_covers_all_enum_values(enum_cls: type[Enum], display: dict[object, str]) -> None:
+    assert set(enum_cls) == set(display)
+
+
+def test_fmt_sandbox_labels() -> None:
+    assert fmt_sandbox_video_card(SandboxVideoCard.VMVGA) == "VMware SVGA"
+    assert fmt_sandbox_machine_type(SandboxMachineType.Q35) == "Q35"
+    assert fmt_sandbox_adapter_model(SandboxAdapterModel.VIRTIO) == "VirtIO"
+    assert fmt_sandbox_disk_controller(SandboxDiskController.SATA) == "SATA controller"
 
 
 def test_file_server_type_display_covers_all_enum_values() -> None:
@@ -344,6 +374,7 @@ def test_fmt_schedule_frequency_values() -> None:
 def test_fmt_restore_type_values() -> None:
     assert fmt_restore_type(None) == "-"
     assert fmt_restore_type(RestoreType.FULL) == "Full Restore"
+    assert fmt_restore_type(RestoreType.INSTANT_SANDBOX) == "Instant Restore (Sandbox)"
 
 
 def test_fmt_retirement_retention_variants() -> None:

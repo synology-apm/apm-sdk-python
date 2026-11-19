@@ -130,6 +130,21 @@ async def test_get_returns_enriched_activity_with_detail_and_logs() -> None:
     assert act.log_entries[1].level == LogLevel.WARNING
 
 
+async def test_get_without_logs_fetches_details_but_no_log() -> None:
+    detail_payload = {"activity": {
+        "status": {"changeDataSize": "512000", "dedupedDataSize": "256000"},
+        "spec": {"machineInfo": {"backupScope": "ENTIRE_DEVICE"}},
+    }}
+    async with connected_session() as (session, m):
+        m.get(RECENT_URL, payload={"activities": [SAMPLE_ACTIVITY_RAW], "total": 1})
+        m.get(re.compile(r".*/api/v1/activity/backup/activity.*"), payload=detail_payload)
+        act = await BackupActivityCollection(session).get("act-uid-001", include_logs=False)
+
+        assert not any("detail-log" in str(url) for _, url in m.requests)
+    assert (act.activity_id, act.data_change_bytes, act.backup_scope) == ("act-uid-001", 512000, BackupScope.ENTIRE_DEVICE)
+    assert act.log_entries is None
+
+
 async def test_get_returns_none_optional_fields_when_detail_is_empty() -> None:
     """When the detail API returns an empty body, optional fields should be None."""
     session = make_session()

@@ -14,6 +14,7 @@ import typer
 from synology_apm.cli._display import fmt_datetime
 from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.sdk import (
+    LISTED_VERSION_STATUSES,
     APMActivityLogType,
     APMClient,
     BackupActivityStatus,
@@ -31,9 +32,13 @@ from synology_apm.sdk import (
     RestoreActivityStatus,
     RetirementPlan,
     SaasApplication,
+    SandboxKey,
+    SandboxMachineType,
+    SandboxVideoCard,
     ServerStatus,
     TieringPlan,
     VerifyStatus,
+    VersionStatus,
     WorkloadCategory,
     WorkloadStatus,
     WorkloadVersion,
@@ -60,7 +65,7 @@ M365_TYPE_ARGS: dict[str, M365WorkloadType] = _enum_args(M365WorkloadType)
 # distinct from this dict's underscored enum-value spelling ("shared_drive").
 GWS_TYPE_ARGS: dict[str, GWSWorkloadType] = _enum_args(GWSWorkloadType)
 
-# Shared by `machine list --status` and `m365 <scope> list --status`.
+# Shared by `machine list --status`, `m365 <scope> list --status`, and `gws <scope> list --status`.
 # RETIRED is excluded — already governed by the --retired flag, not a filterable status value.
 WORKLOAD_STATUS_ARGS: dict[str, WorkloadStatus] = _enum_args(
     WorkloadStatus, exclude=frozenset({WorkloadStatus.RETIRED})
@@ -68,6 +73,14 @@ WORKLOAD_STATUS_ARGS: dict[str, WorkloadStatus] = _enum_args(
 
 # `machine list --verify-status` (backup verification status is a Machine-specific concept).
 VERIFY_STATUS_ARGS: dict[str, VerifyStatus] = _enum_args(VerifyStatus)
+
+# `<category> version list --status`: the statuses a version listing can hold.
+VERSION_STATUS_ARGS: dict[str, VersionStatus] = {s.value: s for s in LISTED_VERSION_STATUSES}
+
+# `machine sandbox start --video-card` / `--machine-type`, `machine sandbox screenshot --press`.
+SANDBOX_VIDEO_CARD_ARGS: dict[str, SandboxVideoCard] = _enum_args(SandboxVideoCard)
+SANDBOX_MACHINE_TYPE_ARGS: dict[str, SandboxMachineType] = _enum_args(SandboxMachineType)
+SANDBOX_KEY_ARGS: dict[str, SandboxKey] = _enum_args(SandboxKey)
 
 # `activity backup list --status`.
 BACKUP_ACTIVITY_STATUS_ARGS: dict[str, BackupActivityStatus] = _enum_args(BackupActivityStatus)
@@ -314,17 +327,6 @@ def validate_version_lock_args(
     return ref, version_id
 
 
-def validate_activity_args(
-    ctx: typer.Context,
-    name: str | None,
-    activity_id: str | None,
-) -> None:
-    """Print help and exit when neither name nor activity_id is provided."""
-    if name is None and activity_id is None:
-        typer.echo(ctx.get_help())
-        raise typer.Exit(0)
-
-
 def validate_name_or_id_args(
     ctx: typer.Context,
     name: str | None,
@@ -368,7 +370,8 @@ def parse_enum_list(
 ) -> list[_T] | None:
     """Validate and convert a list of CLI string values to enum instances.
 
-    Returns None when values is empty or None; exits with code 1 on unknown value. The
+    ``option_name`` is the option without its leading dashes. Returns None when values is
+    empty or None; exits with code 1 on unknown value. The
     "available" hint shown on an unsupported value is derived from ``mapping``'s keys.
     """
     if not values:
@@ -378,7 +381,7 @@ def parse_enum_list(
         enum_val = mapping.get(v.lower())
         if enum_val is None:
             hint = ", ".join(mapping)
-            err_console.print(f"[red]✗[/red] Unsupported {option_name} value: {v} (available: {hint})")
+            err_console.print(f"[red]✗[/red] Unsupported --{option_name} value: {v} (available: {hint})")
             raise typer.Exit(code=EXIT_ERROR)
         result.append(enum_val)
     return result

@@ -811,10 +811,15 @@ async def test_add_file_server_multiple_selectors_build_session_list() -> None:
 # ── MachineCollection properties ───────────────────────────────────────────
 
 
+def _machine_collection(session: Any) -> MachineCollection:
+    from synology_apm.sdk.collections.backup_servers import BackupServerCollection
+    return MachineCollection(session, BackupServerCollection(session))
+
+
 def test_machine_collection_workloads_returns_workload_collection() -> None:
     """MachineCollection.workloads should return a MachineWorkloadCollection."""
     session = make_session()
-    collection = MachineCollection(session)
+    collection = _machine_collection(session)
     assert isinstance(collection.workloads, MachineWorkloadCollection)
 
 
@@ -822,7 +827,7 @@ def test_machine_collection_plans_returns_plan_collection() -> None:
     """MachineCollection.plans should return a MachinePlanCollection."""
     from synology_apm.sdk.collections.protection_plans import MachinePlanCollection
     session = make_session()
-    collection = MachineCollection(session)
+    collection = _machine_collection(session)
     assert isinstance(collection.plans, MachinePlanCollection)
 
 

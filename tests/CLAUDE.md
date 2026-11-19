@@ -54,8 +54,11 @@ Do not test: `_private` **symbols** (leading-underscore functions, constants, at
 | MCP | `mcp/_security.py` | `mode_allows` / `destructive_tool` | `test_security.py` |
 | MCP | `mcp/_errors.py` | `sdk_error_to_dict` | `test_errors.py` |
 | MCP | `mcp/_registrar.py` | registration helpers | `test_registrar.py` |
+| SDK | `sdk/_vnc.py` | `RfbClient` | `test_vnc.py` |
+| SDK | `sdk/_console.py` | `SandboxConsoles` / `SandboxConsole` | `test_console.py` |
+| SDK | `sdk/_relay.py` | `serve_relay` | `test_relay.py` |
 
-(CLI paths under `tests/unit/cli/`, MCP paths under `tests/unit/mcp/`.)
+(CLI paths under `tests/unit/cli/`, MCP paths under `tests/unit/mcp/`, SDK paths under `tests/unit/sdk/`.)
 
 ## Testing purpose by layer
 
@@ -63,7 +66,8 @@ Each layer verifies a different contract, and must not re-verify a layer beneath
 
 - **SDK tests** verify the REST request/response contract itself — this is the primary subject
   of the table above (request shape, response field parsing, error mapping, observable side
-  effects). This is the foundation layer and already has the fullest coverage in the codebase.
+  effects), plus the sandbox console protocols (`_vnc`, `_relay`). This is the foundation layer
+  and already has the fullest coverage in the codebase.
 - **CLI tests** verify only that the command *wires into* the SDK correctly (right method,
   right arguments) and *presents/dispatches* the result correctly (exit code, output format) —
   see "CLI test layering" below. They must not re-assert SDK-level behavior (request bodies,
@@ -165,7 +169,8 @@ Keep a separate test for any defensive code path that handles a different respon
 
 ## Integration Tests (custom cassette system)
 
-Integration tests use the custom cassette system in `tests/cassette_lib.py` (not vcrpy/pytest-recording).
+Integration tests use the custom cassette system in `tests/cassette_lib.py`; pytest-recording
+supplies only the `--record-mode` option.
 Use `--import-mode=importlib` to correctly resolve the `tests.cassette_lib` module path.
 See the Makefile for cassette recording and replay commands (`make record-integration-cassettes`
 records missing cassettes only; `uv run pytest tests/integration/ --record-mode=all
@@ -174,8 +179,47 @@ records missing cassettes only; `uv run pytest tests/integration/ --record-mode=
 > **Note:** `tests/cassettes/` is gitignored — cassettes are recorded locally by each developer against their own `.env`-configured APM (`--record-mode=new_episodes`) and replayed offline thereafter (`--record-mode=none`, the default). They are not committed or shared; on a fresh clone with no cassettes, `--record-mode=none` skips every integration test (`pytest.skip`) rather than failing.
 
 > **Note:** Renaming or removing an integration test is local-only and has no commit impact —
-> delete its corresponding cassette from `tests/cassettes/`. If a major SDK refactor changes the
-> request/response format, re-record everything with `--record-mode=all` rather than editing
-> cassettes by hand.
+> delete its corresponding cassette from `tests/cassettes/`.
 
 > **Note:** SDK collection `list()` methods return `(items, total)` tuples (see `packages/synology-apm-sdk/src/synology_apm/sdk/BEHAVIOR_REFERENCE.md` "Collection Behavior Rules") — unpack both in integration tests.
+
+### Replay matching
+
+Replay is strict: each request must match a recorded entry with the same method, path, params,
+body and headers, or the test fails with an `AssertionError` naming the differing parts. Two
+exceptions:
+
+- An entry recorded without a `headers` key matches any headers.
+- Query params listed in `cassette_lib.VOLATILE_PARAMS` (time-dependent values) are ignored.
+  Add a key there only when its value legitimately changes between runs.
+
+Concurrent requests may replay out of recorded order; identical requests replay in recorded
+order.
+
+A mismatch after an SDK change means the cassette is stale: re-record it (delete the cassette
+and run `make record-integration-cassettes`, or `--record-mode=all` for everything) rather than
+editing it by hand or loosening the matching.
+
+### Live-only steps and timeouts
+
+- The `live` fixture is `True` when the test runs against the live APM and `False` when it
+  replays its cassette. Use it to skip waits while replaying (polling loops) and to run steps a
+  cassette cannot hold, such as WebSocket traffic.
+- `@pytest.mark.apm_timeout(seconds)` sets the live client's request timeout for a test whose
+  calls take longer than the SDK default. Replay ignores it.
+
+## Shared test builders
+
+Reuse these instead of hand-building the same values in each test file:
+
+- `tests/unit/sandbox_builders.py` — complete, valid sandbox models (`make_sandbox_settings()`,
+  `make_sandbox_location()`, `make_sandbox_resources()`, `make_sandbox_activity()`) and the IDs
+  they use, for the SDK, CLI and MCP unit tests. Override only the fields a test cares about.
+- `tests/sandbox_checks.py` — sandbox predicates and assertions against a live APM (restorable
+  version, defaults within resources), shared by the integration test and the SDK/CLI smoke
+  phases. Unit tests do not use it.
+- `tests/unit/sdk/collections/_sandbox_fixtures.py` — raw API payloads and the `FakeVmm` fake
+  session behind the `env` fixture, for the SDK sandbox collection tests only.
+
+When another domain's builders are shared across layers, follow the same split: model builders
+under `tests/unit/`, live-APM checks at `tests/`.

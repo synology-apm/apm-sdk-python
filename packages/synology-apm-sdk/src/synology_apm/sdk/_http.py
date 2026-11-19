@@ -10,6 +10,10 @@ Authentication flow (connect):
      code using an already-registered device.
   2. 401 re-auth: automatically redo Step 1 (reusing device_id, never the
      original otp_code — see _login_params) and retry once on any 401 response
+
+Console traffic (fetch_cookies(), ws_connect()) goes to hosts that a sandbox console link
+authorizes, on a separate client that keeps no cookies; disconnect() closes that client and
+every WebSocket ws_connect() opened.
 """
 from __future__ import annotations
 
@@ -21,8 +25,10 @@ import os
 import ssl
 import sys
 import time
-from collections.abc import Callable
+import weakref
+from collections.abc import Callable, Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import aiohttp
 
@@ -79,13 +85,9 @@ def _auth_exception_for_code(
     return AuthenticationError(message, error_code=code, response_body=response_body)
 
 
-# connect(), _request(), and download_file() each catch this exact tuple and
-# dispatch through _map_connection_error() below — the test suite exercises
-# each named exception type genuinely at only one or two of these three call
-# sites (not all three), relying on this being one shared tuple/function
-# rather than per-call-site logic. If this ever gets split into
-# connect-specific vs. request-specific handling, re-check tests/unit/sdk/
-# test_http_errors.py's coverage of each exception type across call sites.
+# connect(), _request(), download_file(), fetch_cookies() and ws_connect() each catch this
+# exact tuple and dispatch through _map_connection_error() below, so every call site maps
+# connection failures the same way.
 _CONNECTION_ERRORS = (
     aiohttp.ClientConnectorCertificateError,
     aiohttp.ClientConnectorError,
@@ -133,6 +135,7 @@ class WebAPISession:
         verify_ssl: Whether to verify the SSL certificate. Defaults to True.
             Set to False for self-signed certificates in test environments.
         timeout: Per-request timeout in seconds. Defaults to 300.
+        debug: Print requests and responses (credentials redacted) to stderr. Defaults to False.
     """
 
     def __init__(
@@ -160,6 +163,12 @@ class WebAPISession:
         self._debug = debug
         self._debug_seq = itertools.count(1)
         self._session: aiohttp.ClientSession | None = None
+        # Console traffic (see fetch_cookies()/ws_connect()): created on first use, closed by
+        # disconnect(). It keeps no cookies, so console cookies never enter the login jar.
+        self._side: aiohttp.ClientSession | None = None
+        # Closing a client session leaves its established WebSockets open, so disconnect()
+        # closes the ones ws_connect() opened itself.
+        self._websockets: weakref.WeakSet[aiohttp.ClientWebSocketResponse] = weakref.WeakSet()
         self._connected: bool = False
         # Serializes 401 re-login across concurrent requests: the epoch marks
         # each successful login, so requests that raced on the same expired
@@ -168,6 +177,16 @@ class WebAPISession:
         self._auth_epoch = 0
 
     # ── Public interface ───────────────────────────────────────────────────
+
+    @property
+    def base_url(self) -> str:
+        """The APM base URL, ``https://<host>[:port]`` as given, without a trailing slash."""
+        return self._base_url
+
+    @property
+    def debug(self) -> bool:
+        """Whether requests and responses are printed to stderr."""
+        return self._debug
 
     @property
     def device_id(self) -> str | None:
@@ -212,7 +231,17 @@ class WebAPISession:
         self._connected = True
 
     async def disconnect(self) -> None:
-        """Log out and clean up the session. Safe to call multiple times (idempotent)."""
+        """Log out and clean up the session. Safe to call multiple times (idempotent).
+
+        Also closes the console client, and with it every console WebSocket still open.
+        """
+        for ws in list(self._websockets):
+            with contextlib.suppress(Exception):
+                await ws.close()
+        self._websockets.clear()
+        if self._side is not None:
+            await self._side.close()
+            self._side = None
         if self._session is None:
             return
 
@@ -532,10 +561,7 @@ class WebAPISession:
 
                 if resp.status == 401:
                     if _reauth:
-                        async with self._reauth_lock:
-                            if self._auth_epoch == auth_epoch:
-                                await self._do_login()
-                                self._auth_epoch += 1
+                        await self._relogin(auth_epoch)
                         return await self._request(method, path, _reauth=False, **kwargs)
                     raise AuthenticationError(
                         "Session expired and re-authentication failed.",
@@ -601,6 +627,13 @@ class WebAPISession:
         except _CONNECTION_ERRORS as exc:
             raise _map_connection_error(exc, self._base_url) from exc
 
+    async def _relogin(self, auth_epoch: int) -> None:
+        """Log in again unless another caller already did since auth_epoch was read."""
+        async with self._reauth_lock:
+            if self._auth_epoch == auth_epoch:
+                await self._do_login()
+                self._auth_epoch += 1
+
     def _check_api_error(self, data: dict[str, Any]) -> None:
         """Parse the JSON body and raise the appropriate exception if it contains an API error code.
 
@@ -663,6 +696,68 @@ class WebAPISession:
 
         raise APIError(message, error_code=code, response_body=response_body)
 
+    # ── Console traffic (hosts a link authorizes, not the login session) ──────
+
+    def _side_client(self) -> aiohttp.ClientSession:
+        if self._side is None or self._side.closed:
+            self._side = aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar(), timeout=self._timeout)
+        return self._side
+
+    async def fetch_cookies(self, url: str, *, shown: str) -> tuple[int, dict[str, str]]:
+        """GET an absolute ``url`` without the login cookies; return its status and the cookies it set.
+
+        Cookies set by redirects on the way count too. ``shown`` replaces the URL in debug
+        output (for URLs that are credentials).
+
+        Raises:
+            APIError: The host could not be reached.
+            ConnectionTimeoutError: The request timed out.
+        """
+        req_id = next(self._debug_seq)
+        if self._debug:
+            _debug_print_request(req_id, "GET", shown)
+        start = time.monotonic()
+        try:
+            async with self._side_client().get(url, ssl=self._ssl_param()) as resp:
+                await resp.read()
+                status = resp.status
+                cookies = {k: m.value for r in (*resp.history, resp) for k, m in r.cookies.items()}
+        except _CONNECTION_ERRORS as exc:
+            raise _map_connection_error(exc, _origin_of(url)) from exc
+        if self._debug:
+            _debug_print_response(req_id, status, None, method="GET", url=shown, duration=time.monotonic() - start)
+        return status, cookies
+
+    async def ws_connect(
+        self, url: str, *, params: Mapping[str, str], cookies: Mapping[str, str],
+    ) -> aiohttp.ClientWebSocketResponse:
+        """Open a binary WebSocket to an absolute ``url`` with ``cookies``; the caller closes it.
+
+        It is closed by disconnect() at the latest.
+
+        Raises:
+            PermissionDeniedError: The handshake was rejected with 403.
+            APIError: The handshake was rejected otherwise (error_code is the HTTP status), or
+                the host could not be reached.
+            ConnectionTimeoutError: The handshake timed out.
+        """
+        if self._debug:
+            _debug_print_request(next(self._debug_seq), "WEBSOCKET", url, params=_redact(dict(params)))
+        headers = {"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())} if cookies else None
+        try:
+            ws = await self._side_client().ws_connect(
+                url, params=dict(params), headers=headers, protocols=("binary",),
+                ssl=self._ssl_param(), max_msg_size=0,
+            )
+        except aiohttp.WSServerHandshakeError as exc:
+            if exc.status == 403:
+                raise PermissionDeniedError("Permission denied", error_code=403) from exc
+            raise APIError(f"The connection was refused (HTTP {exc.status}).", error_code=exc.status) from exc
+        except _CONNECTION_ERRORS as exc:
+            raise _map_connection_error(exc, _origin_of(url)) from exc
+        self._websockets.add(ws)
+        return ws
+
     def _ssl_param(self) -> bool:
         """Return the ssl parameter value for aiohttp.
 
@@ -670,6 +765,11 @@ class WebAPISession:
         True  → use aiohttp default SSL verification
         """
         return self._verify_ssl
+
+
+def _origin_of(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 def _extract_error_message(body: Any, default: str) -> str:
@@ -773,6 +873,9 @@ _SENSITIVE_EXACT_KEYS = frozenset({
     "passwd", "otp_code", "device_id", "did", "sid", "synotoken",
     "accesskey", "secretkey", "secret", "password", "loginpassword",
     "storageencryptionkey", "encryptionkey",
+    # Bearer links: sandbox console links (single-use, no sign-in) and time-limited
+    # verification-video download links; sharing_id is a console link's id.
+    "url", "sharing_id",
 })
 
 

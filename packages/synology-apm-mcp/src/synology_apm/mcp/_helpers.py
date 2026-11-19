@@ -39,8 +39,8 @@ LIST_RESULT_SUFFIX = (
     "Returns {items, total, truncated?} (truncated appears only when more results exist beyond this page)."
 )
 LIST_RESULT_SUFFIX_UNRELIABLE_TOTAL = (
-    "Returns {items, total, truncated?} (total is always null since this endpoint does not report an "
-    "accurate count; truncated indicates more results may exist beyond this page)."
+    "Returns {items, total, truncated?} (total is always null because no accurate count is available; "
+    "truncated indicates more results may exist beyond this page)."
 )
 
 

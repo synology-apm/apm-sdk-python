@@ -1,11 +1,13 @@
-"""machine phase — ``machine list``/``get``/``version list``/``version get``.
+"""machine phase — ``machine`` list/get/version commands and read-only ``machine sandbox`` steps.
 
-Verifies that the CLI binary can connect, list and get Machine Workloads and
-their version history without crashing or producing malformed output.
-State-mutating roundtrips (lock/unlock, backup/cancel, change-plan) are
-covered by the SDK smoke test and are intentionally excluded here.
+Lock/unlock, backup/cancel and change-plan are covered by the SDK smoke test. The sandbox
+steps run ``resources`` and ``start --dry-run`` only.
 """
 from __future__ import annotations
+
+from typing import Any
+
+from tests.sandbox_checks import has_backup_server_copy
 
 from .._context import SmokeContext, parse_json, pick_backed_up_workload
 
@@ -90,3 +92,28 @@ def run(ctx: SmokeContext) -> None:
         )
     else:
         ctx.skip(DOMAIN, "machine.version.get[direct]", f"Workload {name!r} has no backup versions yet.")
+
+    _sandbox_steps(ctx, workloads)
+
+
+def _sandbox_steps(ctx: SmokeContext, workloads: list[dict[str, Any]]) -> None:
+    """Read-only ``machine sandbox resources`` / ``start --dry-run`` on the first restorable PS/VM version."""
+    steps = ("machine.sandbox.resources", "machine.sandbox.start[dry-run]")
+    for wl in workloads:
+        if wl.get("workload_type") not in ("ps", "vm") or wl.get("is_retired"):
+            continue
+        wl_args = ["--workload-id", wl["workload_id"], "--namespace", wl["namespace"]]
+        ver = ctx.run(
+            DOMAIN, f"machine.sandbox.version.list[{wl['name']}]",
+            ["machine", "version", "list", *wl_args, "--status", "success", "--status", "partial", "--limit", "10"],
+            output_format="json",
+        )
+        version = next((v for v in parse_json(ver) or [] if has_backup_server_copy(v)), None)
+        if version is None:
+            continue
+        args = [*wl_args, "--version-id", version["version_id"]]
+        ctx.run_both(DOMAIN, steps[0], ["machine", "sandbox", "resources", *args])
+        ctx.run_both(DOMAIN, steps[1], ["machine", "sandbox", "start", *args, "--dry-run"])
+        return
+    for step in steps:
+        ctx.skip(DOMAIN, step, "No active PS/VM workload with a restorable backup-server version.")

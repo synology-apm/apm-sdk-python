@@ -52,6 +52,7 @@ _ONGOING = {
     RestoreActivityStatus.PREPARING,
     RestoreActivityStatus.RESTORING,
     RestoreActivityStatus.CANCELING,
+    RestoreActivityStatus.SANDBOX_READY,
     RestoreActivityStatus.READY_FOR_MIGRATE,
     RestoreActivityStatus.MIGRATE_VM_MANUALLY,
     RestoreActivityStatus.MIGRATING,

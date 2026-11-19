@@ -147,6 +147,34 @@ async def test_list_versions_sends_status_filter_params() -> None:
     assert set(status_values) == {"COMPLETED", "PARTIAL", "FAILED", "CANCELED"}
 
 
+async def test_list_versions_sends_only_the_requested_statuses() -> None:
+    """statuses narrows the status params (duplicates sent once)."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"versions": [], "total": 0}
+        await MachineWorkloadCollection(session).list_versions(
+            SAMPLE_WL_OBJ, statuses=[VersionStatus.SUCCESS, VersionStatus.PARTIAL, VersionStatus.SUCCESS],
+        )
+
+    params: list[tuple[str, str]] = mock_get.call_args[1]["params"]
+    assert [v for k, v in params if k == "status"] == ["COMPLETED", "PARTIAL"]
+
+
+@pytest.mark.parametrize("statuses", [[], [VersionStatus.SUCCESS, VersionStatus.BACKING_UP]])
+async def test_list_versions_rejects_statuses_never_listed(statuses: list[VersionStatus]) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    with (
+        patch.object(session, "get", new_callable=AsyncMock) as mock_get,
+        pytest.raises(ValueError, match="statuses"),
+    ):
+        await MachineWorkloadCollection(session).list_versions(SAMPLE_WL_OBJ, statuses=statuses)
+    mock_get.assert_not_called()
+
+
 # ── get_latest_version() ──────────────────────────────────────────────────
 
 
@@ -180,6 +208,24 @@ async def test_get_latest_version_raises_when_no_versions() -> None:
         with pytest.raises(ResourceNotFoundError) as exc_info:
             await collection.get_latest_version(SAMPLE_WL_OBJ)
 
+    assert_resource_error(exc_info, resource_type="WorkloadVersion", resource_id=WORKLOAD_ID)
+
+
+async def test_get_latest_version_with_statuses() -> None:
+    """statuses is passed through, and the not-found message names it."""
+    from unittest.mock import AsyncMock, patch
+
+    session = make_session()
+    with patch.object(session, "get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = {"versions": [], "total": 0}
+        with pytest.raises(ResourceNotFoundError, match="with status success, partial") as exc_info:
+            await MachineWorkloadCollection(session).get_latest_version(
+                SAMPLE_WL_OBJ, statuses=[VersionStatus.SUCCESS, VersionStatus.PARTIAL],
+            )
+
+    params: list[tuple[str, Any]] = mock_get.call_args[1]["params"]
+    assert [v for k, v in params if k == "status"] == ["COMPLETED", "PARTIAL"]
+    assert dict(params)["limit"] == 1
     assert_resource_error(exc_info, resource_type="WorkloadVersion", resource_id=WORKLOAD_ID)
 
 

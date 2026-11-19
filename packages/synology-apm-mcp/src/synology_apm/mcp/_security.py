@@ -7,9 +7,11 @@ import os
 import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar, overload
 
 from synology_apm.mcp._errors import ToolResult, raise_tool_error
+
+_T = TypeVar("_T")
 
 _LEVELS: dict[str, int] = {"readonly": 0, "operator": 1, "admin": 2}
 
@@ -52,11 +54,16 @@ def confirm_or_preview(action: str, target: dict[str, Any], warning: str) -> dic
     }
 
 
-async def run_audited_tool(coro: Awaitable[Any], action: str, params: dict[str, Any]) -> ToolResult:
-    """Await a mutation coroutine, record the outcome in the audit log, return the result.
+@overload
+async def run_audited_tool(coro: Awaitable[None], action: str, params: dict[str, Any]) -> ToolResult: ...
+@overload
+async def run_audited_tool(coro: Awaitable[_T], action: str, params: dict[str, Any]) -> _T: ...
+async def run_audited_tool(coro: Awaitable[Any], action: str, params: dict[str, Any]) -> Any:
+    """Await an audited coroutine (a mutation or an access grant), log the outcome, return the result.
 
-    Raises a ToolError (via raise_tool_error()) on exception, after audit-logging
-    the failure.
+    The result is returned as-is ({} when the coroutine returns None), so a tool can
+    return a non-dict content type such as an image. Raises a ToolError (via
+    raise_tool_error()) on exception, after audit-logging the failure.
     """
     try:
         result = await coro

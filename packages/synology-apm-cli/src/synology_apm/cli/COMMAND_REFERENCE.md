@@ -17,6 +17,7 @@ material, not a document meant to be read cover to cover.
 - [Detailed Command Specifications](#detailed-command-specifications)
    - [config — Configuration Management](#config--configuration-management)
    - [machine — Device Workload Management](#machine--device-workload-management)
+      - [machine sandbox — Sandbox Recovery Drill](#machine-sandbox--sandbox-recovery-drill)
    - [saas — SaaS Application Overview](#saas--saas-application-overview)
    - [m365 — M365 Workload Management](#m365--m365-workload-management)
    - [m365 exchange export / m365 group export — Mailbox PST Export](#m365-exchange-export--m365-group-export--mailbox-pst-export)
@@ -121,7 +122,7 @@ as the page size, it automatically fetches page by page until all data is retrie
 Resource-addressed commands accept two mutually exclusive addressing modes; combining them is an argument error, and omitting both prints the command help:
 
 - **Search mode** — positional `<NAME>`: keyword search, then case-insensitive exact match. Machine workloads match on name; M365 workloads match on display name / UPN / group email and are scoped by `-t/--tenant-id` (auto-resolves to the first M365 tenant when omitted, reported on stderr as `(Using tenant: <id>)`); GWS workloads match on display name / email (Shared Drive: drive name) and are scoped by `-d/--domain` (auto-resolves to the first GWS domain when omitted, reported on stderr as `(Using domain: <id>)`). Plan / server / storage / hypervisor commands match on name (or endpoint/address where noted per command).
-- **Direct mode** — `--id <ID>`: direct ID lookup. Workload commands additionally require `--namespace <NS>`; every `version` subcommand and the `export` subcommands use `--workload-id` instead — for `version get`/`lock`/`unlock` and `export cancel`/`download`, because `--id` there addresses the version/activity; for `version list`, because it lists every version of the workload, so there's no single version for `--id` to address.
+- **Direct mode** — `--id <ID>`: direct ID lookup. Workload commands additionally require `--namespace <NS>`; every `version` subcommand and the `export` subcommands use `--workload-id` instead — for `version get`/`lock`/`unlock` and `export cancel`/`download`, because `--id` there addresses the version/activity; for `version list`, because it lists every version of the workload, so there's no single version for `--id` to address. `machine sandbox` follows its own [Addressing](#addressing) rules.
 
 ### Get detail block
 
@@ -281,7 +282,7 @@ prompting.
 
 Manages device backup Workloads (PC, Physical Server, VM, File Server).
 
-Subcommands that support search mode (`get` / `version list` / `version get` / `version lock` / `version unlock`) by default search only protected Workloads; adding `--retired` searches retired Workloads instead. In direct mode (`--id`/`--workload-id` + `--namespace`), `--retired` has no effect.
+The subcommands that take `--retired` (`get` / `change-plan` / `version list` / `version get` / `version lock` / `version unlock`) search only protected Workloads in search mode; `--retired` searches retired Workloads instead. In direct mode (`--id`/`--workload-id` + `--namespace`), `--retired` has no effect.
 
 `retire`: in search mode, when the name is not found among protected workloads, the CLI
 probes retired workloads; if the workload is already retired, the error is `Workload
@@ -294,6 +295,98 @@ mode, add `--retired` to look up an already-retired Workload by name.
 if omitted (reported on stderr as `(Using version: <id>, created at <time>)`). Its detail
 view reuses the same `Activity Detail` body as `synology-apm-cli activity backup get` (see
 [activity backup get](#synology-apm-cli-activity-backup-get)).
+
+#### machine sandbox — Sandbox Recovery Drill
+
+Boots a PS or VM backup version as a sandbox VM on the appliance's built-in hypervisor.
+
+##### Addressing
+
+- `resources` / `start` take the workload in [search or direct mode](#search--direct-mode)
+  (`--workload-id` + `--namespace`, since the sandbox does not exist yet). `--version-id`
+  defaults to the latest successful or partially successful version, reported on stderr as
+  `(Using version: <id>, created at <time>)`; a workload without one is an error (exit 1).
+- `screenshot` / `connect` / `vnc` take the sandbox as `<NAME>` or `--id <ACTIVITY_ID>` (its
+  restore activity; no `--namespace`); giving both is an error. `<NAME>` matches the workload
+  name exactly (case-sensitive) and picks its one ongoing sandbox. With none it fails (exit 1,
+  `NAME has no ongoing sandbox.`); with several it fails (exit 1) and lists each one's activity
+  ID and VM name, to pick one with `--id`.
+
+##### Lifecycle and errors
+
+A sandbox is a restore activity. Start it with `machine sandbox start`, follow it with
+`activity restore list`/`get` (Restore Type `Instant Restore (Sandbox)`) until its status is
+`● Ready`, and stop it with `activity restore cancel`, which also deletes the VM.
+
+`screenshot` / `connect` / `vnc` power the sandbox on first if needed. They fail when:
+
+- the sandbox is not ready: exit 1, with a message saying it is still starting, is no longer
+  running, or is not a sandbox;
+- the sandbox's console does not answer in time: exit 3;
+- anything else goes wrong: the standard
+  [SDK exception mapping](#sdk-exception--cli-error-mapping).
+
+##### `synology-apm-cli machine sandbox resources`
+
+One section per location the version can be restored from, the default first (`(default)`
+after its name): location ID, CPU and memory limits, and a network table (with SR-IOV support).
+A location without networks prints `none`; its default sandbox has no network
+adapter.
+
+##### `synology-apm-cli machine sandbox start`
+
+Starts from the default settings of `--location-id` (or the default location), and each
+setting flag given replaces its default. `--vm-name` sets the sandbox VM's name.
+
+- `--nic` (repeatable) replaces the default adapters, and `--no-network` removes them; the two
+  are mutually exclusive. `--disk` (once per backed-up disk, in order) replaces the default
+  disks. Value formats are in `--help`; a malformed value is an error (exit 1) before connecting.
+- A setting error is printed as `✗ <flag>: <message>` (exit 1), where `<flag>` is the flag
+  that sets the setting. For a rule about two settings (`--cpu-compatibility-mode` requires
+  `--no-hyperv`; `ide` disks are not available with machine type `q35`), it names both flags
+  when both were given, otherwise the one given.
+- A setting that breaks a rule of its own (name format, the two-setting rules above) fails
+  before anything is printed. Settings that pass these rules are printed to stderr under
+  `Sandbox settings:`, with the flags given on the command line marked `(set)`, before the
+  [confirmation](#action-confirmation-flow). `-y` skips only the prompt and `-q` only the result
+  message.
+- The location's own limits are checked after the confirmation and before anything starts.
+  An error about the location, CPU, memory, or network adapters is followed by
+  `Allowed values: synology-apm-cli machine sandbox resources …` with the resolved workload and
+  version. An unknown `--location-id` fails the same way before the settings are printed.
+- `--dry-run` runs the location checks without a prompt, prints `✓ Settings are valid; nothing
+  was started.`, and starts nothing.
+- It returns once the sandbox is started: `✓ Sandbox started.`, the `Workload:` and `Sandbox:`
+  (VM name) rows, then a pointer to `activity restore list`.
+- `-o json` / `yaml` prints the settings document instead of the result message, with or
+  without `--dry-run`.
+
+##### `synology-apm-cli machine sandbox screenshot`
+
+`screenshot -f FILE [--press KEY]... [--delay SECONDS]` writes the current screen as a PNG and
+prints `✓ Screenshot saved: FILE`.
+
+- An existing `FILE` is overwritten after a prompt (`-y` skips it; declined → exit 4). Exit 1
+  when the file can't be written.
+- `--press` (repeatable; choices in `--help`) presses the keys in order first, and the capture
+  follows `--delay` seconds later (0-60, default 2). Without `--press` no input is sent to the
+  sandbox, and `--delay` alone is an error (exit 1) before connecting.
+- It can be repeated while the OS boots. Each run opens a new console access, which adds an
+  entry to the activity's log.
+
+##### `synology-apm-cli machine sandbox connect`
+
+Prints the console URL alone on stdout (so it can be piped). On stderr it prints a notice (the
+URL is single-use, needs no sign-in, and must not be shared). The URL opens on the backup
+server that runs the sandbox. Request a new URL for every open.
+
+##### `synology-apm-cli machine sandbox vnc`
+
+`vnc [--port N]` listens on `127.0.0.1` (`--port 0`, the default, picks a free port), prints
+`vnc://127.0.0.1:PORT` alone on stdout, and prints a notice on stderr: no password, any user of
+this computer can connect, Ctrl+C closes it. Each VNC client gets its own connection to the
+sandbox until Ctrl+C (exit 0, `VNC relay closed.` on stderr). Exit 1 when the port can't be
+opened.
 
 ---
 
@@ -425,25 +518,28 @@ underlying API doesn't support them — see the SDK design contract's `BEHAVIOR_
 #### `synology-apm-cli activity backup get`
 
 Standard [Search / Direct mode](#search--direct-mode) dispatch — search mode gets the latest
-entry by workload name, direct mode (`--id`) gets by Activity ID. This detail body's shared use across `machine version get` / `m365 <scope> version get` /
-`gws <scope> version get` is documented on `print_activity_detail()`'s own docstring
-(`_display.py`). Its field set and
-each field's conditional-visibility rule are defined next to that function and
-`activity.py` — the fields that only appear for certain workload categories (e.g. `Backup
-Scope` for machine workloads, `Processed items` for FS/M365) are exactly the kind of detail
-worth reading there rather than duplicating here.
+entry by workload name, direct mode (`--id`) gets by Activity ID. The detail body, its reuse by
+the `version get` commands, and its per-category fields are defined by
+`print_activity_detail()` (`_display.py`).
+
+#### `synology-apm-cli activity restore list`
+
+`--status ready_for_migrate` also lists sandboxes that are `sandbox_ready` (a sandbox is ready
+for migration too); `sandbox_ready` can only be combined with `ready_for_migrate` (otherwise
+exit code 1).
 
 #### `synology-apm-cli activity backup cancel` / `activity restore cancel`
 
 Exit code 1 if the activity is not found (or already completed); exit code 4 if the user
-declines the confirmation prompt.
+declines the confirmation prompt. For a sandbox, see
+[Lifecycle and errors](#lifecycle-and-errors).
 
 #### `synology-apm-cli activity restore get`
 
 Same search/direct dispatch as `activity backup get`. Its detail body additionally shows
 Restore Type / Version / Restore from / Destination / Destination path / Destination
-hypervisor / Operator — see `RestoreActivity`'s own docstring (SDK) for why the latter two
-are never both set.
+hypervisor / Operator — see `RestoreActivity`'s own docstring (SDK) for why
+Destination path and Destination hypervisor are never both set.
 
 ---
 
@@ -494,6 +590,7 @@ lookups elsewhere).
 | Deleting | `⟳` | Dim | Workload deletion is in progress (transient) |
 | **Activity Status** (backup/restore activities, in addition to the result icons above) | | | |
 | Canceling | `⊗` | Yellow | An in-progress backup/restore activity is being canceled |
+| Ready | `●` | Blue | Restore activity: the sandbox is running and its console can be opened (`sandbox_ready`; see [Lifecycle and errors](#lifecycle-and-errors)) |
 | **Version Status** (in addition to Success / Failed / Partial / Canceled above) | | | |
 | Paused | `‖` | Dim | The backup producing this version is paused |
 | Delete Failed | — | Red | Deletion of this version failed |
@@ -550,10 +647,14 @@ Errors are printed to stderr; the exit code is returned to the shell (it is not 
   <Detailed description or suggested action>     ← optional second line
 ```
 
-An invalid value for any enum-filter option (`--status`, `--type`, `--level`,
-`--verify-status`, `--category`, etc.) is validated by the CLI itself, before any SDK call —
-`✗ Unsupported <option> value: <value> (available: <comma-separated valid values>)`, exit
-code `1`.
+An invalid value for any enum option (`--status`, `--type`, `--level`, `--verify-status`,
+`--category`, `--video-card`, `--press`, etc.) is validated by the CLI itself, before any SDK
+call — `✗ Unsupported --<option> value: <value> (available: <comma-separated valid values>)`,
+exit code `1`.
+
+A `machine sandbox start` setting error names the flag instead: `✗ <flag>: <message>`, with an
+optional `Allowed values: …` detail line — see
+[`machine sandbox start`](#synology-apm-cli-machine-sandbox-start).
 
 ### SDK Exception → CLI Error Mapping
 

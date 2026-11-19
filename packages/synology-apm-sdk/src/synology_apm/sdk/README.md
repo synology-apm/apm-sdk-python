@@ -31,7 +31,7 @@ area, not cover to cover.
 - Exceptions must always use the custom hierarchy defined in `exceptions.py` (see "Exception Hierarchy"); never raise a generic `Exception`.
 - Single-resource lookups (`get()` and equivalents) wrap their primary API call in `_shared._not_found_as(resource_type, resource_id, ...)` so every not-found error carries the caller's resource identity, regardless of which response shape signaled it (HTTP 404, an error detail code via `detail_code=`, or an empty 200 body — for the last, raise a placeholder `ResourceNotFoundError` inside the block and the context manager rewrites it). Wrap only the primary lookup, never nested lookups such as location-cache building.
 - Docstrings fall under the root CLAUDE.md's "API Abstraction in User-Facing Text" rule; `_http.py` and private helpers prefixed with an underscore are exempt (per that rule) and may reference raw API details in code/comments where needed.
-- When adding a new public type (class / enum / dataclass), remember to also add it to `__all__` in `synology_apm/sdk/__init__.py`.
+- When adding a new public name (class, enum, dataclass, exception, constant or function), also add it to `__all__` in `synology_apm/sdk/__init__.py`.
 - All model dataclasses (`models/*.py`) are `@dataclass(frozen=True)`: API responses are parsed into immutable value objects, never mutated in place.
 - When an API field name differs from the SDK dataclass field name, perform the conversion inside the collection parser (`_parse_*` functions) without changing the SDK's public interface. Magic values (such as `"-1"` / `"0"` / `""`) are always converted to `None` via the relevant `_parse_*` helper (e.g. `_parse_data_sizes()`, `_parse_int_or_none()`).
 - **Null vs. Absent JSON Field Handling:** in a parser, use `raw.get(key) or T` instead of `raw.get(key, T)` for nested optional config blocks and for scalar fields whose default equals that type's falsy value; avoid `or T` for any other default (e.g. `True`, non-empty sentinels) without concrete evidence the field can be `null`. Applies to REST API response parsing only, not TOML config or environment variables; parenthesize `or` expressions inside comparisons or chained calls.
@@ -55,12 +55,12 @@ Every `APMError` subclass also exposes a `to_dict()` method returning a JSON-saf
    be wrapped with `_seg()` from `collections/_shared.py` — e.g. `f"/api/v1/foo/{_seg(some_id)}"`
    — so the value cannot introduce an extra path segment into the request URL. Enforced by
    `tests/unit/sdk/collections/test_path_segment_convention.py`. If it sends or receives a
-   field carrying a password, API key, encryption key, or auth-bypass token, add that field's
-   exact key name to `_SENSITIVE_EXACT_KEYS` in `_http.py` so `debug=True` masks it — a
+   field carrying a password, API key, encryption key, auth-bypass token, or bearer link, add
+   that field's exact key name to `_SENSITIVE_EXACT_KEYS` in `_http.py` so `debug=True` masks it — a
    forgotten one is caught by `tests/unit/sdk/test_sensitive_key_convention.py`, which
    flags any new credential-shaped key name and requires it to be masked or explicitly
    reviewed as safe.
-2. If it introduces a new public symbol (enum, model, collection), export it via `sdk/__init__.py` + `__all__`, then run `grep -r "from synology_apm\.sdk\." packages/synology-apm-cli/src examples/` and confirm no output — CLI and examples must consume it via the top-level `synology_apm.sdk` package, never a submodule import.
+2. If it introduces a new public name (enum, model, exception, collection, constant or function), export it via `sdk/__init__.py` + `__all__`, then run `grep -r "from synology_apm\.sdk\." packages/synology-apm-cli/src examples/` and confirm no output — CLI and examples must consume it via the top-level `synology_apm.sdk` package, never a submodule import.
 3. Add exactly one `[[mapping]]` or `[[not_exposed]]` entry to `scripts/mcp_coverage.toml` — enforced by `make test`.
 4. Add a unit test in `tests/unit/sdk/collections/` (see `tests/CLAUDE.md` for the request-contract + response-parsing conventions).
 5. Add an integration test and record its cassette (`make record-integration-cassettes`).
@@ -122,8 +122,11 @@ synology_apm/sdk/
 ├── __init__.py              # Public API: APMClient, exceptions, enums, models, collections
 ├── client.py                # APMClient main entry point
 ├── exceptions.py            # All custom exception classes
-├── _http.py                 # Low-level HTTP wrapper (private)
-├── enums.py                 # All Enum definitions
+├── _console.py              # How a sandbox VM's console is reached: access, retries, timeouts, VNC bridge; BinarySocket (private)
+├── _http.py                 # Low-level HTTP wrapper, including the console client (private)
+├── _relay.py                # Local TCP relay to WebSockets, for the sandbox VNC bridge (private)
+├── _vnc.py                  # Minimal VNC client for a sandbox screenshot, and PNG encoding (private)
+├── enums.py                 # All Enum definitions (+ LISTED_VERSION_STATUSES)
 ├── config.py                # Config file read/write, keyring credential storage, resolve_connection() (shared with CLI/MCP)
 ├── models/
 │   ├── _shared.py           # Shared model serialization helpers (private): auto_to_dict()
@@ -141,10 +144,12 @@ synology_apm/sdk/
 │   ├── m365_auto_backup_rule.py  # M365AutoBackupRule, M365CollabServiceSetting, M365AutoBackupRuleListResult
 │   ├── gws_auto_backup_rule.py   # GWSAutoBackupRule, GWSSharedDriveSetting, GWSAutoBackupRuleListResult
 │   ├── saas.py               # SaasApplication (base) + M365TenantInfo, GWSDomainInfo
+│   ├── sandbox.py           # SandboxSettings (+ SandboxNetworkAdapter/SandboxDisk, with_changes()), SandboxResources (+ location/network), SandboxVncEndpoint, default_sandbox_name()
 │   └── system.py            # SiteInfo, SiteStorageStats, WorkloadTypeStat, WorkloadUsageSummary
 └── collections/
     ├── _shared.py           # Shared collection helpers (private): pagination, timestamp/status parsing, version mixin; also defines the public ListResult pagination envelope
     ├── machine.py           # MachineCollection (entry point) + MachineWorkloadCollection
+    ├── machine_sandbox.py   # MachineSandboxCollection; private typed start pipeline (_VmSpec, _Repo, _Plan, _open_in_vm_body)
     ├── m365.py              # M365Collection (entry point) + M365WorkloadCollection
     ├── m365_auto_backup_rule.py
     ├── m365_mail_export.py  # ExchangeExportCollection, GroupExportCollection, M365ExportStartResult
@@ -186,6 +191,11 @@ class list itself does not convey:
 - `ResourceNotReadyError` and `RemoteStorageUnmanagedCatalogError` extend bare `APMError` —
   they have **no** `.resource_type` / `.resource_id` (`RemoteStorageUnmanagedCatalogError`
   carries `vault_name` / `catalog_count` instead).
+- `SandboxSettingsError` extends `ValueError` directly, **not** `APMError` — it reports a
+  sandbox setting that is not allowed (a bad argument, not an APM error) and carries
+  `.field` / `.other_field` instead of `error_code` / `response_body`. Like
+  `KeyringUnavailableError` it is not in `ERROR_CODES`. Field contract:
+  [Validation and SandboxSettingsError](BEHAVIOR_REFERENCE.md#validation-and-sandboxsettingserror).
 - `KeyringUnavailableError` extends `RuntimeError` directly, **not** `APMError` — it signals
   a local OS-keyring failure (raised by `config.py`'s keyring helpers / `resolve_connection()`),
   not a REST API error, and carries no `error_code` / `response_body`.
@@ -237,10 +247,11 @@ the login request built in `_http.py`'s `_login_params()`:
   account with no human present: the device token substitutes for the code.
 - A successful `otp_code`-bearing login's response `data.did` is captured and exposed via the
   `device_id` property on both `WebAPISession` and `APMClient`.
-- Codes `403` (two-factor code required) and `404` (code incorrect) raise `OTPRequiredError`/
-  `OTPIncorrectError` respectively (via the shared `_auth_exception_for_code()` helper, used by
-  both `_do_login()` and the generic `_raise_for_error_code()` path); every other auth code
-  (119/400/401/402/406/407/430) is unaffected and still raises plain `AuthenticationError`.
+- In a login response, codes `403` (two-factor code required) and `404` (code incorrect) raise
+  `OTPRequiredError`/`OTPIncorrectError` respectively (`_auth_exception_for_code()`, used only
+  by `_do_login()`); every other auth code (119/400/401/402/406/407/430) raises plain
+  `AuthenticationError`. The generic `_raise_for_error_code()` path, for business-API
+  responses, raises plain `AuthenticationError` for every auth code, 403/404 included.
 
 The SDK itself never solicits an `otp_code` interactively — that's synology-apm-cli's `config
 set` command's job (the only place in this project that handles a two-factor prompt). Every

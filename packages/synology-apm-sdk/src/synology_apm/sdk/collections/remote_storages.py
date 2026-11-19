@@ -567,7 +567,7 @@ class RemoteStorageCollection:
         # UPDATE is a pure credential re-auth endpoint — minimal body.
         # displayName, storageType, vaultName, encryption fields are silently ignored.
         # Endpoint-free types (Amazon S3, Amazon S3 China, C2, Wasabi): endpoint NOT sent
-        # (wizard only sends {id, accessKey, secretKey}).
+        # (the body is only {id, accessKey, secretKey}).
         is_azure_storage = storage.storage_type in (RemoteStorageType.AZURE_BLOB, RemoteStorageType.AZURE_BLOB_CHINA)
         is_azure_request = isinstance(request, AzureBlobStorageUpdateRequest)
         if is_azure_request != is_azure_storage:

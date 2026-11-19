@@ -13,13 +13,12 @@ import typer
 
 from synology_apm.cli._async import run_async
 from synology_apm.cli._display import (
-    _FILE_SERVER_TYPE_DISPLAY,
-    _WORKLOAD_TYPE_DISPLAY,
     fmt_backup_copy,
     fmt_backup_server,
     fmt_bytes,
     fmt_datetime,
     fmt_hypervisor_type,
+    fmt_machine_workload_type,
     fmt_verify_status,
     fmt_workload_status,
     print_list_footer,
@@ -36,6 +35,7 @@ from synology_apm.cli._options import (
     SINCE_OPTION,
     UNTIL_OPTION,
     VERSION_LIMIT_OPTION,
+    VERSION_STATUS_OPTION,
 )
 from synology_apm.cli._serializers import (
     workload_to_csv_row,
@@ -62,6 +62,7 @@ from synology_apm.cli.commands._actions import (
     _do_version_list,
     _do_version_lock_unlock,
 )
+from synology_apm.cli.commands.machine_sandbox import sandbox_app
 from synology_apm.cli.output import (
     ListOutputFormat,
     OutputFormat,
@@ -81,6 +82,7 @@ from synology_apm.sdk import (
 app = typer.Typer(help="Manage Machine Workloads (PC / PS / VM / FS).", no_args_is_help=True)
 version_app = typer.Typer(help="Manage backup versions.", no_args_is_help=True)
 app.add_typer(version_app, name="version")
+app.add_typer(sandbox_app, name="sandbox")
 
 
 
@@ -293,7 +295,7 @@ async def machine_cancel(
         await _do_cancel(
             lambda: ref.resolve_machine(apm),
             apm.machine.workloads.cancel_backup,
-            _machine_type_label,
+            fmt_machine_workload_type,
             yes=yes,
             quiet=quiet,
         )
@@ -331,7 +333,7 @@ async def machine_retire(
             lambda: ref.resolve_machine(apm),
             lambda: apm.machine.workloads.get_by_name(ref.identifier, is_retired=True),
             apm.machine.workloads.retire,
-            _machine_type_label,
+            fmt_machine_workload_type,
             apm=apm,
             is_direct=ref.is_direct,
             plan_arg=plan,
@@ -378,7 +380,7 @@ async def machine_change_plan(
         await _do_change_plan(
             lambda: ref.resolve_machine(apm, is_retired=retired),
             apm.machine.workloads.change_plan,
-            _machine_type_label,
+            fmt_machine_workload_type,
             apm=apm,
             plan_arg=plan,
             yes=yes,
@@ -400,6 +402,7 @@ async def machine_version_list(
     page_all: bool = PAGE_ALL_OPTION,
     since: str | None = SINCE_OPTION,
     until: str | None = UNTIL_OPTION,
+    status: list[str] | None = VERSION_STATUS_OPTION,
     retired: bool = typer.Option(False, "--retired", help="Search in retired workloads (search mode)"),
     output: ListOutputFormat = LIST_OUTPUT_OPTION,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
@@ -417,15 +420,14 @@ async def machine_version_list(
     """
     ref = validate_resolve_args(ctx, name, workload_id, namespace, id_flag="--workload-id")
     since_dt, until_dt = parse_time_range(since, until)
-
-    async with apm_session(ctx) as apm:
-        await _do_version_list(
-            lambda: ref.resolve_machine(apm, is_retired=retired),
-            apm.machine.workloads.list_versions,
-            lambda wl: wl.workload_type in (MachineWorkloadType.PS, MachineWorkloadType.VM),
-            limit=limit, offset=offset, page_all=page_all, since=since_dt, until=until_dt,
-            output=output, verbose=verbose,
-        )
+    await _do_version_list(
+        ctx,
+        lambda apm: ref.resolve_machine(apm, is_retired=retired),
+        lambda apm: apm.machine.workloads.list_versions,
+        lambda wl: wl.workload_type in (MachineWorkloadType.PS, MachineWorkloadType.VM),
+        status=status, limit=limit, offset=offset, page_all=page_all, since=since_dt, until=until_dt,
+        output=output, verbose=verbose,
+    )
 
 
 @version_app.command("get")
@@ -541,15 +543,6 @@ async def machine_version_unlock(
 # ── Formatting helpers ────────────────────────────────────────────────────
 
 
-def _machine_type_label(wl: MachineWorkload) -> str:
-    base = _WORKLOAD_TYPE_DISPLAY.get(wl.workload_type, wl.workload_type.value)
-    if wl.workload_type == MachineWorkloadType.FS and wl.fs_config is not None:
-        sub = _FILE_SERVER_TYPE_DISPLAY.get(wl.fs_config.server_type, "Unknown")
-        return f"{base} / {sub}"
-    return base
-
-
-
 def _print_workload_table(
     workloads: Sequence[MachineWorkload], verbose: bool = False, retired: bool = False
 ) -> None:
@@ -572,7 +565,7 @@ def _print_workload_table(
         t.add_column("Plan ID", min_width=36)
 
     for wl in workloads:
-        row = [cell(wl.name), cell(_machine_type_label(wl))]
+        row = [cell(wl.name), cell(fmt_machine_workload_type(wl))]
         if not retired:
             row.append(cell(fmt_workload_status(wl), styled=True))
         row.append(cell(fmt_verify_status(wl.verify_status), styled=True))
@@ -616,7 +609,7 @@ def _print_workload_detail(wl: MachineWorkload) -> None:
         status_rows.append(("Verification", fmt_verify_status(wl.verify_status)))
     print_workload_detail(
         console, wl,
-        type_label=f"Machine / {_machine_type_label(wl)}",
+        type_label=f"Machine / {fmt_machine_workload_type(wl)}",
         info_rows=info_rows,
         status_rows=status_rows,
     )

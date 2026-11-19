@@ -287,7 +287,9 @@ def activity_to_dict(act: BackupActivity | RestoreActivity) -> dict[str, Any]:
             del d["version_timestamp"]
         else:
             d["version_timestamp"] = fmt_datetime_iso(act.version_timestamp)
-        for key in ("restore_type", "restore_destination", "operator", "restore_from_info", "destination_path"):
+        for key in (
+            "restore_type", "restore_destination", "operator", "restore_from_info", "destination_path",
+        ):
             if getattr(act, key) is None:
                 del d[key]
         if act.destination_inventory is None:

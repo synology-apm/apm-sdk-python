@@ -7,6 +7,7 @@ from typing import Any, NoReturn, cast
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from synology_apm.sdk import (
     DEFAULT_PROFILE,
@@ -54,10 +55,15 @@ _EXIT_CODE_BY_CODE: dict[str, int] = {
 }
 
 
-def _exit(code: int, message: str, detail: str = "") -> NoReturn:
-    err_console.print(f"[red]✗[/red] {message}")
+def fail(message: str, detail: str = "", code: int = EXIT_ERROR) -> NoReturn:
+    """Print an error (and an optional indented detail line) to stderr and exit with ``code``.
+
+    ``message`` and ``detail`` are Rich markup: escape user- or API-sourced text with
+    ``output.cell()`` first.
+    """
+    err_console.print(f"[red]✗[/red] {message}", soft_wrap=True)
     if detail:
-        err_console.print(f"  {detail}")
+        err_console.print(f"  {detail}", soft_wrap=True)
     raise typer.Exit(code=code)
 
 
@@ -99,26 +105,26 @@ def handle_apm_error(exc: APMError) -> NoReturn:
     code = classify_error(exc)
     if code is not None:
         message, detail = _message_for(code, exc)
-        _exit(_EXIT_CODE_BY_CODE.get(code, EXIT_ERROR), message, detail)
+        fail(escape(message), escape(detail), _EXIT_CODE_BY_CODE.get(code, EXIT_ERROR))
 
     # APIError and other unclassified APMErrors (backup rejected, connection issues, etc.)
     msg = exc.message
     if "ssl certificate verification failed" in msg.lower():
-        _exit(
-            EXIT_CONNECT,
+        fail(
             "SSL certificate verification failed",
             "For self-signed certificates, add the --no-verify-ssl flag "
             "or choose to skip SSL verification when running config set.",
+            EXIT_CONNECT,
         )
     if "connect" in msg.lower():
-        _exit(EXIT_CONNECT, msg)
+        fail(escape(msg), code=EXIT_CONNECT)
 
-    _exit(EXIT_ERROR, f"API error: {msg}")
+    fail(f"API error: {escape(msg)}")
 
 
 def handle_keyring_error(exc: KeyringUnavailableError, hint: str = "") -> NoReturn:
     """Convert a KeyringUnavailableError to a CLI error message and exit the process."""
-    _exit(EXIT_ERROR, str(exc), hint)
+    fail(escape(str(exc)), escape(hint))
 
 
 @contextlib.contextmanager
@@ -137,7 +143,7 @@ def apm_error_handler() -> Iterator[None]:
         if isinstance(exc, APMError):
             handle_apm_error(exc)
         if isinstance(exc, ValueError):
-            _exit(EXIT_ERROR, str(exc))
+            fail(escape(str(exc)))
         raise
 
 

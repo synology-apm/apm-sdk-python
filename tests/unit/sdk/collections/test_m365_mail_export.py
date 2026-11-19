@@ -404,7 +404,7 @@ async def test_exchange_export_list_sends_correct_params() -> None:
         await col.list(SAMPLE_M365_EXCHANGE_WL_OBJ)
 
     mock_get.assert_called_once()
-    params = mock_get.call_args[1]["params"]
+    params = dict(mock_get.call_args[1]["params"])
     assert params["workload.namespace"] == EXCHANGE_NAMESPACE
     assert params["workload.uid"] == EXCHANGE_WORKLOAD_UID
 

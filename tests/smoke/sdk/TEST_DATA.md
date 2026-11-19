@@ -75,6 +75,10 @@ for a type, that block is skipped.
 - Optional: a PS or VM workload with a version whose `verify_status ==
   VerifyStatus.SUCCESS` — needed to exercise `machine.{type}.video_url.get`
   (`get_verification_video_url()`).
+- Optional: an active PS or VM workload (the one its type block picks) with a successful or
+  partially successful version, among its 20 newest, that has a copy on a backup server —
+  needed for the read-only `machine.{type}.sandbox.resources`/`sandbox.defaults` steps
+  (`get_resources()`, `get_default_settings()`). No sandbox is started.
 
 The `change_plan` round-trip in each type block creates a disposable protection plan inline —
 no pre-existing plans are required.

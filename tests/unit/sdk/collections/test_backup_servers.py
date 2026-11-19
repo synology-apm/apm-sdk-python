@@ -558,15 +558,22 @@ DP_EMPTY_STORAGE_RAW: dict[str, Any] = {
 }
 
 
-async def test_nas_server_system_version_is_none() -> None:
-    """NAS server system_version should be None (DP-only field)."""
+@pytest.mark.parametrize(
+    ("firmware", "expected"),
+    [("7.2.2-72806", "ABB 7.2.2-72806"), (None, "")],
+)
+async def test_nas_server_system_version(firmware: str | None, expected: str) -> None:
+    """NAS server system_version is the ABB version; empty string when unavailable."""
+    raw = copy.deepcopy(NAS_SERVER_RAW)
+    if firmware is None:
+        del raw["status"]["firmwareVer"]
     async with connected_session() as (session, m):
-        m.get(SERVERS_URL, payload={"backupServers": [NAS_SERVER_RAW]})
+        m.get(SERVERS_URL, payload={"backupServers": [raw]})
         collection = BackupServerCollection(session)
         servers, total = await collection.list()
         await session.disconnect()
 
-    assert servers[0].system_version is None
+    assert servers[0].system_version == expected
 
 
 async def test_nas_server_storage_from_nas_storage() -> None:
@@ -788,7 +795,7 @@ SAMPLE_NAS_SERVER = BackupServer(
     name="nas-server-01",
     hostname="10.0.0.10",
     model="DS720+",
-    system_version=None,
+    system_version="ABB 7.2.2-72806",
     is_updating=False,
     status=ServerStatus.HEALTHY,
     serial="SN002",

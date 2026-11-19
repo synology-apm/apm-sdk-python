@@ -8,7 +8,7 @@ from typing import Any, NoReturn, TypeAlias, TypeVar
 
 from fastmcp.exceptions import ToolError
 
-from synology_apm.sdk import APMError, classify_error
+from synology_apm.sdk import APMError, SandboxSettingsError, classify_error
 
 _T = TypeVar("_T")
 
@@ -67,13 +67,19 @@ def _classify_unclassified(exc: APMError) -> str:
 
 
 def sdk_error_to_dict(exc: Exception) -> dict[str, Any]:
-    """Convert an SDK exception to a standardized error dict."""
+    """Convert an SDK exception to a standardized error dict.
+
+    A sandbox settings error also carries ``field`` and ``other_field``: the setting(s) the
+    error is about, keyed like the sandbox settings object.
+    """
     if isinstance(exc, APMError):
         code = classify_error(exc) or _classify_unclassified(exc)
         result = {"error": code, **exc.to_dict()}
         if code in _RECONFIGURE_CODES:
             result["hint"] = RECONFIGURE_HINT
         return result
+    if isinstance(exc, SandboxSettingsError):
+        return {"error": "invalid_argument", **exc.to_dict()}
     if isinstance(exc, ValueError):
         return {"error": "invalid_argument", "message": str(exc)}
     return {"error": "unexpected_error", "message": str(exc)}

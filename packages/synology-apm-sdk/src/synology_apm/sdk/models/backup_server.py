@@ -21,7 +21,8 @@ class BackupServer:
         name: Display name.
         hostname: IP address or hostname.
         model: Device model (e.g. "DP320").
-        system_version: System version string for DP servers (e.g. "APM 1.2-71845"). None for NAS servers.
+        system_version: System version string (e.g. "APM 1.2-71845" for DP, "ABB 3.2.0-25053" for NAS).
+            Empty string when unavailable.
         status: Server health status.
         is_updating: True when a firmware update is in progress.
         serial: Serial number.
@@ -46,7 +47,7 @@ class BackupServer:
     name: str
     hostname: str
     model: str
-    system_version: str | None
+    system_version: str
     status: ServerStatus
     is_updating: bool
     serial: str

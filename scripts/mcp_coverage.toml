@@ -191,6 +191,48 @@ reason   = "internal resolution alias; use list_protection_plans (keyword) to fi
 sdk_path = "machine.plans.delete"
 reason   = "covered by delete_protection_plan (cross-category)"
 
+# ── Machine Sandboxes ─────────────────────────────────────────────────────────
+
+# Also backs get_machine_sandbox_resources when version_id is omitted.
+[[mapping]]
+sdk_path = "machine.sandboxes.get_latest_version"
+mcp_tool  = "start_machine_sandbox"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "machine.sandboxes.get_default_settings"
+mcp_tool  = "start_machine_sandbox"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "machine.sandboxes.get_resources"
+mcp_tool  = "get_machine_sandbox_resources"
+mode      = "readonly"
+
+[[mapping]]
+sdk_path = "machine.sandboxes.start"
+mcp_tool  = "start_machine_sandbox"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "machine.sandboxes.validate_settings"
+mcp_tool  = "start_machine_sandbox"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "machine.sandboxes.get_console_link"
+mcp_tool  = "get_machine_sandbox_console_link"
+mode      = "operator"
+
+[[mapping]]
+sdk_path = "machine.sandboxes.get_screenshot"
+mcp_tool  = "get_machine_sandbox_screenshot"
+mode      = "operator"
+
+[[not_exposed]]
+sdk_path = "machine.sandboxes.open_vnc_bridge"
+reason   = "long-lived relay on the MCP server's own host, unusable by the agent; CLI: machine sandbox vnc"
+
 # ── M365 Workloads ────────────────────────────────────────────────────────────
 
 [[mapping]]

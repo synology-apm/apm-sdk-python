@@ -21,6 +21,7 @@ Cross-cutting behavior for the synology-apm-mcp workflow skills:
 - **manage-apm-resource** — View, update, or remove a single existing resource
 - **manage-running-jobs-and-version-locks** — Cancel a running job, or lock/unlock a backup version
 - **reassign-or-retire-workload** — Move a workload to a different plan, or retire/delete it
+- **sandbox-recovery-drill** — Boot a PS/VM backup in the built-in sandbox, check its screen, then clean up
 
 Read this once rather than re-deriving the same caveats in every skill.
 
@@ -44,7 +45,8 @@ actual schedule) is often good enough and keeps the tool-call footprint minimal.
 
 **Activity detail fields**: `get_backup_activity`'s (and `get_restore_activity`'s) `log_entries`
 array holds each entry's detail text in its `message` field — there is no separate
-`error_message` field.
+`error_message` field. `get_restore_activity` with `include_logs=false` returns
+`log_entries: null`.
 
 ## Pagination convention
 
@@ -69,19 +71,20 @@ before it):
 | Mode | Adds |
 |---|---|
 | `readonly` | list/get queries only — no mutations |
-| `operator` | trigger/cancel backups, cancel activities, start/cancel/list M365 exports |
-| `admin` | lock/unlock backup versions, create/update/delete plans, workloads, remote storage, file servers, auto-backup rules |
+| `operator` | trigger/cancel backups, cancel activities, start/cancel/list M365 exports, start sandboxes, view their screens, and open their consoles |
+| `admin` | lock/unlock backup versions, retire workloads and change their plans, create/update/delete plans, workloads, remote storage, file servers, auto-backup rules |
 
-If a tool call fails with a permission error, tell the user which mode is required rather than
-retrying — there's no way to escalate mid-session.
+A tool outside the current mode is not registered at all, so it is simply missing from your
+tools. If a task needs one, tell the user which mode it requires — there's no way to escalate
+mid-session.
 
 ## Resource identification: id only, everywhere
 
 No tool — read or mutate — accepts a name as a lookup key. `plan_name`, `server_name`,
 `storage_name`, `hypervisor_name`, and `workload_name` do not exist as parameters anywhere in
 this MCP server. The only `name`-shaped parameters that do exist are business fields you're
-writing (a plan's display `name`, `vault_name`, `export_name`) — never confuse these with a way
-to identify an existing resource.
+writing (a plan's display `name`, `vault_name`, `export_name`, a sandbox's `settings.name`) —
+never confuse these with a way to identify an existing resource.
 
 To find a resource's id, call the matching `list_*` tool: `keyword` narrows plans, backup
 servers, machine workloads, M365/GWS workloads, and SaaS applications server-side;
@@ -107,7 +110,7 @@ partial-patch or keep-current-if-omitted behavior**, with exactly two exceptions
   clears the list.
 
 Every other field on every `update_*` tool must be supplied explicitly on every call — omitting
-a field is a schema error, not a way to leave it unchanged.
+a field either fails or resets it to its default, never leaves it unchanged.
 
 **General rule**: fetch the resource's current full state with the matching `get_*` call before
 calling any `update_*` tool, and re-supply every field from that current state except the ones
@@ -261,9 +264,8 @@ change — never assume an omitted field preserves the plan's current value.
 `add_machine_file_server`/`update_machine_file_server` take **exactly one** of `path` or
 `selectors` (passing both is an error; on update, passing neither is also an error — there is no
 default). `path` is a single string, the one directory the backup covers (`""` means the whole
-file server root). `selectors` is a list of objects, each shaped
-`{"path": str, "excluded_paths": [str, ...]}` — `excluded_paths` is optional per entry and
-defaults to `[]` (nothing excluded). Use `selectors` for multiple included paths and/or
+file server root). `selectors` is a list of `path` + optional `excluded_paths` entries
+(nothing excluded by default). Use `selectors` for multiple included paths and/or
 per-path exclusions; use `path` only for the single-unrestricted-path case. On update, fetch the
 workload's current scope via `get_machine_workload`'s `fs_config.selectors` and pass it back
 verbatim (as `selectors`, even if it has one entry) unless you're deliberately changing scope —

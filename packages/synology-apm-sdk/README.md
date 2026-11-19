@@ -135,11 +135,16 @@ await apm.machine.workloads.cancel_backup(wl)
 ```python
 from datetime import datetime, timezone, timedelta
 
+from synology_apm.sdk import VersionStatus
+
 versions, total = await apm.machine.workloads.list_versions(wl)
 
 # Filter by time range
 since = datetime.now(timezone.utc) - timedelta(days=7)
 recent, _ = await apm.machine.workloads.list_versions(wl, since=since, limit=10)
+
+# Filter by status (any of LISTED_VERSION_STATUSES)
+ok, _ = await apm.machine.workloads.list_versions(wl, statuses=[VersionStatus.SUCCESS])
 
 for v in recent:
     print(f"{v.created_at}  changed={v.changed_size_bytes}  locked={v.locked}")
@@ -213,6 +218,49 @@ from synology_apm.sdk import VerifyStatus
 if v.verify_status == VerifyStatus.SUCCESS:
     url = await apm.machine.workloads.get_verification_video_url(wl, v)  # time-limited URL
     await apm.download_file(url, "verification.mp4")
+```
+
+### Sandbox recovery drill (PS/VM)
+
+Instantly restore a PS/VM version to a sandbox VM on the appliance's built-in hypervisor, check
+that it boots, then stop it. The sandbox is a restore activity.
+
+```python
+import asyncio
+from pathlib import Path
+
+from synology_apm.sdk import RestoreActivityStatus, RestoreType, SandboxSettingsError
+
+v = await apm.machine.sandboxes.get_latest_version(wl)  # newest successful or partial version
+settings = await apm.machine.sandboxes.get_default_settings(wl, v)
+try:
+    # Keys and values as in settings.to_dict(); allowed values: get_resources(wl, v)
+    settings = settings.with_changes({"memory_mb": 2048, "video_card": "vga"})
+    await apm.machine.sandboxes.start(wl, v, settings)  # validate_settings() checks without starting
+except SandboxSettingsError as e:
+    print(f"{e.field}: {e.message}")
+    raise
+
+ongoing, _ = await apm.activities.restore.list(workload=wl, restore_types=[RestoreType.INSTANT_SANDBOX])
+act = next(a for a in ongoing if a.restore_destination == settings.name)
+while act.status in (RestoreActivityStatus.PREPARING, RestoreActivityStatus.RESTORING):
+    await asyncio.sleep(10)
+    act = await apm.activities.restore.get(act.activity_id, include_logs=False)
+
+if act.status == RestoreActivityStatus.SANDBOX_READY:
+    # The OS may still be booting; pass keys=[SandboxKey.SHIFT] to wake a blanked screen
+    png = await apm.machine.sandboxes.get_screenshot(act)
+    Path("sandbox.png").write_bytes(png)
+await apm.activities.restore.cancel(act)  # stops and deletes the sandbox
+```
+
+To watch or use the sandbox, open the URL `get_console_link(act)` returns in a browser (a single-use
+link that needs no sign-in: don't share it), or relay any VNC client to it:
+
+```python
+async with apm.machine.sandboxes.open_vnc_bridge(act) as endpoint:
+    print(endpoint.url)  # vnc://127.0.0.1:<port>; no password; any user on this machine can connect
+    await asyncio.Event().wait()
 ```
 
 ---
@@ -601,7 +649,7 @@ await apm.gws.auto_backup_rules.update_protected_account_types(
 ```python
 from synology_apm.sdk import BackupActivityStatus, RestoreActivityStatus
 
-# List recent backup activities (returns list[BackupActivity])
+# List recent backup activities
 activities, total = await apm.activities.backup.list(limit=50)
 
 # Filter by status, workload, or time window
@@ -621,7 +669,7 @@ for entry in act.log_entries:
 # Cancel a running backup activity (pass the BackupActivity object)
 await apm.activities.backup.cancel(act)
 
-# List and cancel restore activities (returns list[RestoreActivity])
+# List and cancel restore activities
 restore_acts, _ = await apm.activities.restore.list(limit=50)
 restore_act = await apm.activities.restore.get(activity_id)
 await apm.activities.restore.cancel(restore_act)  # pass the RestoreActivity object
@@ -827,7 +875,8 @@ print(f"Total data size: {usage.total_protected_data_bytes:,} bytes")
 
 ## Error handling
 
-All SDK exceptions inherit from `APMError` and carry three common attributes:
+All SDK exceptions except `SandboxSettingsError` and `KeyringUnavailableError` inherit from
+`APMError` and carry three common attributes:
 
 | Attribute | Description |
 |-----------|-------------|
@@ -836,6 +885,11 @@ All SDK exceptions inherit from `APMError` and carry three common attributes:
 | `.response_body` | Full JSON body from APM, for debugging (`Any \| None`) |
 
 Resource-oriented exceptions (`ResourceNotFoundError`, `InvalidOperationError`, `PlanNameConflictError`, `PlanInUseError`, `DuplicateWorkloadError`, and the `RemoteStorage*` conflict/in-use errors) additionally carry `.resource_type` and `.resource_id` identifying the resource involved. Operation-specific exceptions raised by each method — and their extra attributes, such as `PlanInUseError.has_workloads` or `RemoteStorageUnmanagedCatalogError.catalog_count` — are documented in the method's docstring and the [Sphinx API reference](https://synology-apm.github.io/apm-sdk-python/).
+
+`SandboxSettingsError` (a `ValueError`) reports a sandbox setting that is not allowed; `.field`
+names the setting (a `SandboxSettings.to_dict()` key) and `.other_field` the second one when two
+settings conflict. `KeyringUnavailableError` (a `RuntimeError`) reports that the OS keyring
+could not be used.
 
 `OTPRequiredError` and `OTPIncorrectError` (raised by `connect()` for a two-factor-enabled
 account — see "Two-factor authentication (TOTP) / trusted devices" above) are siblings of

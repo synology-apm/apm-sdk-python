@@ -85,6 +85,21 @@ def test_m365_exchange_version_list_passes_offset_to_sdk() -> None:
     assert "26" in result.output           # row number starts at offset+1
     assert "26–26 of 26" in result.output  # footer shows correct range
 
+def test_m365_exchange_version_list_status_filter_passed_to_sdk() -> None:
+    """version list --status forwards the statuses to list_versions."""
+    mock_apm = make_mock_apm()
+    mock_apm.m365.workloads.list_versions.return_value = ([SAMPLE_VERSION], 1)
+
+    result = invoke_cli(mock_apm, [
+        "m365", "exchange", "version", "list",
+        "--workload-id", WORKLOAD_ID, "--namespace", NAMESPACE, "--status", "failed", "--status", "canceled",
+    ], env={"COLUMNS": "300"})
+
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.m365.workloads.list_versions.call_args.kwargs
+    assert call_kwargs["statuses"] == [VersionStatus.FAILED, VersionStatus.CANCELED]
+
+
 def test_m365_exchange_version_list_json_output() -> None:
     mock_apm = make_mock_apm()
     mock_apm.m365.workloads.list_versions.return_value = ([SAMPLE_VERSION], 1)

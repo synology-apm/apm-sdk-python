@@ -38,7 +38,8 @@ from synology_apm.cli._validate import (
     parse_enum_list,
     parse_time_range,
     require_or_help,
-    validate_activity_args,
+    resolve_by_name_or_id,
+    validate_name_or_id_args,
 )
 from synology_apm.cli.commands._actions import _cancel_activity
 from synology_apm.cli.output import (
@@ -188,13 +189,11 @@ async def backup_get(
     Direct mode (by Activity ID):
       synology-apm-cli activity backup get --id <activity-id>
     """
-    validate_activity_args(ctx, name, activity_id)
+    validate_name_or_id_args(ctx, name, activity_id)
     async with apm_session(ctx) as apm:
-        if activity_id is not None:
-            act = await apm.activities.backup.get(activity_id)
-        else:
-            assert name is not None
-            act = await apm.activities.backup.get_latest_by_workload_name(name)
+        act = await resolve_by_name_or_id(
+            name, activity_id, apm.activities.backup.get, apm.activities.backup.get_latest_by_workload_name,
+        )
 
     if dispatch_output(act, output, activity_to_dict):
         return
@@ -236,8 +235,10 @@ async def restore_list(
     status: list[str] | None = typer.Option(
         None, "--status",
         help=(
-            "Repeatable: preparing / restoring / canceling / ready_for_migrate / migrate_vm_manually "
-            "/ migrating / success / failed / partial / canceled"
+            "Repeatable: preparing / restoring / canceling / sandbox_ready / ready_for_migrate "
+            "/ migrate_vm_manually / migrating / success / failed / partial / canceled. "
+            "ready_for_migrate also matches ready sandboxes; "
+            "sandbox_ready combines only with ready_for_migrate"
         ),
     ),
     search: str | None = SEARCH_OPTION,
@@ -334,13 +335,11 @@ async def restore_get(
     Direct mode (by Activity ID):
       synology-apm-cli activity restore get --id <activity-id>
     """
-    validate_activity_args(ctx, name, activity_id)
+    validate_name_or_id_args(ctx, name, activity_id)
     async with apm_session(ctx) as apm:
-        if activity_id is not None:
-            act = await apm.activities.restore.get(activity_id)
-        else:
-            assert name is not None
-            act = await apm.activities.restore.get_latest_by_workload_name(name)
+        act = await resolve_by_name_or_id(
+            name, activity_id, apm.activities.restore.get, apm.activities.restore.get_latest_by_workload_name,
+        )
 
     if dispatch_output(act, output, activity_to_dict):
         return
@@ -394,6 +393,8 @@ async def restore_cancel(
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output; suitable for scripting"),
 ) -> None:
     """Cancel a running restore activity (requires confirmation).
+
+    Canceling a sandbox also deletes its VM.
 
     \b
     Example:

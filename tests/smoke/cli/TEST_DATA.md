@@ -27,6 +27,9 @@ exercised rather than gracefully skipped.
   phase prefers a workload that has been backed up when picking its get/version target.
 - Optional: at least one **retired** Machine Workload
   (`synology-apm-cli machine list --retired`) — exercises a non-empty `list --retired`.
+- Optional: an active PS or VM workload with a successful or partial version, among its 10
+  newest, on a backup server (not only on remote storage) — exercises the read-only `machine sandbox resources` /
+  `start --dry-run`. No sandbox is started.
 
 ## M365 / SaaS
 

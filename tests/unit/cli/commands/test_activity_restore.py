@@ -197,6 +197,13 @@ def test_restore_get_with_id(mock_apm: AsyncMock) -> None:
     assert "File Level Restore" in result.output
 
 
+def test_restore_get_with_name_and_id_exits_1(mock_apm: AsyncMock) -> None:
+    result = invoke_cli(mock_apm, ["activity", "restore", "get", "prod-server-01", "--id", "rst-uid-001"])
+    assert result.exit_code == 1
+    assert "NAME and --id are mutually exclusive" in result.output
+    mock_apm.activities.restore.get.assert_not_called()
+
+
 def test_restore_get_without_id_shows_help(mock_apm: AsyncMock) -> None:
     """activity restore get without --id should show help and exit with code 0."""
     result = invoke_cli(mock_apm, ["activity", "restore", "get"])
@@ -436,3 +443,63 @@ def test_activity_restore_list_page_all_combines_pages(mock_apm: AsyncMock, monk
     assert "Showing 2 of 2" in result.output
     assert mock_apm.activities.restore.list.call_args_list[0].kwargs["offset"] == 0
     assert mock_apm.activities.restore.list.call_args_list[1].kwargs["offset"] == 1
+
+
+# ── Sandbox activities: sandbox_ready ─────────────────────────────────────
+
+SANDBOX_ACT = dataclasses.replace(
+    RUNNING_RESTORE_ACT,
+    activity_id="rst-uid-003",
+    execution_id="123e4567-e89b-12d3-a456-426614174013",
+    workload_type=ActivityWorkloadType.MACHINE_PS,
+    workload_name="prod-server-01",
+    status=RestoreActivityStatus.SANDBOX_READY,
+    restore_type=RestoreType.INSTANT_SANDBOX,
+    restore_destination="prod-server-01_2026-04-25_090000",
+    sandbox_vm_id="123e4567-e89b-12d3-a456-426614174010",
+)
+
+
+def _line(output: str, label: str) -> str:
+    return next(line for line in output.splitlines() if line.startswith(label))
+
+
+def test_restore_get_shows_sandbox_rows(mock_apm: AsyncMock) -> None:
+    mock_apm.activities.restore.get.return_value = SANDBOX_ACT
+    result = invoke_cli(mock_apm, ["activity", "restore", "get", "--id", SANDBOX_ACT.activity_id])
+    assert result.exit_code == 0, result.output
+    mock_apm.activities.restore.get.assert_called_once_with(SANDBOX_ACT.activity_id)
+    assert "Instant Restore (Sandbox)" in _line(result.output, "Restore Type:")
+    assert "Ready" in _line(result.output, "Status:")
+    assert "123e4567-e89b-12d3-a456-426614174010" not in result.output
+
+
+def test_restore_get_json_sandbox_fields(mock_apm: AsyncMock) -> None:
+    mock_apm.activities.restore.get.return_value = SANDBOX_ACT
+    result = invoke_cli(mock_apm, [
+        "activity", "restore", "get", "--id", SANDBOX_ACT.activity_id, "--output", "json",
+    ])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert "sandbox_vm_id" not in data
+    assert data["status"] == "sandbox_ready"
+    assert data["restore_type"] == "instant_sandbox"
+    assert "execution_id" not in data
+
+
+def test_restore_list_status_sandbox_ready(mock_apm: AsyncMock) -> None:
+    mock_apm.activities.restore.list.return_value = ([SANDBOX_ACT], 1)
+    result = invoke_cli(mock_apm, ["activity", "restore", "list", "--status", "sandbox_ready"])
+    assert result.exit_code == 0, result.output
+    assert mock_apm.activities.restore.list.call_args.kwargs["status"] == [RestoreActivityStatus.SANDBOX_READY]
+
+
+def test_restore_list_status_combination_error_exits_1(mock_apm: AsyncMock) -> None:
+    mock_apm.activities.restore.list.side_effect = ValueError(
+        "sandbox_ready can only be combined with ready_for_migrate in one status filter."
+    )
+    result = invoke_cli(mock_apm, [
+        "activity", "restore", "list", "--status", "sandbox_ready", "--status", "failed",
+    ])
+    assert result.exit_code == 1
+    assert "sandbox_ready can only be combined with ready_for_migrate" in result.output

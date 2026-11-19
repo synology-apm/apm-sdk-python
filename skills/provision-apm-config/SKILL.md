@@ -84,7 +84,7 @@ state), never the source description. A `create_*`/`add_*` call needs no id in â
 
 3. Check for conflicts on the creatable entities â€” list what already exists on the target:
    - `list_remote_storages`, `list_protection_plans`, `list_retirement_plans`,
-     `list_tiering_plans`, `list_machine_workloads` with `workload_types="fs"`,
+     `list_tiering_plans`, `list_machine_workloads` with `workload_types=["fs"]`,
      `list_m365_auto_backup_rules` (per resolved tenant), `list_gws_auto_backup_rules` (per
      resolved domain).
    - Match desired names against existing ones (case-insensitive). Ask the user once, up front:
@@ -140,7 +140,7 @@ state), never the source description. A `create_*`/`add_*` call needs no id in â
       [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md#file-servers-backup-scope-path-vs-selectors)
       for the `selectors` entry shape. **Returns no workload identifier.** If you need to
       reference this file server again later in the session, call `list_machine_workloads` with
-      `workload_types="fs"` and match by `host_ip`. If overwriting, see
+      `workload_types=["fs"]` and match by `host_ip`. If overwriting, see
       [manage-apm-resource](../manage-apm-resource/SKILL.md) â€” every field must be supplied
       explicitly except `login_password`, which accepts `None` to keep the current password;
       `update_machine_file_server` also requires `path` or `selectors` on every call â€” there is

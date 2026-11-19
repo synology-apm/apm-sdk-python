@@ -7,14 +7,14 @@ every function here is parameterized explicitly by WorkloadCategory instead.
 """
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from synology_apm.mcp._helpers import ToolResult, VersionResolution, list_result, parse_dt_optional
+from synology_apm.mcp._helpers import ToolResult, VersionResolution, list_result, parse_dt_optional, to_enum_list
 from synology_apm.mcp._security import destructive_tool
-from synology_apm.sdk import APMClient
+from synology_apm.sdk import APMClient, VersionStatus
 
 
 @dataclass(frozen=True)
@@ -119,6 +119,7 @@ async def cancel_body(
 async def list_versions_body(
     cat: WorkloadCategory, apm: APMClient, *, workload_id: str, namespace: str, since: str | None, until: str | None,
     limit: int, offset: int, saas_id: str | None = None, workload_type: str | None = None,
+    status: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     workload = await resolve_workload(cat, apm, workload_id=workload_id, namespace=namespace, saas_id=saas_id, workload_type=workload_type)
     return await list_result(
@@ -126,6 +127,7 @@ async def list_versions_body(
             workload,
             since=parse_dt_optional(since),
             until=parse_dt_optional(until),
+            statuses=to_enum_list(VersionStatus, status),
             limit=limit,
             offset=offset,
         ),

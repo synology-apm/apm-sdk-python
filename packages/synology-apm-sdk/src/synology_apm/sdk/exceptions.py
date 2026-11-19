@@ -6,7 +6,10 @@ from typing import Any
 
 
 class APMError(Exception):
-    """Base class for all APM SDK exceptions.
+    """Base class for the APM SDK exceptions.
+
+    ``SandboxSettingsError`` and ``KeyringUnavailableError`` are the exceptions that do not
+    extend it.
 
     Attributes:
         message: Human-readable error description.
@@ -138,7 +141,7 @@ class InvalidOperationError(_ResourceError):
 
 
 class ConnectionTimeoutError(APMError):
-    """Raised when APM did not respond within the configured timeout.
+    """Raised when APM, or a sandbox console, did not respond in time.
 
     Distinct from a connection failure (unreachable host / refused connection):
     the request was dispatched but no complete response arrived before the timeout expired.
@@ -157,7 +160,8 @@ class ResourceNotReadyError(APMError):
     """The resource exists but is not yet in a state where the operation can be performed.
 
     Raised when an operation requires the resource to be ready, such as calling
-    get_download_url_by_ready_result() on a result whose ready_to_download is False.
+    get_download_url_by_ready_result() on a result whose ready_to_download is False, or
+    using a sandbox that is still starting.
     """
 
 
@@ -304,6 +308,36 @@ class APIError(APMError):
     """
 
 
+class SandboxSettingsError(ValueError):
+    """A sandbox setting is not allowed.
+
+    Raised when ``SandboxSettings`` is built or changed with a value that breaks its own
+    rules, and by ``MachineSandboxCollection`` when the chosen location does not allow a
+    setting or ``location_id`` is not a backup-server location of the version.
+
+    Extends ``ValueError`` directly (not ``APMError``): it reports a bad argument, not an
+    APM error, and carries no ``error_code`` / ``response_body``.
+
+    Attributes:
+        message:     Human-readable description naming the setting.
+        field:       The setting the error is about, as a ``SandboxSettings.to_dict()`` key;
+            for a key that ``SandboxSettings.with_changes()`` does not know, that key.
+        other_field: The second setting when two settings conflict (``hyperv_enlightenments``
+            with ``cpu_compatibility_mode``, or ``disks`` with ``machine_type``); ``None``
+            otherwise.
+    """
+
+    def __init__(self, message: str, *, field: str, other_field: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.field = field
+        self.other_field = other_field
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict of this exception's semantic fields."""
+        return {"message": self.message, "field": self.field, "other_field": self.other_field}
+
+
 class KeyringUnavailableError(RuntimeError):
     """Raised when the OS keyring backend is unavailable or an operation fails.
 
@@ -317,8 +351,9 @@ class KeyringUnavailableError(RuntimeError):
 # classification" — consumed by both synology-apm-mcp (JSON "error" field) and
 # synology-apm-cli (exit code + message dispatch), so a new exception type only needs to
 # be classified once for both consumers to pick it up. Deliberately excludes APIError and
-# bare APMError (both consumers have their own generic fallback for those) and
-# KeyringUnavailableError (not an APMError subclass; handled separately by both).
+# bare APMError (both consumers have their own generic fallback for those), and
+# SandboxSettingsError and KeyringUnavailableError (not APMError subclasses; handled
+# separately by both).
 ERROR_CODES: dict[type[APMError], str] = {
     ResourceNotFoundError: "not_found",
     InvalidOperationError: "invalid_operation",

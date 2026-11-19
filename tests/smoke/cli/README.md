@@ -40,7 +40,7 @@ smoke/cli/
 │   ├── _config.py         ← config set/show/clear (sandboxed HOME)
 │   ├── _infra.py           ← infra info/server/storage/hypervisor
 │   ├── _plan.py             ← plan protection/retirement/tiering
-│   ├── _machine.py           ← machine list/get/version list/version get
+│   ├── _machine.py           ← machine list/get/version list/version get/sandbox resources+start --dry-run
 │   ├── _saas_m365.py           ← saas list + m365 <scope> list/get/version for all 6 scopes
 │   ├── _gws.py                   ← saas list + gws <scope> list/get/version for all 5 scopes
 │   ├── _activity.py                ← activity backup/restore list/get

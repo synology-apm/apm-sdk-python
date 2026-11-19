@@ -39,14 +39,14 @@ class Activity:
 
     Attributes:
         activity_id:            Unique activity identifier.
-        execution_id:           Execution identifier used by ActivityCollection.get().
+        execution_id:           Internal execution identifier (not in to_dict()).
         namespace:              Namespace of this activity (backup server namespace).
         category:               Business domain of the associated Workload (MACHINE / M365 / GWS).
         workload_type:          Workload sub-type as recorded in the activity (e.g. MACHINE_VM,
                                 MACHINE_FS, ORACLE, M365). Finer-grained than category.
         workload_id:            Associated Workload identifier.
         workload_namespace:     Namespace of the associated Workload; may differ from
-                                activity namespace. Used in restore cancel requests.
+                                activity namespace.
         workload_name:          Associated Workload display name (snapshot value).
         plan_name:              Name of the applied Protection Plan.
         started_at:             Activity start time.
@@ -54,7 +54,9 @@ class Activity:
         duration_seconds:       Duration in seconds; None if not yet completed.
         data_transferred_bytes: Amount of data transferred (bytes); None when not available.
         progress:               Progress percentage (0–100).
-        log_entries:            Detailed log entries; populated only by get() / get_by_version().
+        log_entries:            Detailed log entries; set by get(), get_by_version() and
+                                get_latest_by_workload_name(), None from list() or
+                                get(include_logs=False).
         processed_success_count: Items backed up or restored successfully; M365, GWS, and FS activities only.
         processed_warning_count: Items processed with warnings; M365, GWS, and FS activities only.
         processed_error_count:   Items that failed processing; M365, GWS, and FS activities only.
@@ -103,7 +105,8 @@ class BackupActivity(Activity):
         verify_status:      Backup verification result (PS/VM only); None otherwise.
         data_change_bytes:  Changed data size (bytes); None when not available.
         data_deduped_bytes: Actual storage consumed after deduplication (bytes); None when not available.
-        backup_scope:       Data scope of the backup; populated only by get() / get_by_version().
+        backup_scope:       Data scope of the backup; set by single-activity lookups, None
+                            from list().
     """
     status: BackupActivityStatus
     verify_status: VerifyStatus | None = None
@@ -122,7 +125,8 @@ class RestoreActivity(Activity):
     Attributes:
         status:               Current restore activity status.
         restore_type:         Method used for this restore; None when unavailable.
-        restore_destination:  Target restore destination path or label; None when not set.
+        restore_destination:  Target restore destination path or label (a sandbox's VM name);
+            None when not set.
         operator:             Username who initiated the restore; None when not recorded.
         version_timestamp:    Timestamp of the backup version used for this restore; None if unavailable.
         restore_from_info:    Source location this restore was performed from; None when not provided.
@@ -131,6 +135,9 @@ class RestoreActivity(Activity):
             Only hostname, address, and host_type are populated (the
             remaining Hypervisor fields are empty/zero placeholders, not a
             full inventory record).
+        sandbox_vm_id:        Internal ID of the sandbox VM (not in to_dict()); used by the
+            sandbox console methods. Set for sandbox activities that report one; None
+            otherwise.
     """
     status: RestoreActivityStatus
     restore_type: RestoreType | None = None
@@ -140,6 +147,11 @@ class RestoreActivity(Activity):
     restore_from_info: LocationInfo | None = None
     destination_path: str | None = None
     destination_inventory: Hypervisor | None = None
+    sandbox_vm_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe dict representation."""
+        return auto_to_dict(self, exclude=frozenset({"execution_id", "sandbox_vm_id"}))
 
 
 @dataclass(frozen=True)
@@ -148,8 +160,7 @@ class M365ExportActivity:
 
     Attributes:
         activity_id:        Activity UUID.
-        execution_id:       Internal execution identifier; used by cancel() and
-                             get_download_url_by_activity(), not exposed to users.
+        execution_id:       Internal execution identifier (not in to_dict()).
         namespace:          Namespace of the backup server where this activity resides.
         workload_id:        ID of the associated M365 workload.
         workload_namespace: Namespace of the associated M365 workload.

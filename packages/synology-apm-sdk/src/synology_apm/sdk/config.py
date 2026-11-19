@@ -41,8 +41,8 @@ CONFIG_DIR = _config_base_dir() / "synology-apm"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 DEFAULT_PROFILE = "default"
 
-# Stable keyring "service" naming prefix — kept as "synology-apm-cli" even though
-# this module is now shared, so existing pre-seeded credentials keep working.
+# Stable keyring "service" naming prefix, shared by the CLI and MCP server. Changing it
+# would orphan credentials already stored in the keyring.
 KEYRING_SERVICE_PREFIX = "synology-apm-cli"
 
 

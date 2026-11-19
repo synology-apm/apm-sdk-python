@@ -26,6 +26,7 @@ from synology_apm.mcp._enums import (
     M365WorkloadTypeLiteral,
     MachineWorkloadTypeLiteral,
     VerifyStatusLiteral,
+    VersionListStatusLiteral,
     WorkloadStatusLiteral,
 )
 from synology_apm.mcp._errors import run_tool
@@ -190,7 +191,7 @@ def register_workload_tools(  # pragma: no cover
 
     if variant == "machine":
         desc = (
-            "List machine workloads. Filter by workload_types (pc,ps,vm,fs), namespaces (repeatable), name, retired status, "
+            "List machine workloads. Filter by workload_types (pc,ps,vm,fs), namespaces (repeatable), keyword (name match), retired status, "
             "plan_ids (protection/retirement plan ids, OR logic), hypervisor_id (VM workloads only), status "
             "(queuing,backing_up,success,failed,partial,canceled,no_backups,deleting), or verify_status "
             "(verifying,success,failed,canceled,not_supported,not_enabled,partial,waiting; PS/VM workloads only). "
@@ -364,11 +365,12 @@ def register_workload_tools(  # pragma: no cover
             namespace: str,
             since: str | None = None,
             until: str | None = None,
+            status: Annotated[list[VersionListStatusLiteral], JSON_LIST_VALIDATOR] | None = None,
             limit: int = 20,
             offset: int = 0,
         ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
-            return await run_tool(list_versions_body(cat, apm, workload_id=workload_id, namespace=namespace, since=since, until=until, limit=limit, offset=offset))
+            return await run_tool(list_versions_body(cat, apm, workload_id=workload_id, namespace=namespace, since=since, until=until, limit=limit, offset=offset, status=status))
     elif variant == "m365":
         async def _list_versions(  # type: ignore[misc]
             ctx: Context,
@@ -379,13 +381,14 @@ def register_workload_tools(  # pragma: no cover
             workload_type: M365WorkloadTypeLiteral,
             since: str | None = None,
             until: str | None = None,
+            status: Annotated[list[VersionListStatusLiteral], JSON_LIST_VALIDATOR] | None = None,
             limit: int = 20,
             offset: int = 0,
         ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_tool(list_versions_body(
                 cat, apm, workload_id=workload_id, namespace=namespace, since=since, until=until,
-                limit=limit, offset=offset, saas_id=tenant_id, workload_type=workload_type,
+                limit=limit, offset=offset, saas_id=tenant_id, workload_type=workload_type, status=status,
             ))
     else:  # gws
         async def _list_versions(  # type: ignore[misc]
@@ -397,20 +400,21 @@ def register_workload_tools(  # pragma: no cover
             workload_type: GWSWorkloadTypeLiteral,
             since: str | None = None,
             until: str | None = None,
+            status: Annotated[list[VersionListStatusLiteral], JSON_LIST_VALIDATOR] | None = None,
             limit: int = 20,
             offset: int = 0,
         ) -> ToolResult:
             apm: APMClient = ctx.lifespan_context["apm"]
             return await run_tool(list_versions_body(
                 cat, apm, workload_id=workload_id, namespace=namespace, since=since, until=until,
-                limit=limit, offset=offset, saas_id=domain, workload_type=workload_type,
+                limit=limit, offset=offset, saas_id=domain, workload_type=workload_type, status=status,
             ))
 
     registrar.tool(
         name=f"list_{name_prefix}_versions",
         description=(
-            f"List backup versions for a {name_prefix} workload. Filter by time window (since/until as ISO 8601). "
-            "Only completed/partial/failed/canceled versions are returned (an in-progress version is excluded); "
+            f"List backup versions for a {name_prefix} workload. Filter by time window (since/until as ISO 8601) "
+            "and by status (OR logic). In-progress versions are never returned; "
             f"results are ordered newest-first. {LIST_RESULT_SUFFIX}"
         ),
     )(_list_versions)

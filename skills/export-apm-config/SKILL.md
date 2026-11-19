@@ -21,7 +21,7 @@ relies on (list vs. get field completeness, pagination, permission modes).
    - `list_remote_storages` — remote storage destinations
    - `list_hypervisors` — registered hypervisors
    - `apm://saas-applications` — SaaS applications (M365 tenants + GWS domains)
-   - `list_machine_workloads` with `workload_types="fs"` — file-server workloads
+   - `list_machine_workloads` with `workload_types=["fs"]` — file-server workloads
    - `list_m365_auto_backup_rules` for each tenant — M365 auto-backup rules and collab settings
    - `list_gws_auto_backup_rules` for each domain — GWS auto-backup rules, collab settings, and
      protected-account-types setting

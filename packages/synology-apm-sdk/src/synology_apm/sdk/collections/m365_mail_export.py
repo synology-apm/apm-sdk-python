@@ -12,7 +12,7 @@ from ..models._shared import auto_to_dict
 from ..models.activity import M365ExportActivity
 from ..models.version import VersionLocation, WorkloadVersion
 from ..models.workload import M365GroupInfo, M365UserInfo, M365Workload
-from ._shared import ListResult, _parse_ts_optional, _tunnel_headers
+from ._shared import ListResult, _parse_ts_optional, _tunnel_headers, _wl_params, _wl_ref
 
 
 @dataclass(frozen=True)
@@ -145,12 +145,7 @@ class _BaseM365ExportCollection:
         """
         raw = await self._session.get(
             "/portal/api/v1/portal/activity/export/activities",
-            params={
-                "offset": offset,
-                "limit": limit,
-                "workload.namespace": workload.namespace,
-                "workload.uid": workload.workload_id,
-            },
+            params=[("offset", offset), ("limit", limit), *_wl_params(workload)],
             headers=_tunnel_headers(workload.namespace),
         )
         activities = [_parse_export_activity(a) for a in raw.get("activities") or []]
@@ -256,10 +251,7 @@ class _BaseM365ExportCollection:
             "/portal/api/v1/portal/entries:download",
             json={
                 "id": location.location_id,
-                "workload": {
-                    "uid": result.workload.workload_id,
-                    "namespace": result.workload.namespace,
-                },
+                "workload": _wl_ref(result.workload),
                 "abmParams": abm_params,
             },
             headers=_tunnel_headers(location.namespace),

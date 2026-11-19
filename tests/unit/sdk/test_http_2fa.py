@@ -217,3 +217,25 @@ async def test_business_api_errorcode_403_404_still_raise_plain_authentication_e
         await disconnect_session(m, session)
     assert type(exc_info.value) is AuthenticationError
     assert exc_info.value.error_code == code
+
+
+async def test_debug_mode_masks_url_bearer_links_in_printed_response(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With debug=True, a "url" field (sandbox console links work once with no sign-in;
+    verification-video links are time-limited downloads) must be masked in printed responses."""
+    from tests.unit.sdk.conftest import connected_session
+
+    async with connected_session(debug=True) as (session, m):
+        m.post(f"{BASE_URL}/api/v1/portal/vmm/connect_to_vm", payload={"url": "/sharing/AbCdEf123"})
+        await session.post("/api/v1/portal/vmm/connect_to_vm", json={"guestId": "g-1"})
+        await session.disconnect()
+    captured = capsys.readouterr()
+    assert "AbCdEf123" not in captured.err
+    assert '"url": "***"' in captured.err
+
+
+def test_session_base_url_is_https_host_without_trailing_slash() -> None:
+    from synology_apm.sdk._http import WebAPISession
+
+    assert WebAPISession("apm.corp.com/", "admin", "secret").base_url == "https://apm.corp.com"

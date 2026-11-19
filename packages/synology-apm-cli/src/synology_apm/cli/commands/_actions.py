@@ -1,9 +1,10 @@
-"""Shared resolve/confirm/invoke/print-success bodies for backup/cancel/retire/change-plan/version.
+"""Shared command bodies: workload backup/cancel/retire/change-plan, version list/get/lock/unlock,
+and activity cancel.
 
 Domain-specific differences (workload resolution, presence of a type label, the
 ``resource_type`` string passed to ``InvalidOperationError``) are absorbed via callables
 passed in by each call site in ``commands/machine.py``, ``commands/m365.py``, and
-``commands/gws.py``.
+``commands/gws.py``; ``_cancel_activity`` serves ``commands/activity.py``.
 """
 from __future__ import annotations
 
@@ -22,8 +23,9 @@ from synology_apm.cli._display import (
     print_version_detail,
     render_version_table,
 )
+from synology_apm.cli._helpers import apm_session
 from synology_apm.cli._serializers import version_detail_to_dict, version_to_csv_row, version_to_dict
-from synology_apm.cli._validate import _resolve_plan, print_resolved_version
+from synology_apm.cli._validate import VERSION_STATUS_ARGS, _resolve_plan, parse_enum_list, print_resolved_version
 from synology_apm.cli.errors import EXIT_ERROR, err_console
 from synology_apm.cli.output import (
     ListOutputFormat,
@@ -147,7 +149,7 @@ async def _do_change_plan(
         err_console.print(f"  Plan:      {resolved_plan.name} ({resolved_plan.plan_id})")
         err_console.print(f"  Retention: {fmt_retirement_retention(resolved_plan.retention)}")
     else:
-        # always populated for a plan resolved via the plans/retirement_plans collection
+        # always populated for a plan resolved via the plans collection
         assert resolved_plan.policy is not None
         err_console.print("Applying protection plan:")
         err_console.print(f"  Plan:      {resolved_plan.name} ({resolved_plan.plan_id})")
@@ -170,10 +172,12 @@ async def _do_change_plan(
 
 
 async def _do_version_list(
-    resolve: Callable[[], Awaitable[W]],
-    list_versions: Callable[..., Awaitable[ListResult[WorkloadVersion]]],
+    ctx: typer.Context,
+    resolve: Callable[[APMClient], Awaitable[W]],
+    list_versions: Callable[[APMClient], Callable[..., Awaitable[ListResult[WorkloadVersion]]]],
     show_verify: Callable[[W], bool] | None,
     *,
+    status: list[str] | None,
     limit: int,
     offset: int,
     page_all: bool,
@@ -182,12 +186,16 @@ async def _do_version_list(
     output: ListOutputFormat,
     verbose: bool,
 ) -> None:
-    wl = await resolve()
-    result = await dispatch_paginated_list(
-        lambda off, lim: list_versions(wl, limit=lim, offset=off, since=since, until=until),
-        limit=limit, offset=offset, page_all=page_all, output=output,
-        to_dict=version_to_dict, to_csv_row=version_to_csv_row,
-    )
+    """Body of `<category> version list`: checks --status, then opens its own APM session."""
+    statuses = parse_enum_list(status, VERSION_STATUS_ARGS, "status")
+    async with apm_session(ctx) as apm:
+        wl = await resolve(apm)
+        list_fn = list_versions(apm)
+        result = await dispatch_paginated_list(
+            lambda off, lim: list_fn(wl, limit=lim, offset=off, since=since, until=until, statuses=statuses),
+            limit=limit, offset=offset, page_all=page_all, output=output,
+            to_dict=version_to_dict, to_csv_row=version_to_csv_row,
+        )
     if result is None:
         return
 
@@ -250,8 +258,8 @@ async def _cancel_activity(
 ) -> None:
     """Shared body of `activity backup cancel` / `activity restore cancel`.
 
-    Locates the running activity by ID, confirms (unless --yes), cancels it,
-    and prints the success line (unless --quiet).
+    Locates the activity by ID among the first 500 ongoing activities, confirms (unless
+    --yes), cancels it, and prints the success line (unless --quiet).
     """
     activities, _ = await collection.list(limit=500)
     target = next((a for a in activities if a.activity_id == activity_id), None)

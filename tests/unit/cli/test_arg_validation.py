@@ -31,7 +31,7 @@ def test_plan_protection_list_invalid_category_exits_1(mock_apm: AsyncMock) -> N
     """plan protection list --category <invalid> should exit with code 1."""
     result = invoke_cli(mock_apm, ["plan", "protection", "list", "--category", "bad_category"])
     assert result.exit_code == 1
-    assert "Unsupported category value" in result.output
+    assert "Unsupported --category value" in result.output
 
 
 # ── machine version ───────────────────────────────────────────────────────────

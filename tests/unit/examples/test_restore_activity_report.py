@@ -61,6 +61,7 @@ def test_ongoing_results_are_the_ongoing_status_strings() -> None:
         "preparing",
         "restoring",
         "canceling",
+        "sandbox_ready",
         "ready_for_migrate",
         "migrate_vm_manually",
         "migrating",

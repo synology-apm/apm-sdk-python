@@ -43,7 +43,9 @@ from ._shared import (
     _tunnel_headers,
     _VersionMixin,
 )
+from .backup_servers import BackupServerCollection
 from .hypervisors import _parse_optional_host_type
+from .machine_sandbox import MachineSandboxCollection
 from .protection_plans import MachinePlanCollection
 
 _LVR_TO_STATUS: dict[str, WorkloadStatus] = {
@@ -100,12 +102,17 @@ class MachineCollection:
     """Entry collection for Machine category backup resources.
 
     Accessed via APMClient.machine; should not be instantiated directly.
-    Provides workloads and plans sub-collections.
+    Provides workloads, plans, and sandboxes sub-collections.
     """
 
-    def __init__(self, session: WebAPISession) -> None:
+    def __init__(
+        self,
+        session: WebAPISession,
+        backup_servers: BackupServerCollection,
+    ) -> None:
         self._workloads = MachineWorkloadCollection(session)
         self._plans = MachinePlanCollection(session)
+        self._sandboxes = MachineSandboxCollection(session, backup_servers, self._workloads)
 
     @property
     def workloads(self) -> MachineWorkloadCollection:
@@ -116,6 +123,11 @@ class MachineCollection:
     def plans(self) -> MachinePlanCollection:
         """Access the MachinePlanCollection."""
         return self._plans
+
+    @property
+    def sandboxes(self) -> MachineSandboxCollection:
+        """Access the MachineSandboxCollection (instant restore to the built-in sandbox)."""
+        return self._sandboxes
 
 
 # ── MachineWorkloadCollection ─────────────────────────────────────────────

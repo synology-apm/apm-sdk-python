@@ -15,6 +15,7 @@ avoid an accidental collision in some future command):
 - ``-q`` quiet (per-command; scriptable actions)
 - ``-c`` category (``plan.py``)
 - ``-d`` domain (``gws.py``)
+- ``-f`` filename (``m365_export.py``, ``machine_sandbox.py``)
 - ``-t`` tenant-id (``m365_export.py``)
 - ``-u`` / ``-p`` / ``-h`` (root-level: username / password / help)
 """
@@ -22,11 +23,15 @@ from __future__ import annotations
 
 import typer
 
+from synology_apm.cli._validate import VERSION_STATUS_ARGS
 from synology_apm.cli.output import ListOutputFormat, OutputFormat
 
 SEARCH_OPTION = typer.Option(None, "--search", "-s", help="Keyword search")
 LIMIT_OPTION = typer.Option(25, "--limit", help="Maximum records to show")
 VERSION_LIMIT_OPTION = typer.Option(25, "--limit", help="Maximum versions to show")
+VERSION_STATUS_OPTION = typer.Option(
+    None, "--status", help="Version status filter, repeatable: " + " / ".join(VERSION_STATUS_ARGS),
+)
 OFFSET_OPTION = typer.Option(0, "--offset", help="Pagination start offset (default 0)")
 PAGE_ALL_OPTION = typer.Option(
     False, "--page-all",

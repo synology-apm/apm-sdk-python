@@ -338,7 +338,7 @@ def make_backup_server(
     name: str = "apm-server-01",
     hostname: str = "192.0.2.1",
     model: str = "DP320",
-    system_version: str | None = "APM 1.2-71845",
+    system_version: str = "APM 1.2-71845",
     status: ServerStatus = ServerStatus.HEALTHY,
     is_updating: bool = False,
     serial: str = "SN001",

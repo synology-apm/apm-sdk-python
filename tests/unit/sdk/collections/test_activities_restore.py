@@ -184,7 +184,7 @@ async def _list_single_restore_activity(spec: dict[str, Any] | None = None) -> R
 
 
 async def test_restore_activity_without_optional_spec_fields_has_none_defaults() -> None:
-    """An activity with no versionTimestamp/restoreFromInfo/destinationPath/machineInfo parses all four new fields as None."""
+    """An activity with no versionTimestamp/restoreFromInfo/destinationPath/machineInfo parses all four fields as None."""
     act = await _list_single_restore_activity()
     assert act.version_timestamp is None
     assert act.restore_from_info is None
@@ -505,6 +505,23 @@ async def test_restore_get_uses_restore_activity_uid_param() -> None:
     assert act.log_entries[0].message == "Restore complete"
 
 
+async def test_restore_get_without_logs_skips_log_fetch() -> None:
+    """get(include_logs=False) returns the activity with log_entries None and fetches no logs."""
+    session = make_session()
+
+    async with aiointercept(mock_external_urls=True) as m:
+        m.get(LOGIN_URL, payload=LOGIN_OK)
+        await session.connect()
+        # No detail-log mock: a log request would fail the test.
+        m.get(RESTORE_RECENT_URL, payload={"activities": [SAMPLE_RESTORE_ACTIVITY_RAW], "total": 1})
+
+        act = await RestoreActivityCollection(session).get("rst-uid-001", include_logs=False)
+        await session.disconnect()
+
+    assert act.activity_id == "rst-uid-001"
+    assert act.log_entries is None
+
+
 # ── cancel() ──────────────────────────────────────────────────────────────
 
 
@@ -732,8 +749,7 @@ async def test_restore_get_latest_by_workload_name_returns_matching_activity() -
     """RestoreActivityCollection.get_latest_by_workload_name() returns the matching activity for an exact name match."""
     async with connected_session() as (session, m):
         m.get(_RESTORE_KEYWORD_RECENT_PAT, payload={"activities": [make_restore_activity_raw()]})
-        # get() enrichment: uid lookup via keyword-less RECENT list, then logs
-        m.get(RESTORE_RECENT_URL, payload={"activities": [make_restore_activity_raw()], "total": 1})
+        # The match's logs only: no keyword-less list scan for its uid (no mock registered).
         m.get(_RESTORE_LOG_PAT, payload={"detailLogs": []})
         result = await RestoreActivityCollection(session).get_latest_by_workload_name("vm-web-01")
         await session.disconnect()
@@ -741,6 +757,7 @@ async def test_restore_get_latest_by_workload_name_returns_matching_activity() -
     assert result.activity_id == "rst-uid-001"
     assert result.workload_name == "vm-web-01"
     assert result.status == RestoreActivityStatus.SUCCESS
+    assert result.log_entries == ()
 
 
 async def test_restore_get_latest_by_workload_name_raises_when_no_exact_match() -> None:
@@ -761,7 +778,6 @@ async def test_restore_get_latest_by_workload_name_falls_back_to_history() -> No
     async with connected_session() as (session, m):
         m.get(_RESTORE_KEYWORD_RECENT_PAT, payload={"activities": []})
         m.get(_RESTORE_KEYWORD_HISTORY_PAT, payload={"activities": [make_restore_activity_raw()]})
-        m.get(RESTORE_RECENT_URL, payload={"activities": [make_restore_activity_raw()], "total": 1})
         m.get(_RESTORE_LOG_PAT, payload={"detailLogs": []})
         result = await RestoreActivityCollection(session).get_latest_by_workload_name("vm-web-01")
         await session.disconnect()
@@ -938,3 +954,160 @@ async def test_restore_get_survives_null_activities_page() -> None:
         await session.disconnect()
 
     assert act.activity_id == "rst-uid-001"
+
+
+# ── Sandbox activities: SANDBOX_READY, sandbox_vm_id, status filter ────────
+
+_SANDBOX_VM_ID = "123e4567-e89b-12d3-a456-426614174010"
+
+
+@pytest.mark.parametrize("raw_type,expected_type,expected_status", [
+    ("INSTANT_RESTORE_AEM",    RestoreType.INSTANT_SANDBOX, RestoreActivityStatus.SANDBOX_READY),
+    ("INSTANT_RESTORE_VMWARE", RestoreType.INSTANT_VMWARE,  RestoreActivityStatus.READY_FOR_MIGRATE),
+], ids=["sandbox", "vmware"])
+async def test_raw_ready_for_migrate_status_depends_on_restore_type(
+    raw_type: str, expected_type: RestoreType, expected_status: RestoreActivityStatus,
+) -> None:
+    async with connected_session() as (session, m):
+        m.get(RESTORE_RECENT_URL, payload={"activities": [make_restore_activity_raw(
+            spec={"restoreType": raw_type}, status={"restoreStatus": "READY_FOR_MIGRATE"},
+        )]})
+        acts, _ = await RestoreActivityCollection(session).list()
+        await session.disconnect()
+    assert acts[0].restore_type == expected_type
+    assert acts[0].status == expected_status
+
+
+@pytest.mark.parametrize("api_status,expected", [
+    ("RESTORING", RestoreActivityStatus.RESTORING),
+    ("CANCELED",  RestoreActivityStatus.CANCELED),
+    ("DEVICE_MISSING", RestoreActivityStatus.FAILED),
+])
+async def test_sandbox_other_statuses_unchanged(api_status: str, expected: RestoreActivityStatus) -> None:
+    async with connected_session() as (session, m):
+        m.get(RESTORE_RECENT_URL, payload={"activities": [make_restore_activity_raw(
+            spec={"restoreType": "INSTANT_RESTORE_AEM"}, status={"restoreStatus": api_status},
+        )]})
+        acts, _ = await RestoreActivityCollection(session).list()
+        await session.disconnect()
+    assert acts[0].status == expected
+
+
+@pytest.mark.parametrize("raw_type,expected_vm_id", [
+    ("INSTANT_RESTORE_AEM",    _SANDBOX_VM_ID),
+    ("INSTANT_RESTORE_VMWARE", None),
+], ids=["sandbox", "vmware"])
+async def test_sandbox_vm_id_set_only_for_sandbox(raw_type: str, expected_vm_id: str | None) -> None:
+    act = await _list_single_restore_activity(
+        spec={"restoreType": raw_type, "machineInfo": {"vmmGuestId": _SANDBOX_VM_ID}},
+    )
+    assert act.sandbox_vm_id == expected_vm_id
+    assert "sandbox_vm_id" not in act.to_dict()
+    assert "execution_id" not in act.to_dict()
+
+
+async def test_sandbox_vm_id_none_when_vm_id_missing() -> None:
+    act = await _list_single_restore_activity(spec={"restoreType": "INSTANT_RESTORE_AEM", "machineInfo": {}})
+    assert act.sandbox_vm_id is None
+
+
+async def _list_params(
+    status: list[RestoreActivityStatus] | None, restore_types: list[RestoreType] | None = None,
+) -> list[tuple[str, Any]]:
+    from unittest.mock import AsyncMock, patch
+    session = make_session()
+    with patch.object(session, "get", AsyncMock(return_value={"activities": [], "total": 0})) as mock_get:
+        await RestoreActivityCollection(session).list(status=status, restore_types=restore_types)
+    params: list[tuple[str, Any]] = mock_get.call_args_list[0][1]["params"]
+    return params
+
+
+def _values(params: list[tuple[str, Any]], key: str) -> list[Any]:
+    return [v for k, v in params if k == key]
+
+
+async def test_status_filter_sandbox_ready_alone_restricts_to_sandbox_type() -> None:
+    params = await _list_params([RestoreActivityStatus.SANDBOX_READY])
+    assert _values(params, "restoreStatus") == ["READY_FOR_MIGRATE"]
+    assert _values(params, "restoreType") == ["INSTANT_RESTORE_AEM"]
+
+
+@pytest.mark.parametrize("status,expected_api", [
+    ([RestoreActivityStatus.READY_FOR_MIGRATE], ["READY_FOR_MIGRATE"]),
+    ([RestoreActivityStatus.SANDBOX_READY, RestoreActivityStatus.READY_FOR_MIGRATE], ["READY_FOR_MIGRATE"]),
+    ([RestoreActivityStatus.READY_FOR_MIGRATE, RestoreActivityStatus.FAILED],
+     ["READY_FOR_MIGRATE", "FAILED", "DEVICE_MISSING", "MIGRATE_FAILED"]),
+    ([RestoreActivityStatus.FAILED, RestoreActivityStatus.RESTORING],
+     ["FAILED", "DEVICE_MISSING", "MIGRATE_FAILED", "RESTORING"]),
+], ids=["ready_for_migrate", "both_ready", "ready_for_migrate_and_failed", "no_ready"])
+async def test_status_filter_sends_no_type_filter_unless_sandbox_ready_alone(
+    status: list[RestoreActivityStatus], expected_api: list[str],
+) -> None:
+    """READY_FOR_MIGRATE also matches sandboxes, so it needs no type filter."""
+    params = await _list_params(status)
+    assert _values(params, "restoreStatus") == expected_api
+    assert _values(params, "restoreType") == []
+
+
+@pytest.mark.parametrize("other", [RestoreActivityStatus.FAILED, RestoreActivityStatus.RESTORING])
+async def test_status_filter_sandbox_ready_with_other_status_raises_without_request(
+    other: RestoreActivityStatus,
+) -> None:
+    from unittest.mock import AsyncMock, patch
+    session = make_session()
+    with (
+        patch.object(session, "get", AsyncMock()) as mock_get,
+        pytest.raises(ValueError, match="sandbox_ready can only be combined with ready_for_migrate"),
+    ):
+        await RestoreActivityCollection(session).list(status=[RestoreActivityStatus.SANDBOX_READY, other])
+    mock_get.assert_not_called()
+
+
+# ── restore_types filter ─────────────────────────────────────────────────────
+
+
+async def test_restore_types_filter_sends_one_restore_type_each() -> None:
+    params = await _list_params(None, [RestoreType.INSTANT_SANDBOX, RestoreType.FULL, RestoreType.INSTANT_SANDBOX])
+    assert _values(params, "restoreType") == ["INSTANT_RESTORE_AEM", "FULL_RESTORE"]
+    assert _values(params, "restoreStatus") == []
+
+
+@pytest.mark.parametrize("restore_type", [t for t in RestoreType if t != RestoreType.UNKNOWN])
+async def test_restore_types_filter_maps_every_known_type(restore_type: RestoreType) -> None:
+    [raw] = _values(await _list_params(None, [restore_type]), "restoreType")
+    assert _parse_restore_activity(make_restore_activity_raw(spec={"restoreType": raw})["activity"]).restore_type \
+        == restore_type
+
+
+@pytest.mark.parametrize("status", [
+    [RestoreActivityStatus.SANDBOX_READY],
+    [RestoreActivityStatus.SANDBOX_READY, RestoreActivityStatus.PREPARING],
+], ids=["alone", "with_preparing"])
+async def test_sandbox_ready_merges_with_instant_sandbox_restore_type(status: list[RestoreActivityStatus]) -> None:
+    params = await _list_params(status, [RestoreType.INSTANT_SANDBOX])
+    assert _values(params, "restoreType") == ["INSTANT_RESTORE_AEM"]
+    assert _values(params, "restoreStatus") == list(dict.fromkeys(
+        ["READY_FOR_MIGRATE"] + (["PREPARING"] if len(status) > 1 else []),
+    ))
+
+
+async def test_ready_for_migrate_keeps_the_given_restore_types() -> None:
+    params = await _list_params(
+        [RestoreActivityStatus.SANDBOX_READY, RestoreActivityStatus.READY_FOR_MIGRATE], [RestoreType.INSTANT_VMWARE],
+    )
+    assert _values(params, "restoreType") == ["INSTANT_RESTORE_VMWARE"]
+
+
+@pytest.mark.parametrize("restore_types", [
+    [RestoreType.INSTANT_VMWARE],
+    [RestoreType.INSTANT_SANDBOX, RestoreType.INSTANT_VMWARE],
+    [RestoreType.UNKNOWN],
+], ids=["other_type", "sandbox_and_other_type", "unknown"])
+async def test_restore_types_that_cannot_be_combined_raise_without_request(restore_types: list[RestoreType]) -> None:
+    from unittest.mock import AsyncMock, patch
+    session = make_session()
+    with patch.object(session, "get", AsyncMock()) as mock_get, pytest.raises(ValueError, match="restore_types"):
+        await RestoreActivityCollection(session).list(
+            status=[RestoreActivityStatus.SANDBOX_READY], restore_types=restore_types,
+        )
+    mock_get.assert_not_called()

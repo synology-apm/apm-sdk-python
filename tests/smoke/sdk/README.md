@@ -44,7 +44,7 @@ smoke/sdk/
 │   ├── _shared.py            ← lock/unlock + backup/cancel roundtrip helpers, ZERO_UUID / SENTINEL_NAME
 │   ├── _infra.py             ← apm.get_site_info(), apm.backup_servers, apm.remote_storages, apm.hypervisors
 │   ├── _plan.py                ← apm.plans, apm.retirement_plans, apm.tiering_plans
-│   ├── _machine.py               ← apm.machine.workloads (list/get/versions/lock/backup/change_plan round trips)
+│   ├── _machine.py               ← apm.machine.workloads (list/get/versions/lock/backup/change_plan round trips) + read-only apm.machine.sandboxes (resources/defaults)
 │   ├── _m365.py                    ← apm.m365.workloads per M365WorkloadType + exchange/group export + change_plan round trips
 │   ├── _m365_auto_backup_rule.py     ← apm.m365.auto_backup_rules CRUD + collab settings roundtrip
 │   ├── _gws.py                          ← apm.gws.workloads per GWSWorkloadType + change_plan round trips (no export feature)
@@ -203,7 +203,7 @@ All operations this tool can run fall into three categories:
 
 | Category | Behavior | Examples |
 |---|---|---|
-| **Read-only / round-trip** | Always run; round trips fully restore state | all `list`/`get`/`get_by_name`/`get_site_info`; `lock_version()`→`unlock_version()` (or vice versa, detecting current state first); `backup_now()`→`cancel_backup()`; `apm.machine.workloads.change_plan(...)` / `apm.m365.workloads.change_plan(...)` / `apm.gws.workloads.change_plan(...)` switch→restore; `apm.machine.workloads.change_plan(...)` / `apm.m365.workloads.change_plan(...)` / `apm.gws.workloads.change_plan(...)` no-op re-apply; m365 export `start`→`list`→`download_url.get`→`cancel`; remote storage `add`→`update`→`delete` (per `[[remote_storage]]` entry in `smoke_creds.toml`, see `TEST_DATA.md`) |
+| **Read-only / round-trip** | Always run; round trips fully restore state | all `list`/`get`/`get_by_name`/`get_site_info`; sandbox `get_resources()`/`get_default_settings()` (no sandbox is started); `lock_version()`→`unlock_version()` (or vice versa, detecting current state first); `backup_now()`→`cancel_backup()`; `apm.machine.workloads.change_plan(...)` / `apm.m365.workloads.change_plan(...)` / `apm.gws.workloads.change_plan(...)` switch→restore; `apm.machine.workloads.change_plan(...)` / `apm.m365.workloads.change_plan(...)` / `apm.gws.workloads.change_plan(...)` no-op re-apply; m365 export `start`→`list`→`download_url.get`→`cancel`; remote storage `add`→`update`→`delete` (per `[[remote_storage]]` entry in `smoke_creds.toml`, see `TEST_DATA.md`) |
 | **Consumes prepared test data** | Runs only when the tester prepared disposable data (see `TEST_DATA.md`); skipped otherwise | `activities.restore.cancel(...)` on an in-progress restore the tester started |
 | **Excluded — never automated** | Irreversible on real data. M365/GWS `retire()` is checked manually through the CLI (`tests/smoke/cli/MANUAL_TESTS.md` — the CLI drives the same SDK method); M365/GWS `delete()` has unit-test coverage only (the `m365_rule`/`gws_rule` phases still call it defensively for best-effort cleanup of their own disposable test plans, not as a general round trip) | M365 `retire()`, `delete()`; GWS `retire()`, `delete()` |
 

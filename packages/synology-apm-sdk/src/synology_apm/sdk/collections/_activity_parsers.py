@@ -2,7 +2,7 @@
 
 Private module backing collections/activities.py; converts raw activity API response
 objects into SDK models. The API↔enum string maps defined here (status filters, workload
-subtype, cancel-request type) are also the source of truth for the collection classes'
+subtype, restore type, cancel-request type) are also the source of truth for the collection classes'
 list()/cancel() request-body construction.
 """
 from __future__ import annotations
@@ -84,6 +84,7 @@ _RESTORE_STATUS_TO_API: dict[RestoreActivityStatus, list[str]] = {
     RestoreActivityStatus.PREPARING:           ["PREPARING"],
     RestoreActivityStatus.RESTORING:           ["RESTORING"],
     RestoreActivityStatus.CANCELING:           ["CANCELING"],
+    RestoreActivityStatus.SANDBOX_READY:       ["READY_FOR_MIGRATE"],
     RestoreActivityStatus.READY_FOR_MIGRATE:   ["READY_FOR_MIGRATE"],
     RestoreActivityStatus.MIGRATE_VM_MANUALLY: ["MIGRATE_VM_MANUALLY"],
     RestoreActivityStatus.MIGRATING:           ["MIGRATING"],
@@ -99,7 +100,7 @@ _RESTORE_TYPE_MAP: dict[str, RestoreType] = {
     "RESTORE_SYSTEM_VOLUME":      RestoreType.SYSTEM_VOLUME,
     "RESTORE_CUSTOMIZED_VOLUME":  RestoreType.CUSTOMIZED_VOLUME,
     "VM_FULL_RESTORE":            RestoreType.VM_FULL,
-    "INSTANT_RESTORE_AEM":        RestoreType.INSTANT_AEM,
+    "INSTANT_RESTORE_AEM":        RestoreType.INSTANT_SANDBOX,
     "INSTANT_RESTORE_VMWARE":     RestoreType.INSTANT_VMWARE,
     "INSTANT_RESTORE_HYPERV":     RestoreType.INSTANT_HYPERV,
     "ORACLE_DATABASE_RESTORE":    RestoreType.ORACLE_DATABASE,
@@ -107,6 +108,49 @@ _RESTORE_TYPE_MAP: dict[str, RestoreType] = {
     "INSTANT_RESTORE_NUTANIX":    RestoreType.INSTANT_NUTANIX,
     "INSTANT_RESTORE_PROXMOX":    RestoreType.INSTANT_PROXMOX,
 }
+
+_RESTORE_TYPE_TO_API: dict[RestoreType, str] = {t: raw for raw, t in _RESTORE_TYPE_MAP.items()}
+
+
+def _restore_type_filter(
+    status: list[RestoreActivityStatus] | None,
+    restore_types: list[RestoreType] | None,
+) -> tuple[list[str], list[str]]:
+    """Map RestoreActivityCollection.list()'s status and restore_types filters to
+    (restoreStatus, restoreType) values.
+
+    Rule and rationale: BEHAVIOR_REFERENCE.md, "RestoreActivityCollection.list() status and
+    restore_types filters".
+
+    Raises:
+        ValueError: A filter combination that the single restoreType filter cannot express,
+            or RestoreType.UNKNOWN in restore_types.
+    """
+    requested = list(dict.fromkeys(status or []))
+    status_api = list(dict.fromkeys(api for s in requested for api in _RESTORE_STATUS_TO_API.get(s, [])))
+    if RestoreType.UNKNOWN in (restore_types or []):
+        raise ValueError("restore_types: unknown is not a restore type that can be filtered on.")
+    type_api = list(dict.fromkeys(_RESTORE_TYPE_TO_API[t] for t in restore_types or []))
+    if (
+        RestoreActivityStatus.SANDBOX_READY not in requested
+        or RestoreActivityStatus.READY_FOR_MIGRATE in requested
+    ):
+        return status_api, type_api
+    sandbox_api = _RESTORE_TYPE_TO_API[RestoreType.INSTANT_SANDBOX]
+    if restore_types is None:
+        if len(requested) > 1:
+            raise ValueError(
+                "sandbox_ready can only be combined with ready_for_migrate in one status filter, "
+                "unless restore_types is [instant_sandbox]."
+            )
+        return status_api, [sandbox_api]
+    if type_api != [sandbox_api]:
+        raise ValueError(
+            "sandbox_ready matches only instant_sandbox restores: restore_types must then be "
+            "[instant_sandbox], or include ready_for_migrate in the status filter."
+        )
+    return status_api, type_api
+
 
 _MACHINE_TYPE_TO_CATEGORY_SERVICE: dict[MachineWorkloadType, str] = {
     MachineWorkloadType.PC: "MACHINE_PC",
@@ -314,23 +358,31 @@ def _parse_restore_activity(raw: dict[str, Any]) -> RestoreActivity:
         duration_seconds = None
 
     restore_status = status_raw.get("restoreStatus") or ""
+    status = _RESTORE_STATUS_MAP.get(restore_status, RestoreActivityStatus.RESTORING)
+    restore_type = (
+        _RESTORE_TYPE_MAP.get(spec.get("restoreType") or "", RestoreType.UNKNOWN)
+        if spec.get("restoreType") else None
+    )
+    sandbox_vm_id: str | None = None
+    if restore_type == RestoreType.INSTANT_SANDBOX:
+        sandbox_vm_id = (spec.get("machineInfo") or {}).get("vmmGuestId") or None
+        if status == RestoreActivityStatus.READY_FOR_MIGRATE:
+            status = RestoreActivityStatus.SANDBOX_READY
 
     return RestoreActivity(
         **common,
         execution_id=spec.get("executionId") or "",
-        status=_RESTORE_STATUS_MAP.get(restore_status, RestoreActivityStatus.RESTORING),
+        status=status,
         duration_seconds=duration_seconds,
         data_transferred_bytes=_parse_int_or_none(status_raw.get("transferredSize")),
-        restore_type=(
-            _RESTORE_TYPE_MAP.get(spec.get("restoreType") or "", RestoreType.UNKNOWN)
-            if spec.get("restoreType") else None
-        ),
+        restore_type=restore_type,
         restore_destination=spec.get("destination"),
         operator=spec.get("operator"),
         version_timestamp=_parse_ts_optional(spec.get("versionTimestamp")),
         restore_from_info=_parse_restore_from_info(spec.get("restoreFromInfo")),
         destination_path=spec.get("destinationPath") or None,
         destination_inventory=_parse_destination_inventory(spec.get("machineInfo")),
+        sandbox_vm_id=sandbox_vm_id,
     )
 
 

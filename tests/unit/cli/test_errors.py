@@ -15,6 +15,7 @@ from synology_apm.cli.errors import (
 )
 from synology_apm.sdk.exceptions import (
     ERROR_CODES,
+    APIError,
     APMError,
     AuthenticationError,
     BackupServerDisconnectedError,
@@ -168,6 +169,13 @@ def test_handle_apm_error_message_text(
     assert expected_message in normalized_err
     if expected_detail:
         assert expected_detail in normalized_err
+
+
+def test_handle_apm_error_prints_api_text_literally(capsys: pytest.CaptureFixture[str]) -> None:
+    """Text from the API is not read as Rich markup."""
+    with pytest.raises(typer.Exit):
+        handle_apm_error(APIError("Volume [bold]vol1[/bold] is full"))
+    assert "Volume [bold]vol1[/bold] is full" in " ".join(capsys.readouterr().err.split())
 
 
 # ── Command-level error path tests ────────────────────────────────────────────

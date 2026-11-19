@@ -173,6 +173,8 @@ exact ID lookup + `--namespace`). Flag support differs per subcommand:
 | `version list` | `--workload-id` | yes | – | – |
 | `version get` | `--workload-id` | yes | – | – |
 | `version lock` / `unlock` | `--workload-id` | yes | – | yes |
+| `sandbox resources` / `start` | `--workload-id` | – | `start` | `start` |
+| `sandbox screenshot` / `connect` / `vnc` | `--id` (restore activity; no `--namespace`) | – | `screenshot` | – |
 
 Every `version` subcommand uses `--workload-id` for the workload — `--id` there instead
 addresses the Version (`version get`/`lock`/`unlock`'s `--id`) or has no meaning at all
@@ -249,10 +251,12 @@ synology-apm-cli machine change-plan --id <workload-id> --namespace <namespace> 
 Lists backup versions. Table columns: #, Created, Status, Locked, Verification (PS/VM only), Changed Size, Copy Status, Locations, Version ID.
 Footer shows pagination info (e.g. `Showing 1 of 42`). Use `--verbose` to show Workload ID + Namespace in the header.
 Default search mode finds protected workloads; use `--retired` for retired workloads.
+`--status` (repeatable: `success` / `partial` / `failed` / `canceled`) lists only versions with one of those statuses; the `m365` and `gws` `version list` commands take it too.
 
 ```bash
 # Search mode
 synology-apm-cli machine version list "CORP-PC-001"
+synology-apm-cli machine version list "CORP-PC-001" --status failed --status canceled
 synology-apm-cli machine version list "CORP-PC-001" --limit 25 --offset 25   # page 2
 synology-apm-cli machine version list "CORP-PC-001" --since 7d --until 2026-04-20T23:59:59  # 30m|1h|24h|7d|ISO 8601
 synology-apm-cli machine version list "old-laptop" --retired
@@ -282,6 +286,29 @@ Locks a backup version to prevent automatic deletion by retention policies. `--i
 ```bash
 synology-apm-cli machine version lock "CORP-PC-001" --id <version-id>   # unlock: same syntax
 synology-apm-cli machine version lock --workload-id <workload-id> --namespace <namespace> --id <version-id>
+```
+
+#### `synology-apm-cli machine sandbox`
+
+Recovery drill for Physical Server and VM backups: boot a backup version as a sandbox VM on
+the appliance's built-in hypervisor, check its screen, then stop it.
+
+```bash
+# Allowed settings per location (CPU/memory limits, networks)
+synology-apm-cli machine sandbox resources "prod-server-01"
+# Check the settings without starting anything
+synology-apm-cli machine sandbox start "prod-server-01" --memory 2048 --dry-run
+# Start it under a chosen VM name, then wait until its restore activity shows "Ready"
+synology-apm-cli machine sandbox start "prod-server-01" --memory 2048 --vm-name drill-01
+synology-apm-cli activity restore list
+# Check that the OS booted; --press sends keys before the capture
+synology-apm-cli machine sandbox screenshot "prod-server-01" -f sandbox.png --press shift
+# Single-use web console URL (no sign-in: do not share it)
+synology-apm-cli machine sandbox connect "prod-server-01"
+# vnc://127.0.0.1:<port> address for any VNC client, open until Ctrl+C
+synology-apm-cli machine sandbox vnc "prod-server-01"
+# Stop the sandbox and delete its VM
+synology-apm-cli activity restore cancel --id <activity-id>
 ```
 
 ---
@@ -495,7 +522,7 @@ synology-apm-cli activity restore get --id <activity-id> -o json
 synology-apm-cli activity restore cancel --id <activity-id> --yes --quiet
 ```
 
-> **Tip:** Activity ID is shown in `synology-apm-cli activity restore list`. The cancel command automatically looks up the activity details needed to call the API.
+> **Tip:** Activity ID is shown in `synology-apm-cli activity restore list`. Use it with `synology-apm-cli activity restore get` and `synology-apm-cli activity restore cancel`.
 
 ---
 
@@ -563,7 +590,7 @@ synology-apm-cli log activity list --id <server-id> --limit 25 --offset 25
 | `1` | General error (API error, invalid argument) |
 | `2` | Authentication failure (bad credentials, session expired) |
 | `3` | Connection failure (host unreachable, TLS error) |
-| `4` | Cancelled by user (declined a confirmation prompt, Ctrl+C while one is shown, or Ctrl+C during an interruptible wait such as `export download` polling) |
+| `4` | Cancelled by user (declined a confirmation prompt, Ctrl+C while one is shown, or Ctrl+C during an interruptible wait such as `export download` polling; `machine sandbox vnc` exits `0` on Ctrl+C) |
 | `5` | Feature not supported on this APM version |
 
 ---

@@ -345,6 +345,37 @@ def test_machine_version_list_passes_offset_to_sdk() -> None:
     assert "26–26 of 26" in result.output  # footer shows correct range
 
 
+def test_machine_version_list_status_filter_passed_to_sdk() -> None:
+    """version list --status forwards the statuses to list_versions (case-insensitive)."""
+    mock_apm = make_mock_client()
+    mock_apm.machine.workloads.list_versions.return_value = ([SAMPLE_VERSION], 1)
+    result = invoke_cli(mock_apm, [
+        "machine", "version", "list", "CORP-PC-001", "--status", "success", "--status", "PARTIAL",
+    ], env={"COLUMNS": "300"})
+    assert result.exit_code == 0, result.output
+    call_kwargs = mock_apm.machine.workloads.list_versions.call_args.kwargs
+    assert call_kwargs["statuses"] == [VersionStatus.SUCCESS, VersionStatus.PARTIAL]
+
+
+def test_machine_version_list_without_status_lists_every_status() -> None:
+    mock_apm = make_mock_client()
+    mock_apm.machine.workloads.list_versions.return_value = ([], 0)
+    result = invoke_cli(mock_apm, ["machine", "version", "list", "CORP-PC-001"])
+    assert result.exit_code == 0, result.output
+    assert mock_apm.machine.workloads.list_versions.call_args.kwargs["statuses"] is None
+
+
+def test_machine_version_list_unsupported_status_exits_1() -> None:
+    """A status no version listing holds is rejected before connecting."""
+    mock_apm = make_mock_client()
+    result = invoke_cli(
+        mock_apm, ["machine", "version", "list", "CORP-PC-001", "--status", "backing_up"], env={"COLUMNS": "300"},
+    )
+    assert result.exit_code == 1
+    assert "Unsupported --status value: backing_up (available: success, partial, failed, canceled)" in result.output
+    mock_apm.machine.workloads.list_versions.assert_not_called()
+
+
 def test_machine_version_get_json_output() -> None:
     """machine version get --output json should output a JSON object containing version and activity."""
     mock_apm = make_mock_client()

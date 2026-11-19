@@ -1,6 +1,8 @@
 """BackupServerCollection — collection interface for managing cluster backup servers."""
 from __future__ import annotations
 
+import ipaddress
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from .._http import WebAPISession
@@ -122,15 +124,35 @@ class BackupServerCollection:
         )
 
     async def _find_management_servers(self) -> tuple[BackupServer | None, BackupServer | None]:
-        """Scan all backup servers and return the (primary, secondary) Management Servers.
+        """Return the (primary, secondary) Management Servers; see _find_first()."""
+        primary, secondary = await self._find_first(
+            lambda s: _ROLE_MAP.get(s.get("role") or "") == BackupServerRole.PRIMARY,
+            lambda s: _ROLE_MAP.get(s.get("role") or "") == BackupServerRole.SECONDARY,
+        )
+        return primary, secondary
 
-        Scans raw pages by role first and parses (resolving tiering info for)
-        only the matched servers, so the scan cost does not grow with the number
-        of tiering plans assigned to unrelated servers. Stops as soon as both roles
-        are found; otherwise scans every page.
+    async def _origin_for_namespace(self, namespace: str) -> str | None:
+        """The HTTPS origin of the backup server with this namespace; None when there is none.
+
+        The primary is the session's own host (``base_url``: APMClient.connect() accepts only
+        the primary, and this keeps the host form and port the caller gave). Other servers are
+        reached at their address on the default HTTPS port, since the session's port may be a
+        mapping that only applies to the primary; an IPv6 address is bracketed. Scans the raw
+        server pages only (no parsing, no tiering-plan requests).
         """
-        primary_raw: dict[str, Any] | None = None
-        secondary_raw: dict[str, Any] | None = None
+        async for s in self._raw_servers():
+            if s.get("namespace") != namespace:
+                continue
+            if _ROLE_MAP.get(s.get("role") or "") == BackupServerRole.PRIMARY:
+                return self._session.base_url
+            addr = str((s.get("spec") or {}).get("addr") or "")
+            if not addr:
+                return None
+            return f"https://{_bracket_ipv6(addr)}"
+        return None
+
+    def _raw_servers(self) -> AsyncIterator[dict[str, Any]]:
+        """Every raw backup server entry, page by page."""
 
         async def fetch(offset: int, limit: int) -> tuple[list[dict[str, Any]], int | None]:
             raw = await self._session.get(
@@ -139,20 +161,27 @@ class BackupServerCollection:
             )
             return raw.get("backupServers") or [], raw.get("total")
 
-        async for s in _paginate(fetch, page_size=500):
-            role = _ROLE_MAP.get(s.get("role") or "")
-            if role == BackupServerRole.PRIMARY and primary_raw is None:
-                primary_raw = s
-            elif role == BackupServerRole.SECONDARY and secondary_raw is None:
-                secondary_raw = s
-            if primary_raw is not None and secondary_raw is not None:
+        return _paginate(fetch, page_size=500)
+
+    async def _find_first(
+        self, *matches: Callable[[dict[str, Any]], bool],
+    ) -> tuple[BackupServer | None, ...]:
+        """Scan all backup servers; return the first one each of ``matches`` accepts (or None).
+
+        Scans raw pages first and parses (resolving tiering info for) only the matched
+        servers, so the scan cost does not grow with the number of tiering plans assigned to
+        unrelated servers. Stops as soon as every match is found; otherwise scans every page.
+        """
+        found: list[dict[str, Any] | None] = [None] * len(matches)
+        async for s in self._raw_servers():
+            for i, match in enumerate(matches):
+                if found[i] is None and match(s):
+                    found[i] = s
+            if all(f is not None for f in found):
                 break
 
-        matched = [s for s in (primary_raw, secondary_raw) if s is not None]
-        cache = await _build_tiering_plan_cache(self._session, matched)
-        primary = _parse_backup_server(primary_raw, cache) if primary_raw is not None else None
-        secondary = _parse_backup_server(secondary_raw, cache) if secondary_raw is not None else None
-        return primary, secondary
+        cache = await _build_tiering_plan_cache(self._session, [f for f in found if f is not None])
+        return tuple(_parse_backup_server(f, cache) if f is not None else None for f in found)
 
     async def change_tiering_plan(self, server: BackupServer, plan: TieringPlan | None) -> None:
         """Apply or remove a Tiering Plan on a Backup Server.
@@ -214,6 +243,15 @@ class BackupServerCollection:
         return _parse_backup_server(server_raw, tiering_cache)
 
 
+def _bracket_ipv6(host: str) -> str:
+    """``host`` as the host part of a URL: an IPv6 address in brackets, anything else as is."""
+    try:
+        is_v6 = ipaddress.ip_address(host).version == 6
+    except ValueError:
+        is_v6 = False
+    return f"[{host}]" if is_v6 else host
+
+
 def _tiering_plan_ref_uid(spec: dict[str, Any]) -> str:
     """Extract spec.tieringPlanRef.uid, tolerating an absent or null ref/uid."""
     return (spec.get("tieringPlanRef") or {}).get("uid") or ""
@@ -253,7 +291,8 @@ def _parse_backup_server(raw: dict[str, Any], tiering_cache: _TieringPlanCache) 
         server_status = ServerStatus.DISCONNECTED
     else:
         server_status = _SERVER_STATUS_MAP.get(status.get("status") or "", ServerStatus.DISCONNECTED)
-    system_version = None if is_nas else status.get("firmwareVer") or ""
+    raw_fw = status.get("firmwareVer") or ""
+    system_version = f"ABB {raw_fw}" if is_nas and raw_fw else raw_fw
 
     upgrade: dict[str, Any] = status.get("upgrade") or {}
     upgrade_status = upgrade.get("upgradeStatus") or ""

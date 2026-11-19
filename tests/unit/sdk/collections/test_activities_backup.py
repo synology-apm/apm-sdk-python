@@ -741,8 +741,7 @@ async def test_backup_get_latest_by_workload_name_returns_matching_activity() ->
     """get_latest_by_workload_name() returns the matching activity when an exact name match is found."""
     async with connected_session() as (session, m):
         m.get(_KEYWORD_RECENT_PAT, payload={"activities": [SAMPLE_ACTIVITY_RAW]})
-        # get() enrichment: uid lookup via keyword-less RECENT list, then detail + logs
-        m.get(RECENT_URL, payload={"activities": [SAMPLE_ACTIVITY_RAW], "total": 1})
+        # The match's details only: no keyword-less list scan for its uid (no mock registered).
         m.get(re.compile(r".*/api/v1/activity/backup/activity\?.*"), payload={"activity": {}})
         m.get(re.compile(r".*/api/v1/log/detail-log.*"), payload={"detailLogs": []})
         result = await BackupActivityCollection(session).get_latest_by_workload_name("CORP-PC-001")
@@ -771,7 +770,6 @@ async def test_backup_get_latest_by_workload_name_falls_back_to_history() -> Non
     async with connected_session() as (session, m):
         m.get(_KEYWORD_RECENT_PAT, payload={"activities": []})
         m.get(_KEYWORD_HISTORY_PAT, payload={"activities": [SAMPLE_ACTIVITY_RAW]})
-        m.get(RECENT_URL, payload={"activities": [SAMPLE_ACTIVITY_RAW], "total": 1})
         m.get(re.compile(r".*/api/v1/activity/backup/activity\?.*"), payload={"activity": {}})
         m.get(re.compile(r".*/api/v1/log/detail-log.*"), payload={"detailLogs": []})
         result = await BackupActivityCollection(session).get_latest_by_workload_name("CORP-PC-001")

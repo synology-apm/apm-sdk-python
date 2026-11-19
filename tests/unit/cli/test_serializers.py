@@ -9,6 +9,7 @@ to_dict() tests in tests/unit/sdk/models/test_models.py.
 """
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, time
 
 from synology_apm.cli._serializers import (
@@ -399,6 +400,11 @@ def test_activity_to_dict_restore_fields() -> None:
     assert d["status"] == "success"
     assert "execution_id" not in d
     assert "restore_type" not in d  # unset on SAMPLE_RESTORE_ACT, omitted rather than shown as null
+
+
+def test_activity_to_dict_restore_leaves_out_sandbox_vm_id() -> None:
+    d = activity_to_dict(dataclasses.replace(SAMPLE_RESTORE_ACT, sandbox_vm_id="123e4567-e89b-12d3-a456-426614174010"))
+    assert "sandbox_vm_id" not in d
 
 
 def test_backup_activity_to_csv_row_required_fields() -> None:

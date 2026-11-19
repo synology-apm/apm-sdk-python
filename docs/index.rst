@@ -62,12 +62,14 @@ Python SDK for `Synology ActiveProtect Manager <https://www.synology.com/product
    api/synology_apm.sdk.models.gws_auto_backup_rule
    api/synology_apm.sdk.models.system
    api/synology_apm.sdk.models.remote_storage
+   api/synology_apm.sdk.models.sandbox
 
 .. toctree::
    :maxdepth: 2
    :caption: Collections
 
    api/synology_apm.sdk.collections.machine
+   api/synology_apm.sdk.collections.machine_sandbox
    api/synology_apm.sdk.collections.m365
    api/synology_apm.sdk.collections.m365_auto_backup_rule
    api/synology_apm.sdk.collections.gws

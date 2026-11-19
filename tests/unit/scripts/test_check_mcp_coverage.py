@@ -1,6 +1,8 @@
 """Tests for scripts/check_mcp_coverage.py's manifest-consistency checks."""
 from __future__ import annotations
 
+import contextlib
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import check_mcp_coverage
@@ -79,6 +81,17 @@ class TestWalkSdkSurface:
 
         paths = check_mcp_coverage._walk_sdk_surface(Stub())
         assert paths == {"do_thing"}
+
+    def test_finds_async_context_manager_method(self) -> None:
+        class Stub:
+            @contextlib.asynccontextmanager
+            async def open_thing(self) -> AsyncIterator[None]:
+                yield
+
+            def plain(self) -> None: ...
+
+        paths = check_mcp_coverage._walk_sdk_surface(Stub())
+        assert paths == {"open_thing"}
 
     def test_recurses_into_sdk_collection_typed_property(self) -> None:
         class FakeCollection:

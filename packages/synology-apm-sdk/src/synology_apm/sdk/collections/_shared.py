@@ -17,6 +17,7 @@ from .._http import WebAPISession, _get_all_detail_codes, _has_detail_code
 from ..enums import (
     _VERIFY_STATUS_MAP,
     _VERSION_COPY_STATUS_MAP,
+    LISTED_VERSION_STATUSES,
     CopyReason,
     MachineWorkloadType,
     RemoteStorageType,
@@ -64,6 +65,39 @@ _VERSION_STATUS_MAP: dict[str, VersionStatus] = {
     "DELETING":     VersionStatus.DELETING,
     "DELETE_FAILED": VersionStatus.DELETE_FAILED,
 }
+
+# The raw status filter value of each listed version status (LISTED_VERSION_STATUSES).
+_VERSION_STATUS_TO_API: dict[VersionStatus, str] = {
+    VersionStatus.SUCCESS:  "COMPLETED",
+    VersionStatus.PARTIAL:  "PARTIAL",
+    VersionStatus.FAILED:   "FAILED",
+    VersionStatus.CANCELED: "CANCELED",
+}
+
+
+def _version_status_params(statuses: list[VersionStatus] | None) -> list[str]:
+    if statuses is None:
+        return [_VERSION_STATUS_TO_API[s] for s in LISTED_VERSION_STATUSES]
+    if not statuses:
+        raise ValueError("statuses must not be empty.")
+    unlisted = [s.value for s in statuses if s not in LISTED_VERSION_STATUSES]
+    if unlisted:
+        raise ValueError(
+            f"statuses: versions are never listed with status {', '.join(unlisted)}; "
+            f"use {', '.join(s.value for s in LISTED_VERSION_STATUSES)}."
+        )
+    return [_VERSION_STATUS_TO_API[s] for s in dict.fromkeys(statuses)]
+
+
+def _wl_ref(workload: Workload) -> dict[str, str]:
+    """The ``{uid, namespace}`` reference of a workload in a request body."""
+    return {"uid": workload.workload_id, "namespace": workload.namespace}
+
+
+def _wl_params(workload: Workload) -> list[tuple[str, str | int]]:
+    """The ``workload.uid`` / ``workload.namespace`` query params that select one workload."""
+    return [("workload.uid", workload.workload_id), ("workload.namespace", workload.namespace)]
+
 
 # API workloadType string → MachineWorkloadType (shared by machine and protection_plans parsers).
 # The API uses the uppercase enum member name ("PC", "PS", "VM", "FS") as the workloadType value,
@@ -368,6 +402,7 @@ class _VersionMixin:
         offset: int = 0,
         since: datetime | None = None,
         until: datetime | None = None,
+        statuses: list[VersionStatus] | None = None,
     ) -> ListResult[WorkloadVersion]:
         """List backup version history for a Workload (descending order, newest first).
 
@@ -377,21 +412,24 @@ class _VersionMixin:
             offset:   Pagination start offset (default 0).
             since:    Return only versions created after this time.
             until:    Return only versions created before this time.
+            statuses: Return only versions with one of these statuses, each one of
+                ``LISTED_VERSION_STATUSES`` (default: all of them; versions still backing
+                up are never listed).
 
         Returns:
             ListResult of (versions, total) where total is the count of all
             matching versions (before limit/offset are applied).
+
+        Raises:
+            ValueError: ``statuses`` is empty or holds a status not in ``LISTED_VERSION_STATUSES``.
         """
         params: list[tuple[str, str | int]] = [
             ("limit", limit),
             ("offset", offset),
             ("orderBy", "ORDER_BY_START_TIME"),
             ("orderDirection", "ORDER_DIRECTION_DESC"),
-            ("status", "COMPLETED"),
-            ("status", "PARTIAL"),
-            ("status", "FAILED"),
-            ("status", "CANCELED"),
         ]
+        params += [("status", raw) for raw in _version_status_params(statuses)]
         if since:
             params.append(("createStartTimestamp", str(int(since.timestamp()))))
         if until:
@@ -406,19 +444,24 @@ class _VersionMixin:
             raw.get("total"),
         )
 
-    async def get_latest_version(self, workload: Workload) -> WorkloadVersion:
-        """Get the latest backup version for a Workload (list DESC, first result).
+    async def get_latest_version(
+        self, workload: Workload, *, statuses: list[VersionStatus] | None = None,
+    ) -> WorkloadVersion:
+        """Get the latest backup version for a Workload.
 
         Args:
             workload: Workload object (obtained via get()).
+            statuses: Consider only versions with one of these statuses (as in list_versions()).
 
         Raises:
-            ResourceNotFoundError: No backup versions exist yet.
+            ResourceNotFoundError: No (matching) backup version exists yet.
+            ValueError: ``statuses`` is empty or holds a status list_versions() does not accept.
         """
-        versions, _ = await self.list_versions(workload, limit=1)
+        versions, _ = await self.list_versions(workload, limit=1, statuses=statuses)
         if not versions:
+            which = "" if statuses is None else f" with status {', '.join(s.value for s in statuses)}"
             raise ResourceNotFoundError(
-                f"No backup version found for workload '{workload.workload_id}'.",
+                f"No backup version{which} found for workload '{workload.workload_id}'.",
                 resource_type="WorkloadVersion",
                 resource_id=workload.workload_id,
             )
@@ -798,7 +841,7 @@ def _resolve_saas_workload_status(
 
 
 def _check_active_for_write(workload: Workload, action: str) -> None:
-    """Raise InvalidOperationError if workload.is_retired; used by backup_now()/cancel_backup()."""
+    """Raise InvalidOperationError if workload.is_retired (for operations a retired workload does not allow)."""
     if workload.is_retired:
         raise InvalidOperationError(
             f"Workload '{workload.name}' is retired and {action}.",

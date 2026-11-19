@@ -20,7 +20,14 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from synology_apm.mcp.tools._workload_logic import WorkloadCategory
-from synology_apm.sdk import GWSWorkload, GWSWorkloadType, M365Workload, M365WorkloadType, MachineWorkload
+from synology_apm.sdk import (
+    GWSWorkload,
+    GWSWorkloadType,
+    M365Workload,
+    M365WorkloadType,
+    MachineWorkload,
+    VersionStatus,
+)
 from tests.unit.mcp.conftest import (
     assert_destructive_preview_then_execute,
     call_tool,
@@ -321,6 +328,31 @@ class TestListWorkloadVersions:
         _, kwargs = collection.list_versions.call_args
         assert kwargs["since"] is None
         assert kwargs["until"] is None
+        assert kwargs["statuses"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,wl_factory,wl_id,extra_kwargs", _WORKLOAD_KIND_CASES, ids=[c[0] for c in _WORKLOAD_KIND_CASES])
+    async def test_status_filter_forwarded_as_enums(
+        self,
+        mock_apm: MagicMock,
+        mock_ctx: MagicMock,
+        admin_server: FastMCP,
+        kind: str,
+        wl_factory: WorkloadFactory,
+        wl_id: str,
+        extra_kwargs: dict[str, Any],
+    ) -> None:
+        collection = _workload_collection(mock_apm, kind)
+        collection.get.return_value = wl_factory()
+        collection.list_versions.return_value = ([], 0)
+
+        await call_tool(
+            admin_server, f"list_{kind}_versions", mock_ctx,
+            workload_id=wl_id, namespace="default", status=["success", "partial"], **extra_kwargs,
+        )
+
+        _, kwargs = collection.list_versions.call_args
+        assert kwargs["statuses"] == [VersionStatus.SUCCESS, VersionStatus.PARTIAL]
 
 
 class TestGetWorkloadVersion:

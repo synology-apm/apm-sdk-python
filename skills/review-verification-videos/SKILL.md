@@ -11,7 +11,7 @@ When the user asks to review, check, or find backup-verification videos for VM/P
 See [apm-mcp-conventions](../apm-mcp-conventions/SKILL.md) for shared conventions this skill
 relies on (list vs. get field completeness, pagination, permission modes).
 
-1. Call `list_machine_workloads` with `workload_types="ps,vm"` and `is_retired=false`
+1. Call `list_machine_workloads` with `workload_types=["ps", "vm"]` and `is_retired=false`
    (paginate with `limit`/`offset` if `total` exceeds the page size). If the user only wants
    workloads that failed verification (not the full success/failed/in-progress breakdown),
    narrow this call with `verify_status=["failed","partial","canceled"]` instead of listing

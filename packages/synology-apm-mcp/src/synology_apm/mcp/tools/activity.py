@@ -143,8 +143,9 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
         return await get_tool(apm.activities.backup.get(activity_id), lambda x: x.to_dict())
 
     @registrar.tool(description=(
-        "List restore activities. Filter by status (preparing/restoring/canceling/ready_for_migrate/"
-        "migrate_vm_manually/migrating/success/failed/partial/canceled), a single Machine or M365 workload "
+        "List restore activities. Filter by status (preparing/restoring/canceling/sandbox_ready/ready_for_migrate/"
+        "migrate_vm_manually/migrating/success/failed/partial/canceled; ready_for_migrate also matches "
+        "sandbox_ready, and sandbox_ready can only be combined with ready_for_migrate), a single Machine or M365 workload "
         "(workload_id + workload_namespace, plus tenant_id + workload_type — exchange/onedrive/chat/sharepoint/"
         "teams/group — for M365; no single-workload scoping for GWS), a time window (since/until as ISO 8601), "
         "or keyword. history=true shows completed "
@@ -186,17 +187,23 @@ def register(registrar: ToolRegistrar) -> None:  # pragma: no cover
             offset=offset,
         )
 
-    @registrar.tool(description="Get a single restore activity by activity_id, including log entries. Use list_restore_activities to find the ID.")
-    async def get_restore_activity(ctx: Context, activity_id: str) -> ToolResult:
+    @registrar.tool(description=(
+        "Get a single restore activity by activity_id, including log entries. Use list_restore_activities "
+        "to find the ID. Pass include_logs=false when only its status is needed (for example while polling); "
+        "log_entries is then null."
+    ))
+    async def get_restore_activity(ctx: Context, activity_id: str, include_logs: bool = True) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
-        return await get_tool(apm.activities.restore.get(activity_id), lambda x: x.to_dict())
+        return await get_tool(apm.activities.restore.get(activity_id, include_logs=include_logs), lambda x: x.to_dict())
 
     @registrar.tool("operator", description="Cancel a running backup activity by activity_id.")
     async def cancel_backup_activity(ctx: Context, activity_id: str) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await _cancel_activity(apm.activities.backup, activity_id, "cancel_backup_activity")
 
-    @registrar.tool("operator", description="Cancel a running restore activity by activity_id.")
+    @registrar.tool("operator", description=(
+        "Cancel a running restore activity by activity_id. For a sandbox, this stops and deletes its VM."
+    ))
     async def cancel_restore_activity(ctx: Context, activity_id: str) -> ToolResult:
         apm: APMClient = ctx.lifespan_context["apm"]
         return await _cancel_activity(apm.activities.restore, activity_id, "cancel_restore_activity")

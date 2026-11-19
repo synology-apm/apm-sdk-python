@@ -17,6 +17,7 @@ from .collections.m365_mail_export import (
     M365ExportStartResult,
 )
 from .collections.machine import MachineCollection, MachineWorkloadCollection
+from .collections.machine_sandbox import MachineSandboxCollection
 from .collections.protection_plans import (
     GWSPlanCollection,
     M365PlanCollection,
@@ -43,6 +44,7 @@ from .config import (
     set_keyring_password,
 )
 from .enums import (
+    LISTED_VERSION_STATUSES,
     ActivityWorkloadType,
     APMActivityLogType,
     BackupActivityStatus,
@@ -67,6 +69,11 @@ from .enums import (
     RestoreActivityStatus,
     RestoreType,
     RetentionType,
+    SandboxAdapterModel,
+    SandboxDiskController,
+    SandboxKey,
+    SandboxMachineType,
+    SandboxVideoCard,
     ScheduleFrequency,
     ServerStatus,
     VerifyStatus,
@@ -101,6 +108,7 @@ from .exceptions import (
     RemoteStorageUnmanagedCatalogError,
     ResourceNotFoundError,
     ResourceNotReadyError,
+    SandboxSettingsError,
     classify_error,
 )
 from .models.activity import Activity, ActivityLogEntry, BackupActivity, M365ExportActivity, RestoreActivity
@@ -147,6 +155,15 @@ from .models.remote_storage import (
 )
 from .models.retirement_plan import RetirementPlan, RetirementPlanCreateRequest, RetirementRetentionPolicy
 from .models.saas import GWSDomainInfo, M365TenantInfo, SaasApplication
+from .models.sandbox import (
+    SandboxDisk,
+    SandboxLocation,
+    SandboxNetwork,
+    SandboxNetworkAdapter,
+    SandboxResources,
+    SandboxSettings,
+    SandboxVncEndpoint,
+)
 from .models.system import SiteInfo, SiteStorageStats, WorkloadTypeStat, WorkloadUsageSummary
 from .models.tiering_plan import TieringPlan, TieringPlanCreateRequest, TieringStatus
 from .models.version import VersionLocation, WorkloadVersion
@@ -243,6 +260,7 @@ __all__ = [
     "InvalidOperationError",
     "KeyringUnavailableError",
     "load_config",
+    "LISTED_VERSION_STATUSES",
     "ListResult",
     "LocationInfo",
     "LogCollection",
@@ -274,6 +292,7 @@ __all__ = [
     "MachinePlanCollection",
     "MachinePlanCreateRequest",
     "MachinePsConfig",
+    "MachineSandboxCollection",
     "MachineTaskConfig",
     "MachineTaskSchedule",
     "MachineTaskScope",
@@ -323,6 +342,19 @@ __all__ = [
     "RetirementRetentionPolicy",
     "SaasApplication",
     "SaasCollection",
+    "SandboxAdapterModel",
+    "SandboxDisk",
+    "SandboxDiskController",
+    "SandboxKey",
+    "SandboxLocation",
+    "SandboxMachineType",
+    "SandboxNetwork",
+    "SandboxNetworkAdapter",
+    "SandboxResources",
+    "SandboxSettings",
+    "SandboxSettingsError",
+    "SandboxVideoCard",
+    "SandboxVncEndpoint",
     "save_config",
     "save_profile_device_token",
     "ScheduleFrequency",

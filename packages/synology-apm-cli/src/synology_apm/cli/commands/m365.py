@@ -40,6 +40,7 @@ from synology_apm.cli._options import (
     SINCE_OPTION,
     UNTIL_OPTION,
     VERSION_LIMIT_OPTION,
+    VERSION_STATUS_OPTION,
 )
 from synology_apm.cli._serializers import (
     m365_workload_to_csv_row,
@@ -411,19 +412,20 @@ def _make_type_app(type_name: str, type_val: M365WorkloadType) -> typer.Typer:
         page_all: bool = PAGE_ALL_OPTION,
         since: str | None = SINCE_OPTION,
         until: str | None = UNTIL_OPTION,
+        status: list[str] | None = VERSION_STATUS_OPTION,
         output: ListOutputFormat = LIST_OUTPUT_OPTION,
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose mode"),
     ) -> None:
         ref = validate_resolve_args(ctx, name, workload_id, namespace, id_flag="--workload-id")
         since_dt, until_dt = parse_time_range(since, until)
-        async with apm_session(ctx) as apm:
-            await _do_version_list(
-                lambda: _get_workload(apm, ref, tenant_id, is_retired=retired),
-                apm.m365.workloads.list_versions,
-                None,
-                limit=limit, offset=offset, page_all=page_all, since=since_dt, until=until_dt,
-                output=output, verbose=verbose,
-            )
+        await _do_version_list(
+            ctx,
+            lambda apm: _get_workload(apm, ref, tenant_id, is_retired=retired),
+            lambda apm: apm.m365.workloads.list_versions,
+            None,
+            status=status, limit=limit, offset=offset, page_all=page_all, since=since_dt, until=until_dt,
+            output=output, verbose=verbose,
+        )
 
     @version_app.command("get", help=(
         f"Show activity details and logs for a backup version (omit --id to get the latest).\n\n"

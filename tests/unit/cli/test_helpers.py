@@ -1,8 +1,12 @@
 """Unit tests for synology_apm.cli._helpers, _display, _validate, and m365_export pure functions."""
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
+import os
+import signal
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,9 +26,16 @@ from synology_apm.cli._display import (
     fmt_version_status,
     print_list_footer,
 )
-from synology_apm.cli._helpers import enable_debug, is_debug
+from synology_apm.cli._helpers import (
+    PollResult,
+    confirm_overwrite,
+    enable_debug,
+    is_debug,
+    poll_until,
+    wait_for_interrupt,
+)
 from synology_apm.cli._validate import WorkloadRef, parse_time_filter
-from synology_apm.cli.errors import EXIT_AUTH, EXIT_ERROR
+from synology_apm.cli.errors import EXIT_AUTH, EXIT_CANCEL, EXIT_ERROR
 from synology_apm.sdk import DEFAULT_PROFILE, OTPIncorrectError, OTPRequiredError, ResolvedConnection
 from synology_apm.sdk.enums import (
     ActivityWorkloadType,
@@ -246,6 +257,8 @@ def test_fmt_backup_activity_status(
     (RestoreActivityStatus.PREPARING, 0, None, "Preparing"),
     (RestoreActivityStatus.RESTORING, 0, None, "Restoring"),
     (RestoreActivityStatus.RESTORING, 0, 5,    "5 items"),
+    (RestoreActivityStatus.SANDBOX_READY,     0, None, "[blue]● Ready[/blue]"),
+    (RestoreActivityStatus.READY_FOR_MIGRATE, 0, None, "Ready to migrate"),
 ])
 def test_fmt_restore_activity_status(
     status: RestoreActivityStatus,
@@ -915,3 +928,98 @@ def test_main_entry_point_invokes_app() -> None:
         main()
 
     assert exc_info.value.code == 0
+
+
+# ── poll_until ────────────────────────────────────────────────────────────────
+
+
+async def test_poll_until_done_on_first_fetch_does_not_wait() -> None:
+    fetch = AsyncMock(return_value="ready")
+    result = await poll_until(fetch, lambda v: v == "ready", interval=60)
+    assert result == PollResult("done", "ready")
+    assert fetch.await_count == 1
+
+
+async def test_poll_until_refetches_until_done() -> None:
+    fetch = AsyncMock(side_effect=["a", "b", "ready"])
+    result = await poll_until(fetch, lambda v: v == "ready", interval=0.001)
+    assert result == PollResult("done", "ready")
+    assert fetch.await_count == 3
+
+
+async def test_poll_until_skips_none_and_keeps_the_last_value() -> None:
+    """None means "nothing yet": is_done() never sees it and it does not replace the last value."""
+    seen: list[str] = []
+
+    def is_done(value: str) -> bool:
+        seen.append(value)
+        return value == "ready"
+
+    fetch = AsyncMock(side_effect=[None, "busy", None, "ready"])
+    result = await poll_until(fetch, is_done, interval=0.001)
+    assert result == PollResult("done", "ready")
+    assert seen == ["busy", "ready"]
+
+
+async def test_poll_until_ctrl_c_stops_polling() -> None:
+    calls = 0
+
+    async def fetch() -> int | None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            os.kill(os.getpid(), signal.SIGINT)
+            return None
+        return calls
+
+    result = await poll_until(fetch, lambda v: False, interval=0.01)
+    assert result == PollResult("interrupted", 1)
+    # The SIGINT handler is removed afterwards: Python's default handler is back.
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+
+
+async def test_wait_for_interrupt_returns_on_ctrl_c() -> None:
+    asyncio.get_running_loop().call_later(0.01, os.kill, os.getpid(), signal.SIGINT)
+
+    await asyncio.wait_for(wait_for_interrupt(), timeout=2)
+
+    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+
+
+# ── confirm_overwrite ─────────────────────────────────────────────────────────
+
+
+def test_confirm_overwrite_missing_file_does_not_ask(tmp_path: Path) -> None:
+    with patch("typer.confirm") as confirm:
+        confirm_overwrite(tmp_path / "new.png", yes=False)
+    confirm.assert_not_called()
+
+
+def test_confirm_overwrite_yes_does_not_ask(tmp_path: Path) -> None:
+    out = tmp_path / "old.png"
+    out.write_bytes(b"old")
+    with patch("typer.confirm") as confirm:
+        confirm_overwrite(out, yes=True)
+    confirm.assert_not_called()
+
+
+@pytest.mark.parametrize(("answer", "exits"), [(True, False), (False, True)], ids=["accepted", "declined"])
+def test_confirm_overwrite_existing_file_asks(tmp_path: Path, answer: bool, exits: bool) -> None:
+    out = tmp_path / "old.png"
+    out.write_bytes(b"old")
+    with patch("typer.confirm", return_value=answer) as confirm:
+        if exits:
+            with pytest.raises(typer.Exit) as exc_info:
+                confirm_overwrite(str(out), yes=False)
+            assert exc_info.value.exit_code == EXIT_CANCEL
+        else:
+            confirm_overwrite(str(out), yes=False)
+    confirm.assert_called_once_with("Overwrite?", default=False)
+
+
+def test_confirm_overwrite_ctrl_c_cancels(tmp_path: Path) -> None:
+    out = tmp_path / "old.png"
+    out.write_bytes(b"old")
+    with patch("typer.confirm", side_effect=typer.Abort()), pytest.raises(typer.Exit) as exc_info:
+        confirm_overwrite(str(out), yes=False)
+    assert exc_info.value.exit_code == EXIT_CANCEL

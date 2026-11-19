@@ -59,7 +59,7 @@ When adding or modifying commands, follow the conventions of existing commands (
 - **Output dispatch**: non-table output is dispatched via `dispatch_list_output()` / `dispatch_output()` (`synology_apm.cli.output`); returning `True` ends early; `to_csv_row` fields must align with the table columns (not the JSON fields).
 - **Workload resolution and argument validation**: when the search (`<NAME>`) and direct (`--id` / `--namespace`) modes are mutually exclusive, use `validate_*()` from `synology_apm.cli._validate` along with `WorkloadRef.resolve_machine()` / `.resolve_m365()` / `.resolve_gws()` — do not hand-roll the dispatch (see their docstrings for the resolution details). Any value the CLI auto-fills on the user's behalf (the M365 tenant when `--tenant-id` is omitted; the GWS domain when `--domain` is omitted; the version when `--id`/`--version-id` is omitted) must be reported back to the user via `print_resolved_saas_tenant()` (pass `label="domain"` for GWS) / `print_resolved_version()`.
 - **Plan resolution (`--plan`)**: any `--plan <id or name>` option is resolved via the shared `_resolve_plan()` helper in `synology_apm.cli._validate` (see its docstring for the id-vs-name dispatch) — do not reimplement this inline. Which plan type it targets follows the operation, not user input: always a Retirement Plan for `retire` (retiring a workload always assigns one, regardless of its current state), the resolved workload's current state for `change-plan`, and the command's `--retired` flag for list filters. The repeatable `--plan` filter on `machine list` / `m365 <scope> list` / `gws <scope> list` maps the same helper over every value via `_resolve_plans()`. **Exception**: `infra server change-plan --plan` resolves against Tiering Plans through the separate `_resolve_tiering_plan()` helper, not `_resolve_plan()` — always use the domain-appropriate helper.
-- **Stderr**: always use `err_console` (`synology_apm.cli.errors`); do not create a separate `Console(stderr=True)`.
+- **Stderr**: always use `err_console` (`synology_apm.cli.errors`); do not create a separate `Console(stderr=True)`. A command's own argument error is reported with `fail(message)` (`✗ message`, exit 1); `message` is Rich markup, so pass user- or API-sourced text through `cell()`.
 - **Missing required arguments**: declare as `Optional` at the Typer layer; the function checks for `None` internally and prints `ctx.get_help()`, then exits with 0.
 - **Global connection options that feed `resolve_connection()`'s priority cascade** (`--host`/`--username`/`--password`/`--profile`/`--no-verify-ssl`): declare with a `None` default, never a concrete value — a `None` means "not given" and lets the environment-variable/config-file fallback take effect, while an explicit value at any tier (CLI flag, env var, or config file) always wins over a lower-priority tier regardless of direction. Defaulting one of these options to a concrete value (e.g. `False`) instead of `None` silently breaks the cascade for that option, since the CLI would then always "explicitly" pass that default and the option could never fall through to the env var or config file.
 - **Shared option constants**: the recurring pagination (`--limit`/`--offset`/`--page-all`), output (`--output`), and time-filter (`--since`/`--until`) options are declared once in `synology_apm.cli._options` and referenced as parameter defaults (e.g. `limit: int = LIMIT_OPTION`); `--since`/`--until` values are parsed with `parse_time_range(since, until)` from `synology_apm.cli._validate`. Only declare an option inline when its default or help text genuinely differs.
@@ -68,7 +68,7 @@ When adding or modifying commands, follow the conventions of existing commands (
 - **Datetime precision**: use `fmt_datetime()` for table/text output and `fmt_datetime_iso()` / `to_local_iso()` for JSON/CSV — see [`COMMAND_REFERENCE.md`'s Output Formats](COMMAND_REFERENCE.md#output-formats) for the resulting precision/format per mode. **Exception**: schedule time-of-day fields (`schedule.start_time`, `daily_check_time`) are always `HH:MM` (no seconds, no timezone) in every output format, since APM schedules only support minute granularity.
 - **External non-SDK dependencies** (e.g. the OS keyring): wrap calls with a narrow `try/except` and the SDK-defined `KeyringUnavailableError` (re-exported via `synology_apm.sdk`), not `apm_error_handler()` — that helper converts `APMError` to structured messages and also converts `ValueError` to a plain `EXIT_ERROR` message; it re-raises everything else.
 - **Two-factor authentication (TOTP)**: `config set` (`commands/config.py`) is the *only* place this CLI ever handles a two-factor code — its private `_verify_connection_and_register_device()` helper attempts a real connection and, on `OTPRequiredError`, prompts once (retrying on `OTPIncorrectError`) to register a trusted device, persisting the returned `device_id` into the profile. Every other command's `get_client()` (`_helpers.py`) only ever supplies that stored `device_id` and, on `OTPRequiredError`/`OTPIncorrectError`, reports an actionable "run `config set`" message and exits — it never prompts. Do not add interactive OTP handling anywhere else; there is deliberately no `--otp-code` global flag.
-- **Shared backup/cancel/retire/change-plan action bodies**: `machine`, `m365`, and `gws` implement the same four destructive/state-changing commands (`backup`, `cancel`, `retire`, `change-plan`) with identical resolve → confirm → invoke → print-success flow. The domain-agnostic body of each lives once in `commands/_actions.py` (`_do_backup` / `_do_cancel` / `_do_retire` / `_do_change_plan`); each command module passes in closures for workload resolution and a `label_fn` callable (`_machine_type_label` for `machine`, `lambda wl: None` for `m365`/`gws`) to absorb the only real per-domain differences — see [`COMMAND_REFERENCE.md`'s Action confirmation flow](COMMAND_REFERENCE.md#action-confirmation-flow) for the resulting output difference.
+- **Shared backup/cancel/retire/change-plan action bodies**: `machine`, `m365`, and `gws` implement the same four destructive/state-changing commands (`backup`, `cancel`, `retire`, `change-plan`) with identical resolve → confirm → invoke → print-success flow. The domain-agnostic body of each lives once in `commands/_actions.py` (`_do_backup` / `_do_cancel` / `_do_retire` / `_do_change_plan`); each command module passes in closures for workload resolution and a `label_fn` callable (`fmt_machine_workload_type` for `machine`, `lambda wl: None` for `m365`/`gws`) to absorb the only real per-domain differences — see [`COMMAND_REFERENCE.md`'s Action confirmation flow](COMMAND_REFERENCE.md#action-confirmation-flow) for the resulting output difference.
 
 ### Flag Arity Reference
 
@@ -81,7 +81,7 @@ command's `--help` when in doubt.
 | Context | Arity | Notes |
 |---|---|---|
 | List-filter — `machine`/`m365`/`gws list --namespace`, `activity backup list --namespace` | Repeatable (`list[str] \| None`) | Mirrors the underlying SDK method's own arity: `MachineWorkloadCollection.list()` / `M365WorkloadCollection.list()` / `GWSWorkloadCollection.list()` / `BackupActivityCollection.list()` all take `list[str] \| None` (OR logic) |
-| Direct-mode companion to `--id`/`--workload-id` — `get`/`backup`/`cancel`/`retire`/`change-plan`/`version *`/`export *` on `machine`/`m365`/`gws` | Scalar (`str \| None`) | A workload always has exactly one namespace; never co-occurs with the list-filter usage above in the same command |
+| Direct-mode companion to `--id`/`--workload-id` — `get`/`backup`/`cancel`/`retire`/`change-plan`/`version *`/`export *` on `machine`/`m365`/`gws`; `machine sandbox resources`/`start` | Scalar (`str \| None`) | A workload always has exactly one namespace; never co-occurs with the list-filter usage above in the same command |
 | `log * list --id` | No `--namespace` at all | `--id` there names a *server* ID (a different resource than workload commands' `--id`) — a server's own namespace has no bearing on which server owns its logs |
 
 **`--id`** — always names the current command's headline resource, with a resource-specific
@@ -91,6 +91,8 @@ companion flag used only when a second resource needs addressing in the same inv
 |---|---|---|
 | Workload `get`/`backup`/`cancel`/`retire`/`change-plan`; `plan */get`; `infra server/storage/hypervisor get`; `activity */get/cancel`; `log */list` | That command's one resource (workload, plan, server, storage, hypervisor, activity, or log server) | — |
 | `version get`/`lock`/`unlock`; `export cancel` | The version/activity (the headline resource) | `--workload-id` names the owning workload |
+| `machine sandbox screenshot`/`connect`/`vnc` | The sandbox's restore activity — see [Addressing](COMMAND_REFERENCE.md#addressing) | — |
+| `machine sandbox resources`/`start` | Not used — see [Addressing](COMMAND_REFERENCE.md#addressing) | `--workload-id` names the workload; `--version-id` the backup version |
 | `version list`; `export list` | Not used — lists every version/export of one workload, so there's no single one for `--id` to address | `--workload-id` names the workload |
 | `export download`, `--id` given (direct-download mode) | The activity | `--workload-id` names the owning workload; `--version-id` is accepted but ignored in this mode |
 | `export download`, `--id` omitted (auto-start mode) | Not used — providing it switches to direct-download mode above | `--workload-id` (workload) + `--version-id` (a *third* distinct meaning: the backup version to export from) |
@@ -172,18 +174,19 @@ synology_apm/cli/
 ├── __init__.py
 ├── main.py              # Typer app root entry point; registers all sub-apps
 ├── output.py            # Formatted output (table/json/yaml/csv); shared console instance
-├── errors.py            # SDK Exception → CLI error message mapping; err_console
+├── errors.py            # SDK Exception → CLI error message mapping; err_console, fail()
 ├── _async.py            # asyncio.run() wrapper (Typer has no native async support)
-├── _helpers.py          # get_client(), apm_session(), api_spinner, enable_debug / is_debug
-├── _options.py          # Shared typer.Option constants: LIMIT/VERSION_LIMIT, OFFSET, PAGE_ALL, LIST_OUTPUT/OUTPUT, SINCE/UNTIL
+├── _helpers.py          # get_client(), apm_session(), api_spinner, enable_debug / is_debug, poll_until() / PollResult, wait_for_interrupt(), confirm_overwrite()
+├── _options.py          # Shared typer.Option constants: SEARCH, LIMIT/VERSION_LIMIT, VERSION_STATUS, OFFSET, PAGE_ALL, LIST_OUTPUT/OUTPUT, SINCE/UNTIL
 ├── _display.py          # All enum → display-string mapping tables and formatting functions (fmt_*); print_list_footer / render_log_table / print_version_detail / print_workload_detail / render_version_table
 ├── _serializers.py      # All model → dict serializers (`*_to_dict` / `*_to_csv_row`) for every resource the CLI outputs
-├── _validate.py         # validate_resolve_args, validate_version_workload_args, validate_version_lock_args, validate_activity_args, validate_name_or_id_args, parse_time_filter / parse_time_range, require_or_help, _resolve_saas_tenant_id, _resolve_plan, _resolve_plans, _resolve_tiering_plan; WorkloadRef.resolve_machine() / .resolve_m365() / .resolve_gws()
+├── _validate.py         # validate_resolve_args, validate_version_workload_args, validate_version_lock_args, validate_name_or_id_args, resolve_by_name_or_id, VERSION_STATUS_ARGS / SANDBOX_*_ARGS, parse_enum_list / parse_enum_scalar, print_resolved_version, parse_time_filter / parse_time_range, require_or_help, _resolve_saas_tenant_id, _resolve_plan, _resolve_plans, _resolve_tiering_plan; WorkloadRef.resolve_machine() / .resolve_m365() / .resolve_gws()
 └── commands/
     ├── __init__.py
-    ├── _actions.py      # Shared backup/cancel/retire/change-plan resolve-confirm-invoke-print bodies; consumed by machine.py, m365.py, and gws.py
+    ├── _actions.py      # Shared backup/cancel/retire/change-plan and version list/get/lock/unlock bodies (machine.py, m365.py, gws.py); activity cancel body (activity.py)
     ├── config.py
     ├── machine.py
+    ├── machine_sandbox.py  # synology-apm-cli machine sandbox ...; registered by machine.py
     ├── saas.py
     ├── m365.py
     ├── m365_export.py   # Shared M365 export infrastructure (_TENANT_ID_OPTION, _make_export_app, etc.); consumed by m365.py
@@ -270,11 +273,17 @@ synology-apm-cli
 │   ├── cancel       <NAME> | --id + --namespace          Cancel an in-progress backup
 │   ├── retire       <NAME> | --id + --namespace  --plan <PLAN>   Retire a Workload (irreversible)
 │   ├── change-plan  <NAME> | --id + --namespace  --plan <PLAN>   Change the assigned Protection/Retirement Plan
-│   └── version
-│       ├── list    List backup version history
-│       ├── get     [--id <VERSION_ID>]   Version + activity detail (omit --id for the latest)
-│       ├── lock    --id <VERSION_ID>     Lock a version (protects it from retention deletion)
-│       └── unlock  --id <VERSION_ID>     Unlock a version
+│   ├── version
+│   │   ├── list    List backup version history
+│   │   ├── get     [--id <VERSION_ID>]   Version + activity detail (omit --id for the latest)
+│   │   ├── lock    --id <VERSION_ID>     Lock a version (protects it from retention deletion)
+│   │   └── unlock  --id <VERSION_ID>     Unlock a version
+│   └── sandbox                             # PS / VM recovery drill on the built-in hypervisor
+│       ├── resources  <NAME> | --workload-id + --namespace  [--version-id]   Allowed settings per location
+│       ├── start      <NAME> | --workload-id + --namespace  [--version-id] [setting overrides]   Start a sandbox
+│       ├── screenshot <NAME> | --id <ACTIVITY_ID>  -f <FILE> [--press KEY]   Save the screen as PNG
+│       ├── connect    <NAME> | --id <ACTIVITY_ID>   Print a single-use web console URL
+│       └── vnc        <NAME> | --id <ACTIVITY_ID>   Relay local VNC clients until Ctrl+C
 │
 ├── saas                                    # SaaS Application Overview (M365 / GWS)
 │   └── list         List all connected SaaS applications
@@ -319,15 +328,13 @@ differences (identifier field, tenant auto-resolution, which scopes support `exp
 
 ### Known Gaps
 
-SDK capabilities with no CLI command at all, deliberately out of scope for the
-parameter-consistency refactor — tracked here rather than left silently absent:
+SDK capabilities with no CLI command:
 
 - **Plan CRUD** — `plan protection/retirement/tiering` are list/get only; the SDK also
   supports create/update/delete for all three plan types (plus per-domain create/update
   for Machine/M365/GWS Protection Plans), with no CLI command surfacing any of it.
 - **Workload delete** — only `retire` is exposed for Machine/M365/GWS workloads; the SDK's
-  `.delete()` methods have no CLI command (retire is plausibly the deliberately-safer
-  operation; delete's absence has not been confirmed as intentional).
+  `.delete()` methods have no CLI command.
 - **File Server registration** — `machine.workloads.add_file_server()` /
   `.update_file_server()` have no CLI command; File Server workloads can be listed/backed
   up/retired via `machine`, but not registered or reconfigured.

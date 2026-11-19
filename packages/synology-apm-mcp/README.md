@@ -124,8 +124,8 @@ Set `APM_MCP_MODE` (default: `operator`) to control which tools are available:
 | Mode | Tools available |
 |------|-----------------|
 | `readonly` | Read-only queries: list/get workloads, plans, activities, logs, site info |
-| `operator` | Above + trigger backups, cancel activities, manage M365 exports |
-| `admin` | Full access: lock/unlock backup versions, create/update/delete plans, workloads, infrastructure |
+| `operator` | Above + trigger backups, cancel activities, manage M365 exports, start sandboxes, view their screens, and open their consoles |
+| `admin` | Full access: lock/unlock backup versions, retire workloads and change their plans, create/update/delete plans, workloads, infrastructure |
 
 Tools not available in the current mode are never registered on the server process: they
 are hidden from the agent's `tools/list` response and cannot be invoked via `tools/call`,
@@ -174,11 +174,11 @@ sensible set of tools to register without knowing which mode was intended.
 The MCP server exposes tools across seven domains:
 
 - **Infrastructure**: site info, backup servers, remote storage, hypervisors
-- **Machine workloads**: list, get, backup, cancel, versions, lock/unlock, file servers, change plan, retire, delete
+- **Machine workloads**: list, get, backup, cancel, versions, lock/unlock, file servers, change plan, retire, delete, sandbox recovery drills (resources, start with an optional dry run, screenshot, console link)
 - **M365 workloads**: list, get, backup, cancel, versions, lock/unlock, exports, auto backup rules, collaboration settings, change plan, retire, delete, tenant lookup
 - **GWS workloads**: list, get, backup, cancel, versions, lock/unlock, auto backup rules, collaboration settings, protected account types, change plan, retire, delete, domain lookup
 - **Plans**: protection, retirement, and tiering plans — list, get, create, update, delete
-- **Activities**: backup and restore activities — list, get, cancel
+- **Activities**: backup and restore activities — list, get, cancel (canceling a sandbox deletes it)
 - **Logs**: activity, drive, connection, and system logs (DP appliances only)
 
 Plus six **MCP resources** for stable, small reference data: `apm://site` (site overview
@@ -191,6 +191,9 @@ pagination. List resources include `"truncated": true` when the result set excee
 indicating that further pages are available via the corresponding list tool. The paginated,
 filterable `list_saas_applications` tool (plus `get_m365_tenant` / `get_gws_domain` for a single
 tenant/domain) complements the `apm://saas-applications` resource for larger tenant/domain lists.
+
+> **Note:** The sandbox screenshot tool returns an image. The sandbox console link works once
+> and must be opened in a browser that can reach the backup server running the sandbox.
 
 ## Workflow Skills
 
@@ -211,6 +214,7 @@ workflow skills are also available (a manually configured server does not get th
 - **manage-apm-resource** — View, update, or remove a single existing resource
 - **manage-running-jobs-and-version-locks** — Cancel a running backup/restore/export job, or lock/unlock a backup version
 - **reassign-or-retire-workload** — Move a workload to a different plan, or retire/delete it
+- **sandbox-recovery-drill** — Boot a PS/VM backup in the built-in sandbox, check its screen, then clean up
 - **apm-mcp-conventions** — Shared reference (list-vs-get field completeness, pagination, permission modes, update semantics, destructive action preview pattern) the other skills point to; not a task on its own
 
 ## Local Development

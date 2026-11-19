@@ -237,7 +237,35 @@ class TestGetRestoreActivity:
         result = await call_tool(admin_server, "get_restore_activity", mock_ctx, activity_id="rst-001")
         assert result["activity_id"] == "rst-001"
         assert result["workload_name"] == "vm-web-01"
-        mock_apm.activities.restore.get.assert_called_once_with("rst-001")
+        mock_apm.activities.restore.get.assert_called_once_with("rst-001", include_logs=True)
+
+    @pytest.mark.asyncio
+    async def test_include_logs_false_is_forwarded(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP,
+    ) -> None:
+        from tests.unit.mcp.conftest import call_tool
+
+        mock_apm.activities.restore.get.return_value = make_restore_activity()
+
+        result = await call_tool(
+            admin_server, "get_restore_activity", mock_ctx, activity_id="rst-001", include_logs=False,
+        )
+
+        mock_apm.activities.restore.get.assert_called_once_with("rst-001", include_logs=False)
+        assert result["activity_id"] == "rst-001"
+
+
+class TestListRestoreActivitiesSandboxReady:
+    @pytest.mark.asyncio
+    async def test_sandbox_ready_status_forwarded(
+        self, mock_apm: MagicMock, mock_ctx: MagicMock, admin_server: FastMCP,
+    ) -> None:
+        from synology_apm.sdk import RestoreActivityStatus
+
+        mock_apm.activities.restore.list.return_value = ([], 0)
+        await call_tool(admin_server, "list_restore_activities", mock_ctx, status=["sandbox_ready"])
+        _, kwargs = mock_apm.activities.restore.list.call_args
+        assert kwargs["status"] == [RestoreActivityStatus.SANDBOX_READY]
 
 
 class TestCancelRestoreActivity:

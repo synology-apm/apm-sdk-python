@@ -24,6 +24,7 @@ from synology_apm.sdk import (
     MachineBackupWindow,
     MachineOsType,
     MachineTaskScope,
+    MachineWorkload,
     MachineWorkloadType,
     PlanBackupCopyStatus,
     ProtectionPlanPolicy,
@@ -36,6 +37,10 @@ from synology_apm.sdk import (
     RestoreType,
     RetentionType,
     RetirementRetentionPolicy,
+    SandboxAdapterModel,
+    SandboxDiskController,
+    SandboxMachineType,
+    SandboxVideoCard,
     ScheduleFrequency,
     ServerStatus,
     TieringStatus,
@@ -124,6 +129,7 @@ _RESTORE_ACTIVITY_STATUS_DISPLAY: dict[RestoreActivityStatus, str] = {
     # base; enriched at runtime (kept for set-coverage)
     RestoreActivityStatus.RESTORING:           "[blue]⠸ Restoring[/blue]",
     RestoreActivityStatus.CANCELING:           "[yellow]⊗ Canceling[/yellow]",
+    RestoreActivityStatus.SANDBOX_READY:       "[blue]● Ready[/blue]",
     RestoreActivityStatus.READY_FOR_MIGRATE:   "[blue]⠸ Ready to migrate[/blue]",
     RestoreActivityStatus.MIGRATE_VM_MANUALLY: "[yellow]⚠ Manual migration required[/yellow]",
     RestoreActivityStatus.MIGRATING:           "[blue]⠸ Migrating[/blue]",
@@ -313,7 +319,7 @@ _RESTORE_TYPE_DISPLAY: dict[RestoreType, str] = {
     RestoreType.SYSTEM_VOLUME:     "System Volume Restore",
     RestoreType.CUSTOMIZED_VOLUME: "Volume Restore",
     RestoreType.VM_FULL:           "VM Full Restore",
-    RestoreType.INSTANT_AEM:       "Instant Restore (AEM)",
+    RestoreType.INSTANT_SANDBOX:   "Instant Restore (Sandbox)",
     RestoreType.INSTANT_VMWARE:    "Instant Restore (VMware)",
     RestoreType.INSTANT_HYPERV:    "Instant Restore (Hyper-V)",
     RestoreType.ORACLE_DATABASE:   "Oracle DB Restore",
@@ -378,6 +384,73 @@ _PLAN_CATEGORY_DISPLAY: dict[WorkloadCategory, str] = {
     WorkloadCategory.M365:    "M365",
     WorkloadCategory.GWS:     "GWS",
 }
+
+
+_SANDBOX_VIDEO_CARD_DISPLAY: dict[SandboxVideoCard, str] = {
+    SandboxVideoCard.CIRRUS: "Cirrus",
+    SandboxVideoCard.VGA:    "VGA",
+    SandboxVideoCard.VMVGA:  "VMware SVGA",
+}
+
+_SANDBOX_MACHINE_TYPE_DISPLAY: dict[SandboxMachineType, str] = {
+    SandboxMachineType.PC:  "PC",
+    SandboxMachineType.Q35: "Q35",
+}
+
+_SANDBOX_ADAPTER_MODEL_DISPLAY: dict[SandboxAdapterModel, str] = {
+    SandboxAdapterModel.RTL8139: "RTL8139",
+    SandboxAdapterModel.E1000:   "E1000",
+    SandboxAdapterModel.VIRTIO:  "VirtIO",
+}
+
+_SANDBOX_DISK_CONTROLLER_DISPLAY: dict[SandboxDiskController, str] = {
+    SandboxDiskController.IDE:  "IDE controller",
+    SandboxDiskController.SATA: "SATA controller",
+    SandboxDiskController.SCSI: "SCSI controller",
+}
+
+
+def fmt_sandbox_video_card(v: SandboxVideoCard) -> str:
+    """Convert a SandboxVideoCard to its display label."""
+    return _SANDBOX_VIDEO_CARD_DISPLAY.get(v, v.value)
+
+
+def fmt_sandbox_machine_type(v: SandboxMachineType) -> str:
+    """Convert a SandboxMachineType to its display label."""
+    return _SANDBOX_MACHINE_TYPE_DISPLAY.get(v, v.value)
+
+
+def fmt_sandbox_adapter_model(v: SandboxAdapterModel) -> str:
+    """Convert a SandboxAdapterModel to its display label."""
+    return _SANDBOX_ADAPTER_MODEL_DISPLAY.get(v, v.value)
+
+
+def fmt_sandbox_disk_controller(v: SandboxDiskController) -> str:
+    """Convert a SandboxDiskController to its display label."""
+    return _SANDBOX_DISK_CONTROLLER_DISPLAY.get(v, v.value)
+
+
+def fmt_on_off(enabled: bool) -> str:
+    """Convert an on/off setting to its display label (also its CLI flag value)."""
+    return "on" if enabled else "off"
+
+
+def fmt_sriov_support(supported: bool) -> str:
+    """Convert a network's SR-IOV support to its display label."""
+    return "supported" if supported else "-"
+
+
+def fmt_memory_mb(mb: int) -> str:
+    """Format a memory size given in MB."""
+    return f"{mb} MB"
+
+
+def fmt_machine_workload_type(wl: MachineWorkload) -> str:
+    """Display label of a machine workload's type, with the file server type for FS."""
+    base = _WORKLOAD_TYPE_DISPLAY.get(wl.workload_type, wl.workload_type.value)
+    if wl.workload_type == MachineWorkloadType.FS and wl.fs_config is not None:
+        return f"{base} / {_FILE_SERVER_TYPE_DISPLAY.get(wl.fs_config.server_type, 'Unknown')}"
+    return base
 
 
 def fmt_category(cat: WorkloadCategory) -> str:

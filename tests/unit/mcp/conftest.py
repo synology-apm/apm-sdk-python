@@ -1,8 +1,10 @@
 """Shared fixtures for MCP unit tests."""
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import json
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -92,6 +94,13 @@ def mock_apm() -> MagicMock:
     apm.machine.workloads.lock_version = AsyncMock()
     apm.machine.workloads.unlock_version = AsyncMock()
     apm.machine.workloads.get_verification_video_url = AsyncMock()
+    apm.machine.sandboxes.get_latest_version = AsyncMock()
+    apm.machine.sandboxes.get_default_settings = AsyncMock()
+    apm.machine.sandboxes.validate_settings = AsyncMock()
+    apm.machine.sandboxes.get_resources = AsyncMock()
+    apm.machine.sandboxes.start = AsyncMock()
+    apm.machine.sandboxes.get_console_link = AsyncMock()
+    apm.machine.sandboxes.get_screenshot = AsyncMock()
 
     apm.machine.plans.list = AsyncMock()
     apm.machine.plans.get = AsyncMock()
@@ -246,8 +255,45 @@ def resource_server(mock_apm: MagicMock) -> FastMCP:
     return server
 
 
+@pytest.fixture
+def client_server(mock_apm: MagicMock) -> Callable[[str], FastMCP]:
+    """Return a factory: client_server(mode) builds a real server with that mode's tools and a
+    lifespan yielding mock_apm.
+
+    Use it with an in-memory ``fastmcp.Client`` when a test needs FastMCP's real argument
+    validation or result conversion, which ``call_tool()`` skips.
+    """
+    from synology_apm.mcp._server import create_server
+
+    @asynccontextmanager
+    async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
+        yield {"apm": mock_apm}
+
+    def build(mode: str) -> FastMCP:
+        return create_server(mode=mode, lifespan=lifespan)
+
+    return build
+
+
+@pytest.fixture
+def audit_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Enable the audit log for this test; return its path (absent until a line is written)."""
+    path = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("APM_MCP_AUDIT_LOG", str(path))
+    return path
+
+
+def audit_entries(path: Path) -> list[dict[str, Any]]:
+    """The JSON entries of an audit log file, in order."""
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
 async def call_tool(server: FastMCP, tool_name: str, ctx: Any, **kwargs: Any) -> dict[str, Any]:
-    """Invoke a registered tool by name through its real FastMCP wiring."""
+    """Call the function of a tool registered on server (so mode gating applies) directly.
+
+FastMCP's argument validation and result conversion are skipped; use ``client_server`` when
+a test needs them.
+"""
     tool = await server.get_tool(tool_name)
     assert tool is not None, f"tool {tool_name!r} is not registered"
     result = await tool.fn(ctx=ctx, **kwargs)  # type: ignore[attr-defined]

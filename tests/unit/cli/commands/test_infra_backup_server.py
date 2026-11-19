@@ -69,7 +69,7 @@ NAS_SERVER = BackupServer(
     name="nas-server-01",
     hostname="10.0.0.10",
     model="DS1823xs+",
-    system_version=None,
+    system_version="ABB 3.2.0-25053",
     is_updating=False,
     status=ServerStatus.HEALTHY,
     serial="NAS001",
@@ -103,7 +103,7 @@ NO_STORAGE_SERVER = BackupServer(
     name="nas-server-02",
     hostname="10.0.0.11",
     model="DS923+",
-    system_version=None,
+    system_version="",
     is_updating=False,
     status=ServerStatus.WARNING,
     serial="NAS002",
@@ -344,8 +344,8 @@ def test_server_list_shows_healthy_status(mock_apm: AsyncMock) -> None:
     assert "Normal" not in result.output
 
 
-def test_server_list_nas_shows_dash_for_system_version(mock_apm: AsyncMock) -> None:
-    """NAS server list should display '-' for system_version (DP-only field)."""
+def test_server_list_nas_shows_abb_system_version(mock_apm: AsyncMock) -> None:
+    """NAS server list should display the ABB system version."""
     mock_apm.backup_servers.list.return_value = ([NAS_SERVER], 5)
 
     result = invoke_cli(mock_apm, ["infra", "server", "list"], env={"COLUMNS": "300"})
@@ -353,7 +353,18 @@ def test_server_list_nas_shows_dash_for_system_version(mock_apm: AsyncMock) -> N
     assert result.exit_code == 0, result.output
     assert "System Version" in result.output
     nas_line = next(line for line in result.output.splitlines() if "nas-server-01" in line)
-    assert " - " in f" {nas_line.strip()} "  # System Version cell renders as '-'
+    assert "ABB 3.2.0-25053" in nas_line
+
+
+def test_server_list_empty_system_version_shows_dash(mock_apm: AsyncMock) -> None:
+    """A server with no system version should display '-' in the System Version column."""
+    mock_apm.backup_servers.list.return_value = ([NO_STORAGE_SERVER], 5)
+
+    result = invoke_cli(mock_apm, ["infra", "server", "list"], env={"COLUMNS": "300"})
+
+    assert result.exit_code == 0, result.output
+    line = next(line for line in result.output.splitlines() if NO_STORAGE_SERVER.name in line)
+    assert line.rstrip().endswith("-")
 
 
 def test_server_list_no_storage_shows_dash(mock_apm: AsyncMock) -> None:
@@ -601,7 +612,7 @@ def test_server_list_no_badge_for_regular_server(mock_apm: AsyncMock) -> None:
         name="nas-server-03",
         hostname="10.0.0.12",
         model="DS923+",
-        system_version=None,
+        system_version="ABB 3.2.0-25053",
         is_updating=False,
         status=ServerStatus.HEALTHY,
         serial="NAS-REG",

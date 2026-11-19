@@ -134,10 +134,17 @@ class BackupActivityStatus(Enum):
 
 
 class RestoreActivityStatus(Enum):
-    """Status of a restore activity."""
+    """Status of a restore activity.
+
+    SANDBOX_READY applies only to sandbox activities (``RestoreType.INSTANT_SANDBOX``):
+    the sandbox VM exists; its console can be opened and cancel() stops it. READY_FOR_MIGRATE applies to
+    other instant restores that are ready to be migrated; as a list filter it also matches
+    SANDBOX_READY sandboxes, which are ready for migration too.
+    """
     PREPARING            = "preparing"
     RESTORING            = "restoring"
     CANCELING            = "canceling"
+    SANDBOX_READY        = "sandbox_ready"
     READY_FOR_MIGRATE    = "ready_for_migrate"
     MIGRATE_VM_MANUALLY  = "migrate_vm_manually"
     MIGRATING            = "migrating"
@@ -158,6 +165,17 @@ class VersionStatus(Enum):
     PAUSED       = "paused"
     DELETING     = "deleting"
     DELETE_FAILED = "delete_failed"
+
+
+#: The statuses a listed version can have, and the values the ``statuses`` filter of
+#: ``list_versions()`` / ``get_latest_version()`` accepts (versions still backing up are
+#: never listed).
+LISTED_VERSION_STATUSES: tuple[VersionStatus, ...] = (
+    VersionStatus.SUCCESS,
+    VersionStatus.PARTIAL,
+    VersionStatus.FAILED,
+    VersionStatus.CANCELED,
+)
 
 
 class WeekDay(Enum):
@@ -444,13 +462,17 @@ class APMActivityLogType(Enum):
 
 
 class RestoreType(Enum):
-    """Restore mode of a restore activity."""
+    """Restore mode of a restore activity.
+
+    INSTANT_SANDBOX is an instant restore of a PS/VM backup to the appliance's built-in
+    sandbox (see ``MachineSandboxCollection``).
+    """
     FILE_LEVEL        = "file_level"
     FULL              = "full"
     SYSTEM_VOLUME     = "system_volume"
     CUSTOMIZED_VOLUME = "customized_volume"
     VM_FULL           = "vm_full"
-    INSTANT_AEM       = "instant_aem"
+    INSTANT_SANDBOX   = "instant_sandbox"
     INSTANT_VMWARE    = "instant_vmware"
     INSTANT_HYPERV    = "instant_hyperv"
     ORACLE_DATABASE   = "oracle_database"
@@ -458,3 +480,60 @@ class RestoreType(Enum):
     INSTANT_NUTANIX   = "instant_nutanix"
     INSTANT_PROXMOX   = "instant_proxmox"
     UNKNOWN           = "unknown"
+
+
+class SandboxVideoCard(Enum):
+    """Video card of a sandbox VM."""
+    CIRRUS = "cirrus"
+    VGA    = "vga"
+    VMVGA  = "vmvga"
+
+
+class SandboxKey(Enum):
+    """A key (or key combination) pressed on a sandbox's console before a screenshot."""
+    ENTER           = "enter"
+    ESC             = "esc"
+    SPACE           = "space"
+    TAB             = "tab"
+    BACKSPACE       = "backspace"
+    UP              = "up"
+    DOWN            = "down"
+    LEFT            = "left"
+    RIGHT           = "right"
+    F1              = "f1"
+    F2              = "f2"
+    F3              = "f3"
+    F4              = "f4"
+    F5              = "f5"
+    F6              = "f6"
+    F7              = "f7"
+    F8              = "f8"
+    F9              = "f9"
+    F10             = "f10"
+    F11             = "f11"
+    F12             = "f12"
+    SHIFT           = "shift"
+    CTRL_ALT_DELETE = "ctrl_alt_delete"
+
+
+class SandboxMachineType(Enum):
+    """Machine type (chipset) of a sandbox VM."""
+    PC  = "pc"
+    Q35 = "q35"
+
+
+class SandboxAdapterModel(Enum):
+    """Network adapter model of a sandbox VM.
+
+    RTL8139 is the most compatible; VIRTIO needs drivers in the guest OS.
+    """
+    RTL8139 = "rtl8139"
+    E1000   = "e1000"
+    VIRTIO  = "virtio"
+
+
+class SandboxDiskController(Enum):
+    """Virtual disk controller of a sandbox VM. IDE is not available with machine type Q35."""
+    IDE  = "ide"
+    SATA = "sata"
+    SCSI = "scsi"

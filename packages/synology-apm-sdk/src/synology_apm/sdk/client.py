@@ -71,12 +71,12 @@ class APMClient:
             debug=debug,
         )
         self._my_server: _BackupServer | None = None
-        self._machine = MachineCollection(self._session)
+        self._activities = ActivityCollection(self._session)
+        self._backup_servers = BackupServerCollection(self._session)
+        self._machine = MachineCollection(self._session, self._backup_servers)
         self._m365 = M365Collection(self._session)
         self._gws = GWSCollection(self._session)
         self._saas = SaasCollection(self._session)
-        self._activities = ActivityCollection(self._session)
-        self._backup_servers = BackupServerCollection(self._session)
         self._plans = ProtectionPlanCollection(self._session)
         self._retirement_plans = RetirementPlanCollection(self._session)
         self._tiering_plans = TieringPlanCollection(self._session)
@@ -136,7 +136,10 @@ class APMClient:
         self._my_server = my_server
 
     async def disconnect(self) -> None:
-        """Log out and clean up the session. Safe to call multiple times (idempotent)."""
+        """Log out and clean up the session. Safe to call multiple times (idempotent).
+
+        Also closes every sandbox console connection, including those of open VNC bridges.
+        """
         await self._session.disconnect()
 
     @property
@@ -169,6 +172,7 @@ class APMClient:
 
         apm.machine.workloads → MachineWorkloadCollection
         apm.machine.plans     → MachinePlanCollection
+        apm.machine.sandboxes → MachineSandboxCollection
         """
         return self._machine
 
